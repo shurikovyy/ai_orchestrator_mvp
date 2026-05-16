@@ -1,0 +1,19 @@
+# Local Python/build artifacts
+.venv/
+__pycache__/
+*.pyc
+src/*.egg-info/
+.tmp_tests/
+
+# Runtime artifacts
+.runs/
+.codex_home/
+.codex_temp/
+codex_smoke_workspace/
+codex_final.md
+
+# Node/Codex local install
+node_modules/
+
+# Local env files
+.env

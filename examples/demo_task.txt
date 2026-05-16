@@ -1,0 +1,1 @@
+Create a short architecture note for an AI task orchestrator with planner, executor, validator, and retry loop.
