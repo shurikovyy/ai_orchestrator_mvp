@@ -156,6 +156,10 @@ Structured execution report is required. Create or overwrite `EXECUTION_REPORT.j
 Use `status: completed` only when the requested artifact is produced and required checks pass. If tests are requested, include at least one item in `tests` and set its status to `passed` only if the command actually passed.
 The deterministic validator may rerun each command from `tests[*].command`, so every test command must be safe, repeatable, and runnable from the workspace root.
 """
+            if task.validate_workspace_manifest:
+                structured_report_instruction += """
+The deterministic validator will also compare `changed_files` against reportable files that actually exist in the workspace. Include every created/modified source/report file in `changed_files`. Do not include generated/runtime files such as `__pycache__/`, `*.pyc`, `.pytest_cache/`, `.mypy_cache/`, or `.ruff_cache/`.
+"""
 
         prompt = f"""You are the executor in a deterministic orchestration loop.
 

@@ -1,4 +1,4 @@
-# AI Orchestrator MVP 0.1.4
+# AI Orchestrator MVP 0.1.5
 
 Минимальный workflow-first инструмент для управляемого цикла:
 
@@ -18,7 +18,8 @@ user task -> planner -> executor -> validator -> retry/rework -> final_report
 - собирает текстовые файлы из isolated workspace в `ExecutionResult.content`;
 - поддерживает structured validation через `EXECUTION_REPORT.json` и Pydantic-схему;
 - оставляет старую текстовую проверку acceptance criteria как fallback;
-- опционально повторно запускает test-команды из `EXECUTION_REPORT.json`, чтобы не доверять только отчету executor-а.
+- опционально повторно запускает test-команды из `EXECUTION_REPORT.json`, чтобы не доверять только отчету executor-а;
+- опционально сверяет `EXECUTION_REPORT.json.changed_files` с фактическими reportable-файлами workspace и игнорирует runtime-мусор вроде `__pycache__/` и `*.pyc`.
 
 ## Структура проекта
 
@@ -92,7 +93,7 @@ python -m venv .venv
 Ожидаемо:
 
 ```text
-Ran 15 tests ... OK
+Ran 19 tests ... OK
 ```
 
 ### 3. Подключить portable Node только для текущей Git Bash-сессии
@@ -298,7 +299,8 @@ Validator проверяет:
 - если задача выглядит как test-задача, `tests` не должен быть пустым;
 - `changed_files` и `commands_run` не должны быть пустыми при `--require-structured-report`;
 - explicit criteria тоже проверяются;
-- если включен `--rerun-report-test-commands`, validator повторно запускает allowlisted test-команды из `tests[*].command` в workspace.
+- если включен `--rerun-report-test-commands`, validator повторно запускает allowlisted test-команды из `tests[*].command` в workspace;
+- если включен `--validate-workspace-manifest`, validator проверяет, что `changed_files` совпадает с фактическими reportable-файлами workspace, игнорируя runtime/generated-файлы.
 
 ## Structured criteria DSL
 
@@ -358,6 +360,44 @@ Python-команды запускаются через тот же interpreter,
 --validation-command-timeout 60
 ```
 
+## Сверка workspace manifest с `changed_files`
+
+Structured report может быть валидным JSON, но всё еще не отражать реальные изменения. Включи флаг:
+
+```bash
+--validate-workspace-manifest
+```
+
+Тогда validator проверит:
+
+- каждый путь из `EXECUTION_REPORT.json.changed_files` реально существует в workspace;
+- в workspace нет лишних reportable-файлов, которые не указаны в `changed_files`;
+- generated/runtime-файлы игнорируются.
+
+Reportable extensions текущей версии:
+
+```text
+.txt .md .py .json .yaml .yml .toml .sql .csv
+```
+
+Игнорируются:
+
+```text
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.git/
+```
+
+Успешный отчет содержит строку:
+
+```text
+Workspace file manifest matches structured report changed_files.
+```
+
 ## Structured coding-task smoke-test
 
 ```bash
@@ -407,6 +447,7 @@ EOF
   --codex-cmd "$CODEX_CMD" \
   --require-structured-report \
   --rerun-report-test-commands \
+  --validate-workspace-manifest \
   --validation-command-timeout 60 \
   --max-retries 2
 ```
@@ -435,6 +476,7 @@ cat "$RUN/artifacts/step_1_attempt_1_codex_log.md"
 final_report.md: Status: approved
 final_report.md: Structured report and explicit acceptance criteria passed.
 final_report.md: Validator re-ran test command successfully.
+final_report.md: Workspace file manifest matches structured report changed_files.
 step_1_attempt_1_codex_log.md: exit_code: 0
 artifacts/workspace/EXECUTION_REPORT.json
 artifacts/workspace/src/toy_calc.py
@@ -546,10 +588,10 @@ EXECUTION_REPORT.json is not valid JSON
 
 ## Что дальше
 
-Следующий архитектурный шаг — усилить проверку еще дальше:
+Следующий архитектурный шаг — перейти от пустого isolated workspace к seed workspace:
 
-1. сравнить фактические workspace-файлы с `changed_files` из `EXECUTION_REPORT.json`;
-2. сохранять stdout/stderr rerun-команд отдельными validator-артефактами;
-3. добавить policies для разрешенных путей и типов файлов;
-4. добавить режим применения результата в реальный git workspace только после approve;
-5. добавить отдельные validators для Python/Airflow/SQL задач.
+1. добавить поддержку копирования входного toy repo в `artifacts/workspace`;
+2. сохранять baseline manifest до запуска Codex;
+3. проверять `changed_files` как diff относительно baseline, а не как полный список файлов workspace;
+4. сохранять stdout/stderr rerun-команд отдельными validator-артефактами;
+5. добавить режим применения результата в реальный git workspace только после approve.

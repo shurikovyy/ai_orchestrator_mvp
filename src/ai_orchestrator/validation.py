@@ -32,6 +32,130 @@ class ValidationCommandResult:
     reason: str | None = None
 
 
+@dataclass(frozen=True)
+class WorkspaceManifestValidationResult:
+    status: str
+    missing_reported_files: list[str]
+    unreported_workspace_files: list[str]
+    ignored_reported_files: list[str]
+    workspace_dir: Path | None = None
+    reason: str | None = None
+
+
+_MANIFEST_REPORTABLE_EXTENSIONS = {
+    ".txt",
+    ".md",
+    ".py",
+    ".json",
+    ".yaml",
+    ".yml",
+    ".toml",
+    ".sql",
+    ".csv",
+}
+
+_MANIFEST_IGNORED_DIR_NAMES = {
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".git",
+}
+
+_MANIFEST_IGNORED_FILE_SUFFIXES = {
+    ".pyc",
+    ".pyo",
+}
+
+
+def _normalize_manifest_path(value: str) -> str:
+    normalized = value.replace("\\", "/").strip().lstrip("./")
+    while "//" in normalized:
+        normalized = normalized.replace("//", "/")
+    return normalized
+
+
+def _manifest_key(value: str) -> str:
+    return _normalize_manifest_path(value).lower()
+
+
+def is_manifest_ignored_path(path: Path) -> bool:
+    parts = set(path.parts)
+    if parts & _MANIFEST_IGNORED_DIR_NAMES:
+        return True
+    if path.suffix.lower() in _MANIFEST_IGNORED_FILE_SUFFIXES:
+        return True
+    return False
+
+
+def is_manifest_reportable_file(path: Path) -> bool:
+    return path.suffix.lower() in _MANIFEST_REPORTABLE_EXTENSIONS and not is_manifest_ignored_path(path)
+
+
+def collect_workspace_manifest_files(workspace_dir: Path) -> list[str]:
+    paths: list[str] = []
+    for path in sorted(workspace_dir.rglob("*")):
+        if not path.is_file():
+            continue
+        rel_path = path.relative_to(workspace_dir)
+        if is_manifest_reportable_file(rel_path):
+            paths.append(rel_path.as_posix())
+    return paths
+
+
+def validate_workspace_manifest(loaded_report: StructuredReportLoadResult) -> WorkspaceManifestValidationResult:
+    report = loaded_report.report
+    if report is None:
+        return WorkspaceManifestValidationResult(
+            status="skipped",
+            missing_reported_files=[],
+            unreported_workspace_files=[],
+            ignored_reported_files=[],
+            reason="structured report is unavailable",
+        )
+    if loaded_report.source_path is None:
+        return WorkspaceManifestValidationResult(
+            status="failed",
+            missing_reported_files=[],
+            unreported_workspace_files=[],
+            ignored_reported_files=[],
+            reason="structured report has no filesystem path, so validator cannot infer workspace cwd",
+        )
+
+    workspace_dir = loaded_report.source_path.parent
+    actual_files = collect_workspace_manifest_files(workspace_dir)
+    actual_by_key = {_manifest_key(path): path for path in actual_files}
+
+    reported_files = [_normalize_manifest_path(path) for path in report.changed_files]
+    reported_by_key = {_manifest_key(path): path for path in reported_files}
+
+    ignored_reported_files = [path for path in reported_files if is_manifest_ignored_path(Path(path))]
+    ignored_reported_keys = {_manifest_key(path) for path in ignored_reported_files}
+
+    missing_reported_files = [
+        path
+        for key, path in reported_by_key.items()
+        if key not in actual_by_key and key not in ignored_reported_keys
+    ]
+    unreported_workspace_files = [
+        path
+        for key, path in actual_by_key.items()
+        if key not in reported_by_key
+    ]
+
+    status = "passed"
+    if missing_reported_files or unreported_workspace_files or ignored_reported_files:
+        status = "failed"
+
+    return WorkspaceManifestValidationResult(
+        status=status,
+        missing_reported_files=sorted(missing_reported_files),
+        unreported_workspace_files=sorted(unreported_workspace_files),
+        ignored_reported_files=sorted(ignored_reported_files),
+        workspace_dir=workspace_dir,
+    )
+
+
 def _read_report_from_artifacts(result: ExecutionResult) -> tuple[str, str, Path | None] | None:
     for artifact in result.artifact_paths:
         path = Path(artifact)

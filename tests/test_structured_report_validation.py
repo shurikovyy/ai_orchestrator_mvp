@@ -304,5 +304,135 @@ class StructuredReportValidationTests(unittest.TestCase):
         self.assertTrue(any("shell control" in item for item in validation.feedback))
 
 
+    def test_workspace_manifest_validation_approves_when_report_matches_workspace_files(self):
+        with temporary_test_dir() as tmp:
+            (tmp / "src").mkdir()
+            (tmp / "tests").mkdir()
+            (tmp / "src" / "toy_calc.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+            (tmp / "tests" / "test_toy_calc.py").write_text("import unittest\n", encoding="utf-8")
+            (tmp / "src" / "__pycache__").mkdir()
+            (tmp / "src" / "__pycache__" / "toy_calc.cpython-313.pyc").write_bytes(b"ignored")
+            report_path = tmp / "EXECUTION_REPORT.json"
+            report_path.write_text(json.dumps(make_report(), indent=2), encoding="utf-8")
+            result = ExecutionResult(
+                step_id="step_1",
+                attempt=1,
+                status="completed",
+                content="executor output",
+                artifact_paths=[str(report_path)],
+            )
+            task = TaskSpec(
+                description="Create toy project and run tests",
+                acceptance_criteria=["changed_files includes src/toy_calc.py"],
+                require_structured_report=True,
+                validate_workspace_manifest=True,
+            )
+            step = PlanStep(
+                id="step_1",
+                title="Create task artifact",
+                description=task.description,
+                acceptance_criteria=task.acceptance_criteria,
+            )
+
+            validation = MockBackend().validate_step(task=task, step=step, result=result)
+
+        self.assertTrue(validation.approved, validation.feedback)
+        self.assertTrue(any("Workspace file manifest matches" in item for item in validation.feedback))
+
+    def test_workspace_manifest_validation_fails_when_reported_file_is_missing(self):
+        with temporary_test_dir() as tmp:
+            (tmp / "src").mkdir()
+            (tmp / "src" / "toy_calc.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+            report_path = tmp / "EXECUTION_REPORT.json"
+            report_path.write_text(json.dumps(make_report(), indent=2), encoding="utf-8")
+            result = ExecutionResult(
+                step_id="step_1",
+                attempt=1,
+                status="completed",
+                content="executor output",
+                artifact_paths=[str(report_path)],
+            )
+            task = TaskSpec(
+                description="Create toy project and run tests",
+                acceptance_criteria=[],
+                require_structured_report=True,
+                validate_workspace_manifest=True,
+            )
+            step = PlanStep(id="step_1", title="Create task artifact", description=task.description)
+
+            validation = MockBackend().validate_step(task=task, step=step, result=result)
+
+        self.assertFalse(validation.approved)
+        self.assertIn("workspace_manifest_matches_changed_files", validation.failed_criteria)
+        self.assertTrue(any("missing reported files" in item for item in validation.feedback))
+
+    def test_workspace_manifest_validation_fails_when_workspace_has_unreported_source_file(self):
+        with temporary_test_dir() as tmp:
+            (tmp / "src").mkdir()
+            (tmp / "tests").mkdir()
+            (tmp / "src" / "toy_calc.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+            (tmp / "src" / "extra.py").write_text("EXTRA = True\n", encoding="utf-8")
+            (tmp / "tests" / "test_toy_calc.py").write_text("import unittest\n", encoding="utf-8")
+            report_path = tmp / "EXECUTION_REPORT.json"
+            report_path.write_text(json.dumps(make_report(), indent=2), encoding="utf-8")
+            result = ExecutionResult(
+                step_id="step_1",
+                attempt=1,
+                status="completed",
+                content="executor output",
+                artifact_paths=[str(report_path)],
+            )
+            task = TaskSpec(
+                description="Create toy project and run tests",
+                acceptance_criteria=[],
+                require_structured_report=True,
+                validate_workspace_manifest=True,
+            )
+            step = PlanStep(id="step_1", title="Create task artifact", description=task.description)
+
+            validation = MockBackend().validate_step(task=task, step=step, result=result)
+
+        self.assertFalse(validation.approved)
+        self.assertIn("workspace_manifest_matches_changed_files", validation.failed_criteria)
+        self.assertTrue(any("unreported files" in item and "src/extra.py" in item for item in validation.feedback))
+
+    def test_workspace_manifest_validation_fails_when_report_lists_generated_file(self):
+        with temporary_test_dir() as tmp:
+            (tmp / "src").mkdir()
+            (tmp / "tests").mkdir()
+            (tmp / "src" / "toy_calc.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+            (tmp / "tests" / "test_toy_calc.py").write_text("import unittest\n", encoding="utf-8")
+            (tmp / "src" / "__pycache__").mkdir()
+            (tmp / "src" / "__pycache__" / "toy_calc.cpython-313.pyc").write_bytes(b"ignored")
+            report = make_report(changed_files=[
+                "src/toy_calc.py",
+                "tests/test_toy_calc.py",
+                "EXECUTION_REPORT.json",
+                "src/__pycache__/toy_calc.cpython-313.pyc",
+            ])
+            report_path = tmp / "EXECUTION_REPORT.json"
+            report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+            result = ExecutionResult(
+                step_id="step_1",
+                attempt=1,
+                status="completed",
+                content="executor output",
+                artifact_paths=[str(report_path)],
+            )
+            task = TaskSpec(
+                description="Create toy project and run tests",
+                acceptance_criteria=[],
+                require_structured_report=True,
+                validate_workspace_manifest=True,
+            )
+            step = PlanStep(id="step_1", title="Create task artifact", description=task.description)
+
+            validation = MockBackend().validate_step(task=task, step=step, result=result)
+
+        self.assertFalse(validation.approved)
+        self.assertIn("workspace_manifest_matches_changed_files", validation.failed_criteria)
+        self.assertTrue(any("ignored/generated files" in item for item in validation.feedback))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -4,7 +4,12 @@ from pathlib import Path
 
 from ai_orchestrator.backends.base import Backend
 from ai_orchestrator.schemas import ExecutionResult, Plan, PlanStep, TaskSpec, ValidationResult
-from ai_orchestrator.validation import evaluate_structured_criterion, load_structured_report, rerun_report_test_commands
+from ai_orchestrator.validation import (
+    evaluate_structured_criterion,
+    load_structured_report,
+    rerun_report_test_commands,
+    validate_workspace_manifest,
+)
 
 
 class MockBackend(Backend):
@@ -153,6 +158,33 @@ This is a deterministic demo artifact produced by the offline backend. Replace t
                             feedback.append(f"Validator rerun stdout: {rerun.stdout[:500]}")
                         if rerun.stderr:
                             feedback.append(f"Validator rerun stderr: {rerun.stderr[:500]}")
+
+            if task.validate_workspace_manifest:
+                manifest = validate_workspace_manifest(structured)
+                if manifest.status == "passed":
+                    feedback.append("Workspace file manifest matches structured report changed_files.")
+                else:
+                    failed.append("workspace_manifest_matches_changed_files")
+                    if manifest.reason:
+                        feedback.append(f"Workspace manifest validation failed: {manifest.reason}.")
+                    if manifest.missing_reported_files:
+                        feedback.append(
+                            "Workspace manifest missing reported files: "
+                            + ", ".join(f"`{item}`" for item in manifest.missing_reported_files)
+                            + "."
+                        )
+                    if manifest.unreported_workspace_files:
+                        feedback.append(
+                            "Workspace manifest has unreported files: "
+                            + ", ".join(f"`{item}`" for item in manifest.unreported_workspace_files)
+                            + "."
+                        )
+                    if manifest.ignored_reported_files:
+                        feedback.append(
+                            "Structured report changed_files contains ignored/generated files: "
+                            + ", ".join(f"`{item}`" for item in manifest.ignored_reported_files)
+                            + "."
+                        )
 
         for criterion in step.acceptance_criteria:
             if structured_report is not None:

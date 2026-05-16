@@ -55,6 +55,14 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--validate-workspace-manifest",
+        action="store_true",
+        help=(
+            "After parsing EXECUTION_REPORT.json, compare report.changed_files against reportable files "
+            "that actually exist in the workspace. Runtime/cache files are ignored."
+        ),
+    )
+    parser.add_argument(
         "--validation-command-timeout",
         type=int,
         default=60,
@@ -72,6 +80,7 @@ def main(argv: list[str] | None = None) -> int:
         max_retries=args.max_retries,
         require_structured_report=args.require_structured_report,
         rerun_report_test_commands=args.rerun_report_test_commands,
+        validate_workspace_manifest=args.validate_workspace_manifest,
         validation_command_timeout_seconds=args.validation_command_timeout,
     )
     if args.backend in {"codex", "codex_cli"} and args.codex_cmd:
