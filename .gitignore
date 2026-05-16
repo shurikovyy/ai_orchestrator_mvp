@@ -17,3 +17,6 @@ node_modules/
 
 # Local env files
 .env
+
+# Local seed/smoke-test workspaces
+toy_seed_project/

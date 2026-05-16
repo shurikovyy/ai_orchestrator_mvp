@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from ai_orchestrator.backends.mock import MockBackend
 from ai_orchestrator.schemas import ExecutionResult, PlanStep, TaskSpec
+from ai_orchestrator.validation import write_workspace_manifest_snapshot
 
 TEST_TEMP_ROOT = Path(__file__).resolve().parents[1] / ".tmp_tests"
 TEST_TEMP_ROOT.mkdir(exist_ok=True)
@@ -432,6 +433,144 @@ class StructuredReportValidationTests(unittest.TestCase):
         self.assertFalse(validation.approved)
         self.assertIn("workspace_manifest_matches_changed_files", validation.failed_criteria)
         self.assertTrue(any("ignored/generated files" in item for item in validation.feedback))
+
+    def test_workspace_manifest_with_seed_baseline_ignores_unchanged_seed_files(self):
+        with temporary_test_dir() as tmp:
+            workspace = tmp / "workspace"
+            (workspace / "src").mkdir(parents=True)
+            (workspace / "docs").mkdir()
+            (workspace / "tests").mkdir()
+            (workspace / "src" / "existing.py").write_text("VALUE = 1\n", encoding="utf-8")
+            (workspace / "docs" / "readme.md").write_text("unchanged docs\n", encoding="utf-8")
+            (workspace / "tests" / "test_existing.py").write_text("import unittest\n", encoding="utf-8")
+            baseline_path = tmp / "workspace_baseline_manifest.json"
+            write_workspace_manifest_snapshot(baseline_path, workspace)
+
+            (workspace / "src" / "existing.py").write_text("VALUE = 2\n", encoding="utf-8")
+            report = make_report(changed_files=["src/existing.py", "EXECUTION_REPORT.json"])
+            report_path = workspace / "EXECUTION_REPORT.json"
+            report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+            result = ExecutionResult(
+                step_id="step_1",
+                attempt=1,
+                status="completed",
+                content="executor output",
+                artifact_paths=[str(report_path), str(baseline_path)],
+            )
+            task = TaskSpec(
+                description="Modify seeded project and run tests",
+                acceptance_criteria=["changed_files includes src/existing.py"],
+                require_structured_report=True,
+                validate_workspace_manifest=True,
+            )
+            step = PlanStep(
+                id="step_1",
+                title="Modify seed",
+                description=task.description,
+                acceptance_criteria=task.acceptance_criteria,
+            )
+
+            validation = MockBackend().validate_step(task=task, step=step, result=result)
+
+        self.assertTrue(validation.approved, validation.feedback)
+        self.assertTrue(any("Workspace file manifest matches" in item for item in validation.feedback))
+
+    def test_workspace_manifest_with_seed_baseline_fails_on_unreported_modified_file(self):
+        with temporary_test_dir() as tmp:
+            workspace = tmp / "workspace"
+            (workspace / "src").mkdir(parents=True)
+            (workspace / "src" / "existing.py").write_text("VALUE = 1\n", encoding="utf-8")
+            baseline_path = tmp / "workspace_baseline_manifest.json"
+            write_workspace_manifest_snapshot(baseline_path, workspace)
+
+            (workspace / "src" / "existing.py").write_text("VALUE = 2\n", encoding="utf-8")
+            report = make_report(changed_files=["EXECUTION_REPORT.json"])
+            report_path = workspace / "EXECUTION_REPORT.json"
+            report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+            result = ExecutionResult(
+                step_id="step_1",
+                attempt=1,
+                status="completed",
+                content="executor output",
+                artifact_paths=[str(report_path), str(baseline_path)],
+            )
+            task = TaskSpec(
+                description="Modify seeded project and run tests",
+                acceptance_criteria=[],
+                require_structured_report=True,
+                validate_workspace_manifest=True,
+            )
+            step = PlanStep(id="step_1", title="Modify seed", description=task.description)
+
+            validation = MockBackend().validate_step(task=task, step=step, result=result)
+
+        self.assertFalse(validation.approved)
+        self.assertIn("workspace_manifest_matches_changed_files", validation.failed_criteria)
+        self.assertTrue(any("unreported files" in item and "src/existing.py" in item for item in validation.feedback))
+
+    def test_workspace_manifest_with_seed_baseline_fails_on_reported_unchanged_file(self):
+        with temporary_test_dir() as tmp:
+            workspace = tmp / "workspace"
+            (workspace / "src").mkdir(parents=True)
+            (workspace / "src" / "existing.py").write_text("VALUE = 1\n", encoding="utf-8")
+            baseline_path = tmp / "workspace_baseline_manifest.json"
+            write_workspace_manifest_snapshot(baseline_path, workspace)
+
+            report = make_report(changed_files=["src/existing.py", "EXECUTION_REPORT.json"])
+            report_path = workspace / "EXECUTION_REPORT.json"
+            report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+            result = ExecutionResult(
+                step_id="step_1",
+                attempt=1,
+                status="completed",
+                content="executor output",
+                artifact_paths=[str(report_path), str(baseline_path)],
+            )
+            task = TaskSpec(
+                description="Modify seeded project and run tests",
+                acceptance_criteria=[],
+                require_structured_report=True,
+                validate_workspace_manifest=True,
+            )
+            step = PlanStep(id="step_1", title="Modify seed", description=task.description)
+
+            validation = MockBackend().validate_step(task=task, step=step, result=result)
+
+        self.assertFalse(validation.approved)
+        self.assertIn("workspace_manifest_matches_changed_files", validation.failed_criteria)
+        self.assertTrue(any("unchanged files" in item and "src/existing.py" in item for item in validation.feedback))
+
+    def test_workspace_manifest_with_seed_baseline_allows_reported_deleted_file(self):
+        with temporary_test_dir() as tmp:
+            workspace = tmp / "workspace"
+            (workspace / "src").mkdir(parents=True)
+            old_file = workspace / "src" / "old.py"
+            old_file.write_text("OLD = True\n", encoding="utf-8")
+            baseline_path = tmp / "workspace_baseline_manifest.json"
+            write_workspace_manifest_snapshot(baseline_path, workspace)
+
+            old_file.unlink()
+            report = make_report(changed_files=["src/old.py", "EXECUTION_REPORT.json"])
+            report_path = workspace / "EXECUTION_REPORT.json"
+            report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+            result = ExecutionResult(
+                step_id="step_1",
+                attempt=1,
+                status="completed",
+                content="executor output",
+                artifact_paths=[str(report_path), str(baseline_path)],
+            )
+            task = TaskSpec(
+                description="Delete seeded file and run tests",
+                acceptance_criteria=[],
+                require_structured_report=True,
+                validate_workspace_manifest=True,
+            )
+            step = PlanStep(id="step_1", title="Delete seed file", description=task.description)
+
+            validation = MockBackend().validate_step(task=task, step=step, result=result)
+
+        self.assertTrue(validation.approved, validation.feedback)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,12 @@
+You are working in an isolated copy of a seeded Python toy project.
+
+Fix the bug in src/toy_calc.py so that subtract(a, b) returns a - b.
+Do not rewrite the project from scratch.
+Do not create unrelated files.
+Run:
+  python -m unittest discover -s tests -t .
+Create EXECUTION_REPORT.json using the required structured schema.
+Do not create EXECUTION_REPORT.md.
+Do not run git commands unless the workspace is a git repository.
+
+The structured report changed_files must include only files added, modified, or deleted relative to the seed baseline.

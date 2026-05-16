@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from pathlib import Path
+import json
 import shutil
 import subprocess
 import sys
@@ -119,6 +120,135 @@ class CodexCliBackendTests(unittest.TestCase):
         self.assertIn("### RESULT.md", result.content)
         self.assertIn("ORCHESTRATOR_SMOKE_TEST_OK", result.content)
         self.assertIn(str(artifacts_dir / "workspace" / "RESULT.md"), result.artifact_paths)
+
+    def test_execute_step_copies_seed_workspace_and_writes_baseline_manifest(self):
+        backend = CodexCliBackend(codex_cmd="codex")
+        step = PlanStep(id="step_1", title="Modify seed", description="Modify seeded project")
+
+        def fake_run(cmd, **kwargs):
+            workspace_dir = Path(cmd[cmd.index("--cd") + 1])
+            self.assertTrue((workspace_dir / "src" / "existing.py").exists())
+            self.assertFalse((workspace_dir / "node_modules" / "ignored.js").exists())
+            (workspace_dir / "src" / "existing.py").write_text("VALUE = 2\n", encoding="utf-8")
+            (workspace_dir / "EXECUTION_REPORT.json").write_text(
+                json.dumps({
+                    "schema_version": "1.0",
+                    "status": "completed",
+                    "summary": "Modified seeded file.",
+                    "changed_files": ["src/existing.py", "EXECUTION_REPORT.json"],
+                    "commands_run": [
+                        {"command": "python -m unittest discover -s tests", "exit_code": 0, "status": "passed", "summary": "ok"}
+                    ],
+                    "tests": [
+                        {"name": "unittest", "command": "python -m unittest discover -s tests", "status": "passed", "total": 0, "passed": 0, "failed": 0, "output": "OK"}
+                    ],
+                    "risks": [],
+                    "assumptions": [],
+                    "validation_notes": [],
+                }, indent=2),
+                encoding="utf-8",
+            )
+            Path(cmd[cmd.index("--output-last-message") + 1]).write_text("done", encoding="utf-8")
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="ok", stderr="")
+
+        with temporary_test_dir() as tmp, patch.object(
+            CodexCliBackend,
+            "_command_exists",
+            return_value=True,
+        ), patch(
+            "ai_orchestrator.backends.codex_cli.subprocess.run",
+            side_effect=fake_run,
+        ):
+            seed = tmp / "seed"
+            (seed / "src").mkdir(parents=True)
+            (seed / "src" / "existing.py").write_text("VALUE = 1\n", encoding="utf-8")
+            (seed / "node_modules").mkdir()
+            (seed / "node_modules" / "ignored.js").write_text("ignored", encoding="utf-8")
+            artifacts_dir = tmp / "artifacts"
+            task = TaskSpec(
+                description="Modify seeded project",
+                require_structured_report=True,
+                validate_workspace_manifest=True,
+                seed_workspace_path=str(seed),
+            )
+
+            result = backend.execute_step(
+                task=task,
+                step=step,
+                attempt=1,
+                previous_feedback=[],
+                artifacts_dir=artifacts_dir,
+            )
+
+            baseline_path = artifacts_dir / "workspace_baseline_manifest.json"
+            self.assertEqual(result.status, "completed")
+            self.assertTrue(baseline_path.exists())
+            baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
+            self.assertIn("src/existing.py", baseline["files"])
+            self.assertNotIn("node_modules/ignored.js", baseline["files"])
+            self.assertIn(str(baseline_path), result.artifact_paths)
+            self.assertIn("seed_workspace:", result.content)
+
+    def test_seed_workspace_log_captures_only_report_and_changed_files(self):
+        backend = CodexCliBackend(codex_cmd="codex")
+        step = PlanStep(id="step_1", title="Modify seed", description="Modify seeded project")
+
+        def fake_run(cmd, **kwargs):
+            workspace_dir = Path(cmd[cmd.index("--cd") + 1])
+            (workspace_dir / "docs" / "old.md").write_text("unchanged docs\n", encoding="utf-8")
+            (workspace_dir / "src" / "existing.py").write_text("VALUE = 2\n", encoding="utf-8")
+            (workspace_dir / "EXECUTION_REPORT.json").write_text(
+                json.dumps({
+                    "schema_version": "1.0",
+                    "status": "completed",
+                    "summary": "Modified seeded file.",
+                    "changed_files": ["src/existing.py", "EXECUTION_REPORT.json"],
+                    "commands_run": [
+                        {"command": "python -m unittest discover -s tests", "exit_code": 0, "status": "passed", "summary": "ok"}
+                    ],
+                    "tests": [
+                        {"name": "unittest", "command": "python -m unittest discover -s tests", "status": "passed", "total": 0, "passed": 0, "failed": 0, "output": "OK"}
+                    ],
+                    "risks": [],
+                    "assumptions": [],
+                    "validation_notes": [],
+                }, indent=2),
+                encoding="utf-8",
+            )
+            Path(cmd[cmd.index("--output-last-message") + 1]).write_text("done", encoding="utf-8")
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="ok", stderr="")
+
+        with temporary_test_dir() as tmp, patch.object(
+            CodexCliBackend,
+            "_command_exists",
+            return_value=True,
+        ), patch(
+            "ai_orchestrator.backends.codex_cli.subprocess.run",
+            side_effect=fake_run,
+        ):
+            seed = tmp / "seed"
+            (seed / "src").mkdir(parents=True)
+            (seed / "docs").mkdir()
+            (seed / "src" / "existing.py").write_text("VALUE = 1\n", encoding="utf-8")
+            (seed / "docs" / "old.md").write_text("unchanged docs\n", encoding="utf-8")
+            task = TaskSpec(
+                description="Modify seeded project",
+                require_structured_report=True,
+                validate_workspace_manifest=True,
+                seed_workspace_path=str(seed),
+            )
+
+            result = backend.execute_step(
+                task=task,
+                step=step,
+                attempt=1,
+                previous_feedback=[],
+                artifacts_dir=tmp / "artifacts",
+            )
+
+        self.assertIn("### EXECUTION_REPORT.json", result.content)
+        self.assertIn("### src/existing.py", result.content)
+        self.assertNotIn("### docs/old.md", result.content)
 
 
 if __name__ == "__main__":

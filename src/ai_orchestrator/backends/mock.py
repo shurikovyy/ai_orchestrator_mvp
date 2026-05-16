@@ -6,6 +6,7 @@ from ai_orchestrator.backends.base import Backend
 from ai_orchestrator.schemas import ExecutionResult, Plan, PlanStep, TaskSpec, ValidationResult
 from ai_orchestrator.validation import (
     evaluate_structured_criterion,
+    find_workspace_baseline_manifest_path,
     load_structured_report,
     rerun_report_test_commands,
     validate_workspace_manifest,
@@ -160,7 +161,10 @@ This is a deterministic demo artifact produced by the offline backend. Replace t
                             feedback.append(f"Validator rerun stderr: {rerun.stderr[:500]}")
 
             if task.validate_workspace_manifest:
-                manifest = validate_workspace_manifest(structured)
+                manifest = validate_workspace_manifest(
+                    structured,
+                    baseline_manifest_path=find_workspace_baseline_manifest_path(result.artifact_paths),
+                )
                 if manifest.status == "passed":
                     feedback.append("Workspace file manifest matches structured report changed_files.")
                 else:
@@ -183,6 +187,12 @@ This is a deterministic demo artifact produced by the offline backend. Replace t
                         feedback.append(
                             "Structured report changed_files contains ignored/generated files: "
                             + ", ".join(f"`{item}`" for item in manifest.ignored_reported_files)
+                            + "."
+                        )
+                    if manifest.unchanged_reported_files:
+                        feedback.append(
+                            "Structured report changed_files contains unchanged files relative to baseline: "
+                            + ", ".join(f"`{item}`" for item in manifest.unchanged_reported_files)
                             + "."
                         )
 

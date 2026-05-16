@@ -63,6 +63,14 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--seed-workspace",
+        default=None,
+        help=(
+            "Optional existing project directory to copy into the isolated run workspace before Codex executes. "
+            "Use a Windows-style path when running Windows Python from Git Bash, for example: $(pwd -W)/toy_seed_repo."
+        ),
+    )
+    parser.add_argument(
         "--validation-command-timeout",
         type=int,
         default=60,
@@ -81,6 +89,7 @@ def main(argv: list[str] | None = None) -> int:
         require_structured_report=args.require_structured_report,
         rerun_report_test_commands=args.rerun_report_test_commands,
         validate_workspace_manifest=args.validate_workspace_manifest,
+        seed_workspace_path=args.seed_workspace,
         validation_command_timeout_seconds=args.validation_command_timeout,
     )
     if args.backend in {"codex", "codex_cli"} and args.codex_cmd:

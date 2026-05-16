@@ -1,4 +1,4 @@
-# AI Orchestrator MVP 0.1.5
+# AI Orchestrator MVP 0.1.6
 
 Минимальный workflow-first инструмент для управляемого цикла:
 
@@ -6,45 +6,23 @@
 user task -> planner -> executor -> validator -> retry/rework -> final_report
 ```
 
-Ключевая идея: **LLM/Codex выполняет работу, но не принимает решение о приемке результата**. Приемка остается в детерминированном Python-коде.
+Ключевая идея: **Codex/LLM выполняет работу, но не принимает решение о приемке**. Приемка остается в детерминированном Python-коде.
 
-## Что умеет текущая версия
+## Что умеет 0.1.6
 
-- хранит состояние каждого запуска в `.runs/<run_id>/state.json`;
+- хранит состояние запуска в `.runs/<run_id>/state.json`;
 - сохраняет логи и артефакты в `.runs/<run_id>/artifacts/`;
 - поддерживает offline `mock` backend;
 - поддерживает `codex_cli` backend через локальный Codex CLI;
 - передает prompt в `codex exec` через `stdin`, чтобы не ломаться на Windows `.cmd` и multiline prompt;
-- собирает текстовые файлы из isolated workspace в `ExecutionResult.content`;
-- поддерживает structured validation через `EXECUTION_REPORT.json` и Pydantic-схему;
-- оставляет старую текстовую проверку acceptance criteria как fallback;
-- опционально повторно запускает test-команды из `EXECUTION_REPORT.json`, чтобы не доверять только отчету executor-а;
-- опционально сверяет `EXECUTION_REPORT.json.changed_files` с фактическими reportable-файлами workspace и игнорирует runtime-мусор вроде `__pycache__/` и `*.pyc`.
+- требует structured report через `EXECUTION_REPORT.json` при флаге `--require-structured-report`;
+- валидирует `EXECUTION_REPORT.json` через Pydantic-схему;
+- опционально повторно запускает test-команды из `EXECUTION_REPORT.json` через `--rerun-report-test-commands`;
+- опционально сверяет `changed_files` с фактическими файлами workspace через `--validate-workspace-manifest`;
+- поддерживает `--seed-workspace <path>`: копирует существующий toy/project workspace в isolated run workspace;
+- при seed workspace сохраняет baseline manifest до Codex и проверяет `changed_files` как diff относительно baseline.
 
-## Структура проекта
-
-```text
-ai_orchestrator_mvp/
-├── pyproject.toml
-├── package.json
-├── package-lock.json
-├── README.md
-├── examples/
-├── src/ai_orchestrator/
-│   ├── cli.py
-│   ├── engine.py
-│   ├── schemas.py
-│   ├── validation.py
-│   └── backends/
-│       ├── base.py
-│       ├── mock.py
-│       └── codex_cli.py
-└── tests/
-```
-
-## Важные ограничения
-
-Не коммить и не передавай в архив:
+## Что не коммитить и не архивировать
 
 ```text
 .venv/
@@ -56,11 +34,9 @@ node_modules/
 codex_smoke_workspace/
 ```
 
-`node_modules` может весить много. `.runs` и `.codex_home` могут содержать локальные runtime-данные и логи.
+`node_modules` тяжелый. `.runs` и `.codex_home` могут содержать локальные runtime-данные и логи.
 
 ## Установка с нуля: Windows + Git Bash + portable Node
-
-Ниже инструкция для корпоративного ПК, где нельзя менять системный `PATH`.
 
 ### 1. Клонировать репозиторий
 
@@ -76,7 +52,7 @@ ls pyproject.toml
 ls src/ai_orchestrator/cli.py
 ```
 
-### 2. Создать Python venv
+### 2. Создать Python venv и установить пакет
 
 ```bash
 python -m venv .venv
@@ -93,7 +69,7 @@ python -m venv .venv
 Ожидаемо:
 
 ```text
-Ran 19 tests ... OK
+Ran 25 tests ... OK
 ```
 
 ### 3. Подключить portable Node только для текущей Git Bash-сессии
@@ -116,7 +92,7 @@ npm --version
 cmd //c "where node"
 ```
 
-Ожидаемо `where node` должен показать примерно:
+`where node` должен показать примерно:
 
 ```text
 C:\Users\Slivin.Aleksandr\Tools\node\node.exe
@@ -137,15 +113,13 @@ CODEX_CMD="$(pwd -W)/node_modules/.bin/codex.cmd"
 "$CODEX_CMD" --version
 ```
 
-### 5. Важно: не использовать пустой локальный CODEX_HOME
-
-Если раньше задавал `CODEX_HOME`, сбрось его:
+### 5. Не использовать пустой локальный `CODEX_HOME`
 
 ```bash
 unset CODEX_HOME
 ```
 
-Иначе Codex может стартовать без авторизации и вернуть:
+Если оставить пустой локальный `CODEX_HOME`, Codex может вернуть:
 
 ```text
 401 Unauthorized: Missing bearer or basic authentication in header
@@ -157,7 +131,7 @@ unset CODEX_HOME
 C:\Users\Slivin.Aleksandr\.codex
 ```
 
-## Быстрая проверка: mock backend
+## Smoke-test: mock backend
 
 ```bash
 ./.venv/Scripts/python.exe -m ai_orchestrator.cli \
@@ -174,7 +148,7 @@ status=approved
 backend=mock
 ```
 
-## Быстрая проверка: прямой Codex CLI smoke-test
+## Smoke-test: прямой Codex CLI
 
 ```bash
 unset CODEX_HOME
@@ -200,13 +174,13 @@ cat codex_smoke_workspace/RESULT.md
 cat codex_final.md
 ```
 
-Ожидаемо оба файла содержат:
+Оба файла должны содержать:
 
 ```text
 ORCHESTRATOR_SMOKE_TEST_OK
 ```
 
-## End-to-end smoke-test через orchestrator + Codex CLI
+## Smoke-test: orchestrator + Codex CLI + structured validation
 
 ```bash
 unset CODEX_HOME
@@ -216,12 +190,48 @@ hash -r
 
 CODEX_CMD="$(pwd -W)/node_modules/.bin/codex.cmd"
 
+TASK=$(cat <<'TASK_EOF'
+In the isolated Codex executor workspace, create a tiny Python toy project.
+
+Requirements:
+1. Create src/toy_calc.py.
+2. Implement:
+   - add(a, b)
+   - subtract(a, b)
+   - multiply(a, b)
+   - divide(a, b), raising ZeroDivisionError for division by zero.
+3. Create tests/test_toy_calc.py using Python unittest.
+4. Tests must cover:
+   - add
+   - subtract
+   - multiply
+   - divide
+   - divide by zero
+5. Run:
+   python -m unittest discover -s tests
+6. Create EXECUTION_REPORT.json using the required structured schema.
+7. Do not create EXECUTION_REPORT.md.
+8. Do not run git commands unless the workspace is a git repository.
+
+Do not ask follow-up questions.
+Do not modify files outside the isolated workspace.
+TASK_EOF
+)
+
 ./.venv/Scripts/python.exe -m ai_orchestrator.cli \
-  "In the isolated Codex executor workspace, create RESULT.md with the title '# Orchestrator Codex smoke test'. The file must contain the exact token ORCHESTRATOR_SMOKE_TEST_OK. In your final response, mention RESULT.md and include the exact token ORCHESTRATOR_SMOKE_TEST_OK." \
-  --criteria "ORCHESTRATOR_SMOKE_TEST_OK" \
+  "$TASK" \
+  --criteria "report.status=completed" \
+  --criteria "changed_files includes src/toy_calc.py" \
+  --criteria "changed_files includes tests/test_toy_calc.py" \
+  --criteria "commands_run includes python -m unittest discover -s tests" \
+  --criteria "tests.status=passed" \
   --backend codex_cli \
   --codex-cmd "$CODEX_CMD" \
-  --max-retries 1
+  --require-structured-report \
+  --rerun-report-test-commands \
+  --validate-workspace-manifest \
+  --validation-command-timeout 60 \
+  --max-retries 2
 ```
 
 Ожидаемо:
@@ -231,30 +241,18 @@ status=approved
 backend=codex_cli
 ```
 
-Проверка артефактов:
+В `final_report.md` должны быть строки:
 
-```bash
-RUN=".runs/<run_id>"
-cat "$RUN/final_report.md"
-cat "$RUN/artifacts/workspace/RESULT.md"
-cat "$RUN/artifacts/step_1_attempt_1_codex_log.md"
+```text
+Structured execution report parsed successfully
+Validator re-ran test command successfully
+Workspace file manifest matches structured report changed_files
+Structured report and explicit acceptance criteria passed
 ```
 
 ## Structured execution report contract
 
-Для реальных coding-задач лучше не ограничиваться поиском строк в логах. Используй флаг:
-
-```bash
---require-structured-report
-```
-
-Тогда executor обязан создать файл:
-
-```text
-EXECUTION_REPORT.json
-```
-
-в корне isolated workspace.
+При `--require-structured-report` executor обязан создать `EXECUTION_REPORT.json` в корне isolated workspace.
 
 Минимальная схема:
 
@@ -291,22 +289,20 @@ EXECUTION_REPORT.json
 
 Validator проверяет:
 
-- файл `EXECUTION_REPORT.json` существует, если включен `--require-structured-report`;
+- `EXECUTION_REPORT.json` существует;
 - JSON валиден;
 - JSON соответствует Pydantic-схеме;
 - `report.status == completed`;
-- если есть test reports, все `tests[*].status == passed`;
-- если задача выглядит как test-задача, `tests` не должен быть пустым;
-- `changed_files` и `commands_run` не должны быть пустыми при `--require-structured-report`;
-- explicit criteria тоже проверяются;
-- если включен `--rerun-report-test-commands`, validator повторно запускает allowlisted test-команды из `tests[*].command` в workspace;
-- если включен `--validate-workspace-manifest`, validator проверяет, что `changed_files` совпадает с фактическими reportable-файлами workspace, игнорируя runtime/generated-файлы.
+- все `tests[*].status == passed`, если тесты указаны;
+- если задача выглядит как test-задача, `tests` не пустой;
+- `changed_files` и `commands_run` не пустые;
+- explicit criteria проходят;
+- при `--rerun-report-test-commands` validator сам повторно запускает test-команды;
+- при `--validate-workspace-manifest` validator сверяет `changed_files` с workspace manifest.
 
 ## Structured criteria DSL
 
-Если есть `EXECUTION_REPORT.json`, часть criteria можно проверять по полям JSON, а не по строкам.
-
-Поддерживаются:
+Поддерживаются criteria:
 
 ```text
 report.status=completed
@@ -318,27 +314,23 @@ tests.status=passed
 tests passed
 ```
 
-Неизвестные criteria проверяются старым способом: как substring в `ExecutionResult.content`.
+Неизвестные criteria проверяются fallback-способом: как substring в `ExecutionResult.content`.
 
-## Независимый rerun тестов validator-ом
+## Повторный запуск тестов validator-ом
 
-Structured report лучше текстового отчета, но сам по себе он всё еще остается утверждением executor-а. Включи флаг:
+Флаг:
 
 ```bash
 --rerun-report-test-commands
 ```
 
-Тогда validator после парсинга `EXECUTION_REPORT.json` повторно запускает команды из:
+Validator запускает только команды из:
 
 ```text
 tests[*].command
 ```
 
-в директории workspace, где лежит `EXECUTION_REPORT.json`.
-
-В MVP intentionally не запускаются все `commands_run`, потому что там могут быть write/setup/delete-команды. Повторяются только test-команды.
-
-Allowlist текущей версии:
+Allowlist:
 
 ```text
 python -m unittest ...
@@ -346,35 +338,27 @@ python -m pytest ...
 pytest ...
 ```
 
-Команды с shell-control операторами блокируются до запуска:
+Команды с shell-control операторами блокируются:
 
 ```text
 &&  ||  ;  |  >  <  `  $(...)
 ```
 
-Python-команды запускаются через тот же interpreter, которым запущен orchestrator: `sys.executable`. Это снижает риск, что validator внезапно использует другой Python из `PATH`.
+Python-команды запускаются через тот же interpreter, которым запущен orchestrator: `sys.executable`.
 
-Можно задать timeout на каждую команду:
+## Workspace manifest validation
 
-```bash
---validation-command-timeout 60
-```
-
-## Сверка workspace manifest с `changed_files`
-
-Structured report может быть валидным JSON, но всё еще не отражать реальные изменения. Включи флаг:
+Флаг:
 
 ```bash
 --validate-workspace-manifest
 ```
 
-Тогда validator проверит:
+### Без seed workspace
 
-- каждый путь из `EXECUTION_REPORT.json.changed_files` реально существует в workspace;
-- в workspace нет лишних reportable-файлов, которые не указаны в `changed_files`;
-- generated/runtime-файлы игнорируются.
+Validator требует, чтобы `EXECUTION_REPORT.json.changed_files` совпадал со всеми reportable-файлами, которые появились в пустом workspace.
 
-Reportable extensions текущей версии:
+Reportable extensions:
 
 ```text
 .txt .md .py .json .yaml .yml .toml .sql .csv
@@ -392,13 +376,97 @@ __pycache__/
 .git/
 ```
 
-Успешный отчет содержит строку:
+### С seed workspace
 
-```text
-Workspace file manifest matches structured report changed_files.
+Флаг:
+
+```bash
+--seed-workspace <path>
 ```
 
-## Structured coding-task smoke-test
+Логика:
+
+```text
+1. orchestrator копирует seed project в .runs/<run_id>/artifacts/workspace
+2. сохраняет baseline manifest до запуска Codex
+3. Codex меняет isolated workspace
+4. validator снимает after manifest
+5. validator сравнивает after manifest с baseline manifest
+6. changed_files должен совпадать с added/modified/deleted reportable files
+```
+
+Из seed workspace при копировании исключаются runtime-heavy директории:
+
+```text
+.git/
+.venv/
+venv/
+node_modules/
+.runs/
+.tmp_tests/
+.codex_home/
+.codex_temp/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+build/
+dist/
+*.egg-info/
+```
+
+Важно: при seed workspace `changed_files` должен содержать **только добавленные, измененные или удаленные файлы относительно baseline**, а не все файлы проекта.
+
+## Seed workspace smoke-test
+
+Этот тест проверяет, что Codex работает не в пустой папке, а с уже существующим маленьким проектом.
+
+### 1. Создать seed project
+
+```bash
+rm -rf toy_seed_project
+mkdir -p toy_seed_project/src toy_seed_project/tests
+
+cat > toy_seed_project/src/toy_calc.py <<'PY'
+def add(a, b):
+    return a + b
+
+
+def subtract(a, b):
+    # BUG: this should subtract b from a
+    return a + b
+PY
+
+cat > toy_seed_project/tests/test_toy_calc.py <<'PY'
+import unittest
+
+from src.toy_calc import add, subtract
+
+
+class ToyCalcTests(unittest.TestCase):
+    def test_add(self):
+        self.assertEqual(add(2, 3), 5)
+
+    def test_subtract(self):
+        self.assertEqual(subtract(10, 4), 6)
+
+
+if __name__ == "__main__":
+    unittest.main()
+PY
+```
+
+Проверь, что seed действительно содержит баг:
+
+```bash
+python -m unittest discover -s toy_seed_project/tests -t toy_seed_project
+```
+
+Ожидаемо тест `test_subtract` должен упасть.
+
+### 2. Запустить orchestrator с seed workspace
+
+В Git Bash под Windows Python передавай seed path в Windows-формате через `pwd -W`:
 
 ```bash
 unset CODEX_HOME
@@ -407,44 +475,33 @@ export PATH="$NODE_HOME:$PATH"
 hash -r
 
 CODEX_CMD="$(pwd -W)/node_modules/.bin/codex.cmd"
+SEED_WORKSPACE="$(pwd -W)/toy_seed_project"
 
-TASK=$(cat <<'EOF'
-In the isolated Codex executor workspace, create a tiny Python toy project.
+TASK=$(cat <<'TASK_EOF'
+You are working in an isolated copy of a seeded Python toy project.
 
-Requirements:
-1. Create src/toy_calc.py.
-2. Implement:
-   - add(a, b)
-   - subtract(a, b)
-   - multiply(a, b)
-   - divide(a, b), raising ZeroDivisionError for division by zero.
-3. Create tests/test_toy_calc.py using Python unittest.
-4. Tests must cover:
-   - add
-   - subtract
-   - multiply
-   - divide
-   - divide by zero
-5. Run:
-   python -m unittest discover -s tests
-6. Create EXECUTION_REPORT.json using the required structured schema.
-7. Do not create EXECUTION_REPORT.md.
-8. Do not run git commands unless the workspace is a git repository.
+Fix the bug in src/toy_calc.py so that subtract(a, b) returns a - b.
+Do not rewrite the project from scratch.
+Do not create unrelated files.
+Run:
+  python -m unittest discover -s tests -t .
+Create EXECUTION_REPORT.json using the required structured schema.
+Do not create EXECUTION_REPORT.md.
+Do not run git commands unless the workspace is a git repository.
 
-Do not ask follow-up questions.
-Do not modify files outside the isolated workspace.
-EOF
+The structured report changed_files must include only files added, modified, or deleted relative to the seed baseline.
+TASK_EOF
 )
 
 ./.venv/Scripts/python.exe -m ai_orchestrator.cli \
   "$TASK" \
   --criteria "report.status=completed" \
   --criteria "changed_files includes src/toy_calc.py" \
-  --criteria "changed_files includes tests/test_toy_calc.py" \
-  --criteria "commands_run includes python -m unittest discover -s tests" \
+  --criteria "commands_run includes python -m unittest discover -s tests -t ." \
   --criteria "tests.status=passed" \
   --backend codex_cli \
   --codex-cmd "$CODEX_CMD" \
+  --seed-workspace "$SEED_WORKSPACE" \
   --require-structured-report \
   --rerun-report-test-commands \
   --validate-workspace-manifest \
@@ -465,23 +522,23 @@ backend=codex_cli
 RUN=".runs/<run_id>"
 cat "$RUN/final_report.md"
 cat "$RUN/artifacts/workspace/EXECUTION_REPORT.json"
+cat "$RUN/artifacts/workspace/src/toy_calc.py"
 cat "$RUN/artifacts/step_1_attempt_1_codex_log.md"
 ```
 
-## Как читать результат
-
-Успешный structured run должен иметь:
+В `final_report.md` должна быть строка:
 
 ```text
-final_report.md: Status: approved
-final_report.md: Structured report and explicit acceptance criteria passed.
-final_report.md: Validator re-ran test command successfully.
-final_report.md: Workspace file manifest matches structured report changed_files.
-step_1_attempt_1_codex_log.md: exit_code: 0
-artifacts/workspace/EXECUTION_REPORT.json
-artifacts/workspace/src/toy_calc.py
-artifacts/workspace/tests/test_toy_calc.py
+Workspace file manifest matches structured report changed_files.
 ```
+
+А `EXECUTION_REPORT.json.changed_files` должен содержать как минимум:
+
+```json
+["src/toy_calc.py", "EXECUTION_REPORT.json"]
+```
+
+Он не должен перечислять неизмененные seed-файлы.
 
 ## Troubleshooting
 
@@ -489,18 +546,12 @@ artifacts/workspace/tests/test_toy_calc.py
 
 Причина: проект не установлен в venv или запускается не тот Python.
 
-Исправление:
-
 ```bash
 ./.venv/Scripts/python.exe -m pip install -e .
 ./.venv/Scripts/python.exe -m ai_orchestrator.cli "test"
 ```
 
 ### `codex: command not found`
-
-Причина: Codex CLI не установлен или не доступен в текущей shell-сессии.
-
-Исправление:
 
 ```bash
 NODE_HOME="/c/Users/Slivin.Aleksandr/Tools/node"
@@ -513,10 +564,6 @@ CODEX_CMD="$(pwd -W)/node_modules/.bin/codex.cmd"
 
 ### `""node"" не является внутренней или внешней командой`
 
-Причина: `.cmd`-shim Codex пытается вызвать `node`, но portable Node не в текущем `PATH`.
-
-Исправление:
-
 ```bash
 NODE_HOME="/c/Users/Slivin.Aleksandr/Tools/node"
 export PATH="$NODE_HOME:$PATH"
@@ -526,9 +573,7 @@ cmd //c "where node"
 
 ### `'.' is not recognized as an internal or external command`
 
-Причина: Windows subprocess плохо переварил путь вида `./node_modules/.bin/codex.cmd`.
-
-Исправление: используй абсолютный Windows path:
+Используй абсолютный Windows path:
 
 ```bash
 CODEX_CMD="$(pwd -W)/node_modules/.bin/codex.cmd"
@@ -544,54 +589,48 @@ CODEX_CMD="$(pwd -W)/node_modules/.bin/codex.cmd"
 
 Частая причина: задан пустой локальный `CODEX_HOME`.
 
-Исправление:
-
 ```bash
 unset CODEX_HOME
 ```
 
-Если хочешь использовать отдельный `CODEX_HOME`, его надо отдельно авторизовать через Codex CLI.
+### `seed workspace does not exist`
 
-### `sandbox: read-only`
+Если запускаешь Windows Python из Git Bash, не передавай `/c/Users/...` как seed path. Используй Windows-style path:
 
-Если в логе Codex виден `sandbox: read-only`, проверь, что backend передал:
-
-```text
---sandbox workspace-write
+```bash
+SEED_WORKSPACE="$(pwd -W)/toy_seed_project"
 ```
 
-В нормальном успешном логе должно быть:
+### Manifest validation failed: unreported files
 
-```text
-sandbox: workspace-write
-```
+Причина: Codex создал/изменил reportable-файл, но не указал его в `EXECUTION_REPORT.json.changed_files`.
 
-### Structured report missing
+Исправление: либо Codex должен удалить лишний файл, либо добавить его в `changed_files`, если изменение действительно нужно.
 
-Если запуск с `--require-structured-report` падает с:
+### Manifest validation failed: unchanged files relative to baseline
 
-```text
-Structured execution report is required, but EXECUTION_REPORT.json was not found.
-```
+Причина: при `--seed-workspace` Codex указал в `changed_files` файл, который был в seed project и фактически не изменился.
 
-Значит Codex не создал `EXECUTION_REPORT.json`. Уточни task prompt: явно попроси создать `EXECUTION_REPORT.json`, не Markdown.
-
-### Structured report invalid JSON
-
-Если падает с:
-
-```text
-EXECUTION_REPORT.json is not valid JSON
-```
-
-Значит executor записал Markdown, комментарии, trailing comma или неэкранированные символы. Файл должен быть чистым JSON.
+Исправление: убрать неизмененный файл из `changed_files`.
 
 ## Что дальше
 
-Следующий архитектурный шаг — перейти от пустого isolated workspace к seed workspace:
+Следующий архитектурный шаг — безопасное применение результата после approve:
 
-1. добавить поддержку копирования входного toy repo в `artifacts/workspace`;
-2. сохранять baseline manifest до запуска Codex;
-3. проверять `changed_files` как diff относительно baseline, а не как полный список файлов workspace;
-4. сохранять stdout/stderr rerun-команд отдельными validator-артефактами;
-5. добавить режим применения результата в реальный git workspace только после approve.
+```text
+0.1.7 — review packet + controlled apply/commit
+```
+
+Идея:
+
+```text
+run on seed/disposable workspace
+↓
+validator approved
+↓
+generate REVIEW_PACKET.md with diff/stat/report
+↓
+manual assistant/human approval
+↓
+apply patch or commit only allowed changed files
+```

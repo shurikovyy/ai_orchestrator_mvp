@@ -18,7 +18,16 @@ class TaskSpec(BaseModel):
     require_structured_report: bool = False
     rerun_report_test_commands: bool = False
     validate_workspace_manifest: bool = False
+    seed_workspace_path: str | None = None
     validation_command_timeout_seconds: int = Field(default=60, ge=1, le=600)
+
+    @field_validator("seed_workspace_path")
+    @classmethod
+    def seed_workspace_path_blank_to_none(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        return value or None
 
     @field_validator("description")
     @classmethod

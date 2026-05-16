@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
 import shlex
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from pydantic import ValidationError
@@ -38,6 +39,7 @@ class WorkspaceManifestValidationResult:
     missing_reported_files: list[str]
     unreported_workspace_files: list[str]
     ignored_reported_files: list[str]
+    unchanged_reported_files: list[str] = field(default_factory=list)
     workspace_dir: Path | None = None
     reason: str | None = None
 
@@ -103,7 +105,72 @@ def collect_workspace_manifest_files(workspace_dir: Path) -> list[str]:
     return paths
 
 
-def validate_workspace_manifest(loaded_report: StructuredReportLoadResult) -> WorkspaceManifestValidationResult:
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def collect_workspace_manifest_fingerprints(workspace_dir: Path) -> dict[str, str]:
+    """Return reportable workspace files as normalized relative path -> sha256."""
+
+    fingerprints: dict[str, str] = {}
+    for path in sorted(workspace_dir.rglob("*")):
+        if not path.is_file():
+            continue
+        rel_path = path.relative_to(workspace_dir)
+        if is_manifest_reportable_file(rel_path):
+            fingerprints[rel_path.as_posix()] = _file_sha256(path)
+    return fingerprints
+
+
+def write_workspace_manifest_snapshot(snapshot_path: Path, workspace_dir: Path) -> None:
+    snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "schema_version": "1.0",
+        "workspace_dir": str(workspace_dir),
+        "files": collect_workspace_manifest_fingerprints(workspace_dir),
+    }
+    snapshot_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def read_workspace_manifest_snapshot(snapshot_path: Path) -> dict[str, str]:
+    payload = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    files = payload.get("files", {})
+    if not isinstance(files, dict):
+        raise ValueError("workspace manifest snapshot `files` must be an object")
+    return {str(path): str(digest) for path, digest in files.items()}
+
+
+def find_workspace_baseline_manifest_path(artifact_paths: list[str]) -> Path | None:
+    for artifact in artifact_paths:
+        path = Path(artifact)
+        if path.name == "workspace_baseline_manifest.json" and path.exists():
+            return path
+    return None
+
+
+def _diff_manifest_files(*, baseline_files: dict[str, str], actual_files: dict[str, str]) -> list[str]:
+    baseline_by_key = {_manifest_key(path): path for path in baseline_files}
+    actual_by_key = {_manifest_key(path): path for path in actual_files}
+
+    added = [actual_by_key[key] for key in sorted(actual_by_key.keys() - baseline_by_key.keys())]
+    deleted = [baseline_by_key[key] for key in sorted(baseline_by_key.keys() - actual_by_key.keys())]
+    modified = [
+        actual_by_key[key]
+        for key in sorted(actual_by_key.keys() & baseline_by_key.keys())
+        if actual_files[actual_by_key[key]] != baseline_files[baseline_by_key[key]]
+    ]
+    return sorted(added + modified + deleted, key=_manifest_key)
+
+
+def validate_workspace_manifest(
+    loaded_report: StructuredReportLoadResult,
+    *,
+    baseline_manifest_path: Path | None = None,
+) -> WorkspaceManifestValidationResult:
     report = loaded_report.report
     if report is None:
         return WorkspaceManifestValidationResult(
@@ -123,28 +190,55 @@ def validate_workspace_manifest(loaded_report: StructuredReportLoadResult) -> Wo
         )
 
     workspace_dir = loaded_report.source_path.parent
-    actual_files = collect_workspace_manifest_files(workspace_dir)
-    actual_by_key = {_manifest_key(path): path for path in actual_files}
+    actual_fingerprints = collect_workspace_manifest_fingerprints(workspace_dir)
+    actual_by_key = {_manifest_key(path): path for path in actual_fingerprints}
 
+    baseline_fingerprints: dict[str, str] | None = None
+    baseline_by_key: dict[str, str] = {}
+    if baseline_manifest_path is not None:
+        try:
+            baseline_fingerprints = read_workspace_manifest_snapshot(baseline_manifest_path)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            return WorkspaceManifestValidationResult(
+                status="failed",
+                missing_reported_files=[],
+                unreported_workspace_files=[],
+                ignored_reported_files=[],
+                workspace_dir=workspace_dir,
+                reason=f"could not read workspace baseline manifest: {exc}",
+            )
+        baseline_by_key = {_manifest_key(path): path for path in baseline_fingerprints}
+        expected_files = _diff_manifest_files(baseline_files=baseline_fingerprints, actual_files=actual_fingerprints)
+    else:
+        # Backward-compatible 0.1.5 behavior for empty workspaces: every
+        # reportable file present after execution must be listed in changed_files.
+        expected_files = sorted(actual_fingerprints, key=_manifest_key)
+
+    expected_by_key = {_manifest_key(path): path for path in expected_files}
     reported_files = [_normalize_manifest_path(path) for path in report.changed_files]
     reported_by_key = {_manifest_key(path): path for path in reported_files}
 
     ignored_reported_files = [path for path in reported_files if is_manifest_ignored_path(Path(path))]
     ignored_reported_keys = {_manifest_key(path) for path in ignored_reported_files}
 
-    missing_reported_files = [
-        path
-        for key, path in reported_by_key.items()
-        if key not in actual_by_key and key not in ignored_reported_keys
-    ]
+    missing_reported_files: list[str] = []
+    unchanged_reported_files: list[str] = []
+    for key, path in reported_by_key.items():
+        if key in ignored_reported_keys or key in expected_by_key:
+            continue
+        if baseline_fingerprints is not None and (key in actual_by_key or key in baseline_by_key):
+            unchanged_reported_files.append(path)
+        else:
+            missing_reported_files.append(path)
+
     unreported_workspace_files = [
         path
-        for key, path in actual_by_key.items()
+        for key, path in expected_by_key.items()
         if key not in reported_by_key
     ]
 
     status = "passed"
-    if missing_reported_files or unreported_workspace_files or ignored_reported_files:
+    if missing_reported_files or unreported_workspace_files or ignored_reported_files or unchanged_reported_files:
         status = "failed"
 
     return WorkspaceManifestValidationResult(
@@ -152,6 +246,7 @@ def validate_workspace_manifest(loaded_report: StructuredReportLoadResult) -> Wo
         missing_reported_files=sorted(missing_reported_files),
         unreported_workspace_files=sorted(unreported_workspace_files),
         ignored_reported_files=sorted(ignored_reported_files),
+        unchanged_reported_files=sorted(unchanged_reported_files),
         workspace_dir=workspace_dir,
     )
 
