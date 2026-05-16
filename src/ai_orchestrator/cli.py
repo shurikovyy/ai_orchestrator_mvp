@@ -46,6 +46,20 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Require EXECUTION_REPORT.json and validate it with the Pydantic schema before approving the run.",
     )
+    parser.add_argument(
+        "--rerun-report-test-commands",
+        action="store_true",
+        help=(
+            "After parsing EXECUTION_REPORT.json, rerun report.tests[*].command in the workspace. "
+            "Only allowlisted test commands are executed."
+        ),
+    )
+    parser.add_argument(
+        "--validation-command-timeout",
+        type=int,
+        default=60,
+        help="Timeout in seconds for each validator-rerun test command.",
+    )
     return parser
 
 
@@ -57,6 +71,8 @@ def main(argv: list[str] | None = None) -> int:
         acceptance_criteria=args.criteria,
         max_retries=args.max_retries,
         require_structured_report=args.require_structured_report,
+        rerun_report_test_commands=args.rerun_report_test_commands,
+        validation_command_timeout_seconds=args.validation_command_timeout,
     )
     if args.backend in {"codex", "codex_cli"} and args.codex_cmd:
         from ai_orchestrator.backends.codex_cli import CodexCliBackend

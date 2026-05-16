@@ -1,4 +1,4 @@
-# AI Orchestrator MVP 0.1.3
+# AI Orchestrator MVP 0.1.4
 
 Минимальный workflow-first инструмент для управляемого цикла:
 
@@ -17,12 +17,13 @@ user task -> planner -> executor -> validator -> retry/rework -> final_report
 - передает prompt в `codex exec` через `stdin`, чтобы не ломаться на Windows `.cmd` и multiline prompt;
 - собирает текстовые файлы из isolated workspace в `ExecutionResult.content`;
 - поддерживает structured validation через `EXECUTION_REPORT.json` и Pydantic-схему;
-- оставляет старую текстовую проверку acceptance criteria как fallback.
+- оставляет старую текстовую проверку acceptance criteria как fallback;
+- опционально повторно запускает test-команды из `EXECUTION_REPORT.json`, чтобы не доверять только отчету executor-а.
 
 ## Структура проекта
 
 ```text
-ai_orchestrator_mvp_0_1_2/
+ai_orchestrator_mvp/
 ├── pyproject.toml
 ├── package.json
 ├── package-lock.json
@@ -91,7 +92,7 @@ python -m venv .venv
 Ожидаемо:
 
 ```text
-Ran 12 tests ... OK
+Ran 15 tests ... OK
 ```
 
 ### 3. Подключить portable Node только для текущей Git Bash-сессии
@@ -296,7 +297,8 @@ Validator проверяет:
 - если есть test reports, все `tests[*].status == passed`;
 - если задача выглядит как test-задача, `tests` не должен быть пустым;
 - `changed_files` и `commands_run` не должны быть пустыми при `--require-structured-report`;
-- explicit criteria тоже проверяются.
+- explicit criteria тоже проверяются;
+- если включен `--rerun-report-test-commands`, validator повторно запускает allowlisted test-команды из `tests[*].command` в workspace.
 
 ## Structured criteria DSL
 
@@ -315,6 +317,46 @@ tests passed
 ```
 
 Неизвестные criteria проверяются старым способом: как substring в `ExecutionResult.content`.
+
+## Независимый rerun тестов validator-ом
+
+Structured report лучше текстового отчета, но сам по себе он всё еще остается утверждением executor-а. Включи флаг:
+
+```bash
+--rerun-report-test-commands
+```
+
+Тогда validator после парсинга `EXECUTION_REPORT.json` повторно запускает команды из:
+
+```text
+tests[*].command
+```
+
+в директории workspace, где лежит `EXECUTION_REPORT.json`.
+
+В MVP intentionally не запускаются все `commands_run`, потому что там могут быть write/setup/delete-команды. Повторяются только test-команды.
+
+Allowlist текущей версии:
+
+```text
+python -m unittest ...
+python -m pytest ...
+pytest ...
+```
+
+Команды с shell-control операторами блокируются до запуска:
+
+```text
+&&  ||  ;  |  >  <  `  $(...)
+```
+
+Python-команды запускаются через тот же interpreter, которым запущен orchestrator: `sys.executable`. Это снижает риск, что validator внезапно использует другой Python из `PATH`.
+
+Можно задать timeout на каждую команду:
+
+```bash
+--validation-command-timeout 60
+```
 
 ## Structured coding-task smoke-test
 
@@ -364,6 +406,8 @@ EOF
   --backend codex_cli \
   --codex-cmd "$CODEX_CMD" \
   --require-structured-report \
+  --rerun-report-test-commands \
+  --validation-command-timeout 60 \
   --max-retries 2
 ```
 
@@ -390,6 +434,7 @@ cat "$RUN/artifacts/step_1_attempt_1_codex_log.md"
 ```text
 final_report.md: Status: approved
 final_report.md: Structured report and explicit acceptance criteria passed.
+final_report.md: Validator re-ran test command successfully.
 step_1_attempt_1_codex_log.md: exit_code: 0
 artifacts/workspace/EXECUTION_REPORT.json
 artifacts/workspace/src/toy_calc.py
@@ -501,10 +546,10 @@ EXECUTION_REPORT.json is not valid JSON
 
 ## Что дальше
 
-Следующий архитектурный шаг — перестать доверять отчету executor-а как единственному источнику истины и добавить независимые проверяющие действия validator-а:
+Следующий архитектурный шаг — усилить проверку еще дальше:
 
-1. перечитать workspace-файлы;
-2. повторно запустить тесты из validator-а;
-3. сравнить фактические changed files с `EXECUTION_REPORT.json`;
-4. запретить изменения вне workspace;
-5. добавить allowlist команд для executor-а.
+1. сравнить фактические workspace-файлы с `changed_files` из `EXECUTION_REPORT.json`;
+2. сохранять stdout/stderr rerun-команд отдельными validator-артефактами;
+3. добавить policies для разрешенных путей и типов файлов;
+4. добавить режим применения результата в реальный git workspace только после approve;
+5. добавить отдельные validators для Python/Airflow/SQL задач.

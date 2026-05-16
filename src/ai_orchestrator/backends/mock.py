@@ -4,7 +4,7 @@ from pathlib import Path
 
 from ai_orchestrator.backends.base import Backend
 from ai_orchestrator.schemas import ExecutionResult, Plan, PlanStep, TaskSpec, ValidationResult
-from ai_orchestrator.validation import evaluate_structured_criterion, load_structured_report
+from ai_orchestrator.validation import evaluate_structured_criterion, load_structured_report, rerun_report_test_commands
 
 
 class MockBackend(Backend):
@@ -127,6 +127,32 @@ This is a deterministic demo artifact produced by the offline backend. Replace t
             if task.require_structured_report and task_mentions_tests and not structured_report.tests:
                 failed.append("tests_non_empty")
                 feedback.append("Task appears to require tests, but structured report tests is empty.")
+
+            if task.rerun_report_test_commands:
+                rerun_results = rerun_report_test_commands(
+                    loaded_report=structured,
+                    timeout_seconds=task.validation_command_timeout_seconds,
+                )
+                if not rerun_results:
+                    failed.append("validator_rerun_tests_present")
+                    feedback.append("Validator test rerun is required, but no test commands were found in the structured report.")
+                for rerun in rerun_results:
+                    if rerun.status == "passed":
+                        feedback.append(
+                            f"Validator re-ran test command successfully: `{rerun.command}` "
+                            f"(exit_code={rerun.exit_code})."
+                        )
+                    else:
+                        failed.append(f"validator_rerun_test_command:{rerun.command or 'unknown'}")
+                        detail = rerun.reason or f"exit_code={rerun.exit_code}"
+                        feedback.append(
+                            f"Validator could not verify test command `{rerun.command}`: "
+                            f"status={rerun.status}, {detail}."
+                        )
+                        if rerun.stdout:
+                            feedback.append(f"Validator rerun stdout: {rerun.stdout[:500]}")
+                        if rerun.stderr:
+                            feedback.append(f"Validator rerun stderr: {rerun.stderr[:500]}")
 
         for criterion in step.acceptance_criteria:
             if structured_report is not None:

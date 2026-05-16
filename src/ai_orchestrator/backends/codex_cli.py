@@ -154,6 +154,7 @@ Structured execution report is required. Create or overwrite `EXECUTION_REPORT.j
   "validation_notes": ["note or empty list"]
 }
 Use `status: completed` only when the requested artifact is produced and required checks pass. If tests are requested, include at least one item in `tests` and set its status to `passed` only if the command actually passed.
+The deterministic validator may rerun each command from `tests[*].command`, so every test command must be safe, repeatable, and runnable from the workspace root.
 """
 
         prompt = f"""You are the executor in a deterministic orchestration loop.

@@ -180,6 +180,129 @@ class StructuredReportValidationTests(unittest.TestCase):
         self.assertFalse(validation.approved)
         self.assertIn("valid_structured_execution_report", validation.failed_criteria)
 
+    def test_rerun_report_test_commands_approves_when_reported_tests_really_pass(self):
+        with temporary_test_dir() as tmp:
+            tests_dir = tmp / "tests"
+            tests_dir.mkdir()
+            (tests_dir / "test_smoke.py").write_text(
+                "import unittest\n\n"
+                "class SmokeTest(unittest.TestCase):\n"
+                "    def test_truth(self):\n"
+                "        self.assertTrue(True)\n",
+                encoding="utf-8",
+            )
+            report_path = tmp / "EXECUTION_REPORT.json"
+            report_path.write_text(json.dumps(make_report(), indent=2), encoding="utf-8")
+            result = ExecutionResult(
+                step_id="step_1",
+                attempt=1,
+                status="completed",
+                content="executor output",
+                artifact_paths=[str(report_path)],
+            )
+            task = TaskSpec(
+                description="Create toy project and run tests",
+                acceptance_criteria=["tests.status=passed"],
+                require_structured_report=True,
+                rerun_report_test_commands=True,
+            )
+            step = PlanStep(
+                id="step_1",
+                title="Create task artifact",
+                description=task.description,
+                acceptance_criteria=task.acceptance_criteria,
+            )
+
+            validation = MockBackend().validate_step(task=task, step=step, result=result)
+
+        self.assertTrue(validation.approved, validation.feedback)
+        self.assertTrue(any("Validator re-ran test command successfully" in item for item in validation.feedback))
+
+    def test_rerun_report_test_commands_fails_when_actual_test_fails(self):
+        with temporary_test_dir() as tmp:
+            tests_dir = tmp / "tests"
+            tests_dir.mkdir()
+            (tests_dir / "test_smoke.py").write_text(
+                "import unittest\n\n"
+                "class SmokeTest(unittest.TestCase):\n"
+                "    def test_truth(self):\n"
+                "        self.assertTrue(False)\n",
+                encoding="utf-8",
+            )
+            report_path = tmp / "EXECUTION_REPORT.json"
+            # The report claims tests passed. The validator rerun must catch the lie.
+            report_path.write_text(json.dumps(make_report(), indent=2), encoding="utf-8")
+            result = ExecutionResult(
+                step_id="step_1",
+                attempt=1,
+                status="completed",
+                content="executor output",
+                artifact_paths=[str(report_path)],
+            )
+            task = TaskSpec(
+                description="Create toy project and run tests",
+                acceptance_criteria=["tests.status=passed"],
+                require_structured_report=True,
+                rerun_report_test_commands=True,
+            )
+            step = PlanStep(
+                id="step_1",
+                title="Create task artifact",
+                description=task.description,
+                acceptance_criteria=task.acceptance_criteria,
+            )
+
+            validation = MockBackend().validate_step(task=task, step=step, result=result)
+
+        self.assertFalse(validation.approved)
+        self.assertTrue(
+            any(item.startswith("validator_rerun_test_command:") for item in validation.failed_criteria),
+            validation.failed_criteria,
+        )
+
+    def test_rerun_report_test_commands_blocks_shell_control_operators(self):
+        with temporary_test_dir() as tmp:
+            report = make_report(
+                tests=[
+                    {
+                        "name": "bad command",
+                        "command": "python -m unittest discover -s tests && echo hacked",
+                        "status": "passed",
+                        "total": 1,
+                        "passed": 1,
+                        "failed": 0,
+                        "output": "OK",
+                    }
+                ]
+            )
+            report_path = tmp / "EXECUTION_REPORT.json"
+            report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+            result = ExecutionResult(
+                step_id="step_1",
+                attempt=1,
+                status="completed",
+                content="executor output",
+                artifact_paths=[str(report_path)],
+            )
+            task = TaskSpec(
+                description="Create toy project and run tests",
+                acceptance_criteria=["tests.status=passed"],
+                require_structured_report=True,
+                rerun_report_test_commands=True,
+            )
+            step = PlanStep(
+                id="step_1",
+                title="Create task artifact",
+                description=task.description,
+                acceptance_criteria=task.acceptance_criteria,
+            )
+
+            validation = MockBackend().validate_step(task=task, step=step, result=result)
+
+        self.assertFalse(validation.approved)
+        self.assertTrue(any("validator_rerun_test_command:" in item for item in validation.failed_criteria))
+        self.assertTrue(any("shell control" in item for item in validation.feedback))
+
 
 if __name__ == "__main__":
     unittest.main()

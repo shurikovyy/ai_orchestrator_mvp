@@ -16,6 +16,8 @@ class TaskSpec(BaseModel):
     acceptance_criteria: list[str] = Field(default_factory=list)
     max_retries: int = Field(default=2, ge=0, le=10)
     require_structured_report: bool = False
+    rerun_report_test_commands: bool = False
+    validation_command_timeout_seconds: int = Field(default=60, ge=1, le=600)
 
     @field_validator("description")
     @classmethod
