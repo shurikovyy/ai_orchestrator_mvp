@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 from ai_orchestrator.backends import get_backend
 from ai_orchestrator.engine import TaskExecutionEngine
+from ai_orchestrator.review import accept_run
 from ai_orchestrator.schemas import TaskSpec
 
 
-def build_parser() -> argparse.ArgumentParser:
+def build_run_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="ai-orchestrator",
         description="Run a deterministic plan/execute/validate/rework workflow.",
@@ -79,8 +81,33 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = build_parser()
+def build_accept_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="ai-orchestrator accept-run",
+        description="Apply an approved run's changed files to the seed/target git repo and commit them.",
+    )
+    parser.add_argument("run_id", help="Run id to accept, for example run_20260516_122835_a9e9c2")
+    parser.add_argument("--runs-dir", default=".runs", help="Directory containing run state and artifacts.")
+    parser.add_argument(
+        "--target-workspace",
+        default=None,
+        help="Optional git repo to apply changes to. Defaults to the run's seed_workspace_path.",
+    )
+    parser.add_argument(
+        "--commit-message",
+        default=None,
+        help="Git commit message. Defaults to 'chore: accept orchestrator run <run_id>'.",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Validate and print what would be applied, but do not modify or commit the target repo.",
+    )
+    return parser
+
+
+def run_main(argv: list[str] | None = None) -> int:
+    parser = build_run_parser()
     args = parser.parse_args(argv)
     task = TaskSpec(
         description=args.task,
@@ -102,12 +129,50 @@ def main(argv: list[str] | None = None) -> int:
     state = engine.run(task)
     run_dir = Path(args.runs_dir) / state.run_id
     final_report = run_dir / "final_report.md"
+    review_packet = run_dir / "REVIEW_PACKET.md"
     print(f"run_id={state.run_id}")
     print(f"status={state.final_status}")
     print(f"backend={backend.name}")
     print(f"final_report={final_report}")
+    print(f"review_packet={review_packet}")
     print(f"state={run_dir / 'state.json'}")
     return 0 if state.final_status == "approved" else 1
+
+
+def accept_main(argv: list[str] | None = None) -> int:
+    parser = build_accept_parser()
+    args = parser.parse_args(argv)
+    try:
+        result = accept_run(
+            run_id=args.run_id,
+            runs_dir=Path(args.runs_dir),
+            target_workspace_override=args.target_workspace,
+            commit_message=args.commit_message,
+            dry_run=args.dry_run,
+        )
+    except Exception as exc:  # noqa: BLE001 - CLI should print deterministic error text.
+        print(f"accept_status=failed")
+        print(f"error={exc}")
+        return 1
+    print("accept_status=accepted" if not args.dry_run else "accept_status=dry_run_ok")
+    print(f"run_id={result.run_id}")
+    print(f"target_workspace={result.target_workspace}")
+    print(f"commit_hash={result.commit_hash or '(none)'}")
+    print(f"acceptance={result.acceptance_path}")
+    if result.applied_files:
+        print("applied_files=" + ",".join(result.applied_files))
+    if result.deleted_files:
+        print("deleted_files=" + ",".join(result.deleted_files))
+    if result.skipped_files:
+        print("skipped_files=" + ",".join(result.skipped_files))
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = list(sys.argv[1:] if argv is None else argv)
+    if args and args[0] == "accept-run":
+        return accept_main(args[1:])
+    return run_main(args)
 
 
 if __name__ == "__main__":

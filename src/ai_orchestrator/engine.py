@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ai_orchestrator.backends.base import Backend
+from ai_orchestrator.review import write_review_packet
 from ai_orchestrator.schemas import RunState, TaskSpec
 
 
@@ -52,10 +53,12 @@ class TaskExecutionEngine:
 
         state.final_status = "approved" if all_approved else "failed"
         final_report = self._write_final_report(state, run_dir)
-        # Make the final report discoverable through a synthetic execution note.
+        review_packet = write_review_packet(run_dir)
+        # Make reports discoverable through synthetic execution notes.
         state.touch()
         state.save_json(run_dir / "state.json")
         (run_dir / "LATEST_RESULT.txt").write_text(str(final_report), encoding="utf-8")
+        (run_dir / "LATEST_REVIEW_PACKET.txt").write_text(str(review_packet), encoding="utf-8")
         return state
 
     def _write_final_report(self, state: RunState, run_dir: Path) -> Path:
@@ -90,7 +93,7 @@ class TaskExecutionEngine:
             ])
             for item in validation.feedback:
                 lines.append(f"  - {item}")
-        lines.extend(["", "## Artifacts"])
+        lines.extend(["", "## Review packet", f"- {run_dir / 'REVIEW_PACKET.md'}", "", "## Artifacts"])
         for execution in state.executions:
             for artifact in execution.artifact_paths:
                 lines.append(f"- {artifact}")

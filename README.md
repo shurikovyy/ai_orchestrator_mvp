@@ -1,4 +1,4 @@
-# AI Orchestrator MVP 0.1.6
+# AI Orchestrator MVP 0.1.7
 
 Минимальный workflow-first инструмент для управляемого цикла:
 
@@ -8,7 +8,7 @@ user task -> planner -> executor -> validator -> retry/rework -> final_report
 
 Ключевая идея: **Codex/LLM выполняет работу, но не принимает решение о приемке**. Приемка остается в детерминированном Python-коде.
 
-## Что умеет 0.1.6
+## Что умеет 0.1.7
 
 - хранит состояние запуска в `.runs/<run_id>/state.json`;
 - сохраняет логи и артефакты в `.runs/<run_id>/artifacts/`;
@@ -20,7 +20,9 @@ user task -> planner -> executor -> validator -> retry/rework -> final_report
 - опционально повторно запускает test-команды из `EXECUTION_REPORT.json` через `--rerun-report-test-commands`;
 - опционально сверяет `changed_files` с фактическими файлами workspace через `--validate-workspace-manifest`;
 - поддерживает `--seed-workspace <path>`: копирует существующий toy/project workspace в isolated run workspace;
-- при seed workspace сохраняет baseline manifest до Codex и проверяет `changed_files` как diff относительно baseline.
+- при seed workspace сохраняет baseline manifest до Codex и проверяет `changed_files` как diff относительно baseline;
+- создает `REVIEW_PACKET.md` после каждого run;
+- поддерживает controlled accept/commit через `ai-orchestrator accept-run <run_id>`.
 
 ## Что не коммитить и не архивировать
 
@@ -69,7 +71,7 @@ python -m venv .venv
 Ожидаемо:
 
 ```text
-Ran 25 tests ... OK
+Ran 29 tests ... OK
 ```
 
 ### 3. Подключить portable Node только для текущей Git Bash-сессии
@@ -456,6 +458,16 @@ if __name__ == "__main__":
 PY
 ```
 
+Сделай seed project git-репозиторием, чтобы потом проверить controlled accept/commit:
+
+```bash
+git -C toy_seed_project init
+git -C toy_seed_project config user.email "local@example.com"
+git -C toy_seed_project config user.name "Local User"
+git -C toy_seed_project add .
+git -C toy_seed_project commit -m "seed toy project with subtract bug"
+```
+
 Проверь, что seed действительно содержит баг:
 
 ```bash
@@ -519,8 +531,10 @@ backend=codex_cli
 Проверка:
 
 ```bash
-RUN=".runs/<run_id>"
+RUN_ID="<run_id>"
+RUN=".runs/$RUN_ID"
 cat "$RUN/final_report.md"
+cat "$RUN/REVIEW_PACKET.md"
 cat "$RUN/artifacts/workspace/EXECUTION_REPORT.json"
 cat "$RUN/artifacts/workspace/src/toy_calc.py"
 cat "$RUN/artifacts/step_1_attempt_1_codex_log.md"
@@ -532,13 +546,85 @@ cat "$RUN/artifacts/step_1_attempt_1_codex_log.md"
 Workspace file manifest matches structured report changed_files.
 ```
 
-А `EXECUTION_REPORT.json.changed_files` должен содержать как минимум:
+А `EXECUTION_REPORT.json.changed_files` должен содержать только реальные baseline-relative изменения, например:
 
 ```json
-["src/toy_calc.py", "EXECUTION_REPORT.json"]
+["src/toy_calc.py", "tests/__init__.py", "EXECUTION_REPORT.json"]
 ```
 
-Он не должен перечислять неизмененные seed-файлы.
+`tests/__init__.py` может появиться, если точная команда `python -m unittest discover -s tests -t .` требует импортируемый каталог `tests/`. Неизмененные seed-файлы перечисляться не должны.
+
+
+## Controlled accept/commit
+
+После `status=approved` orchestrator создает:
+
+```text
+.runs/<run_id>/REVIEW_PACKET.md
+```
+
+Review packet содержит:
+
+```text
+run status
+structured report summary
+validation feedback
+baseline-relative changed_files
+apply plan
+diff preview
+accept command
+```
+
+Сначала смотри пакет:
+
+```bash
+RUN_ID="<run_id>"
+cat ".runs/$RUN_ID/REVIEW_PACKET.md"
+```
+
+Если результат принят, применить изменения из isolated workspace обратно в seed git repo и сделать commit можно отдельной командой:
+
+```bash
+./.venv/Scripts/python.exe -m ai_orchestrator.cli accept-run "$RUN_ID" \
+  --runs-dir .runs \
+  --commit-message "fix: correct toy subtract implementation"
+```
+
+Ожидаемо:
+
+```text
+accept_status=accepted
+commit_hash=<hash>
+```
+
+Проверка target repo:
+
+```bash
+git -C toy_seed_project log -1 --oneline
+git -C toy_seed_project show --stat --oneline HEAD
+git -C toy_seed_project show -- src/toy_calc.py
+```
+
+Что делает `accept-run`:
+
+```text
+1. требует final_status=approved;
+2. требует валидный EXECUTION_REPORT.json;
+3. берет target repo из seed_workspace_path или из --target-workspace;
+4. отказывается работать с dirty git repo;
+5. применяет только безопасные changed_files;
+6. не переносит EXECUTION_REPORT.json в target repo;
+7. делает git commit;
+8. пишет .runs/<run_id>/ACCEPTANCE.md.
+```
+
+Dry-run без изменений и commit:
+
+```bash
+./.venv/Scripts/python.exe -m ai_orchestrator.cli accept-run "$RUN_ID" \
+  --runs-dir .runs \
+  --dry-run
+```
 
 ## Troubleshooting
 
@@ -613,24 +699,40 @@ SEED_WORKSPACE="$(pwd -W)/toy_seed_project"
 
 Исправление: убрать неизмененный файл из `changed_files`.
 
+### `accept-run` отказался: target git repository is dirty
+
+Причина: в seed/target repo уже есть незакоммиченные или untracked изменения. Это защитное поведение.
+
+Проверь:
+
+```bash
+git -C toy_seed_project status --short
+```
+
+Дальше либо закоммить/удали эти изменения, либо используй другой clean clone.
+
 ## Что дальше
 
-Следующий архитектурный шаг — безопасное применение результата после approve:
+0.1.7 закрывает ручной gate `review → accept-run → commit`. Следующий архитектурный шаг — task queue/pipeline runner:
 
 ```text
-0.1.7 — review packet + controlled apply/commit
+0.1.8 — tasks.yaml + run-task + explicit accept-run gate
 ```
 
 Идея:
 
 ```text
-run on seed/disposable workspace
+tasks.yaml
 ↓
-validator approved
+run one task in isolated workspace
 ↓
-generate REVIEW_PACKET.md with diff/stat/report
+validate structured report / tests / manifest
+↓
+generate REVIEW_PACKET.md
 ↓
 manual assistant/human approval
 ↓
-apply patch or commit only allowed changed files
+accept-run commit
+↓
+next task
 ```
