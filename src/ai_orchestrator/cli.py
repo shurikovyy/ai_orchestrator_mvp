@@ -41,6 +41,11 @@ def build_parser() -> argparse.ArgumentParser:
             "Can also be set with AI_ORCHESTRATOR_CODEX_CMD."
         ),
     )
+    parser.add_argument(
+        "--require-structured-report",
+        action="store_true",
+        help="Require EXECUTION_REPORT.json and validate it with the Pydantic schema before approving the run.",
+    )
     return parser
 
 
@@ -51,6 +56,7 @@ def main(argv: list[str] | None = None) -> int:
         description=args.task,
         acceptance_criteria=args.criteria,
         max_retries=args.max_retries,
+        require_structured_report=args.require_structured_report,
     )
     if args.backend in {"codex", "codex_cli"} and args.codex_cmd:
         from ai_orchestrator.backends.codex_cli import CodexCliBackend

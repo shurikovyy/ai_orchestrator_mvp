@@ -1,0 +1,24 @@
+In the isolated Codex executor workspace, create a tiny Python toy project.
+
+Requirements:
+1. Create src/toy_calc.py.
+2. Implement:
+   - add(a, b)
+   - subtract(a, b)
+   - multiply(a, b)
+   - divide(a, b), raising ZeroDivisionError for division by zero.
+3. Create tests/test_toy_calc.py using Python unittest.
+4. Tests must cover:
+   - add
+   - subtract
+   - multiply
+   - divide
+   - divide by zero
+5. Run:
+   python -m unittest discover -s tests
+6. Create EXECUTION_REPORT.json using the required structured schema.
+7. Do not create EXECUTION_REPORT.md.
+8. Do not run git commands unless the workspace is a git repository.
+
+Do not ask follow-up questions.
+Do not modify files outside the isolated workspace.

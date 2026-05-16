@@ -4,6 +4,7 @@ from pathlib import Path
 
 from ai_orchestrator.backends.base import Backend
 from ai_orchestrator.schemas import ExecutionResult, Plan, PlanStep, TaskSpec, ValidationResult
+from ai_orchestrator.validation import evaluate_structured_criterion, load_structured_report
 
 
 class MockBackend(Backend):
@@ -87,21 +88,82 @@ This is a deterministic demo artifact produced by the offline backend. Replace t
         result: ExecutionResult,
     ) -> ValidationResult:
         content_lower = result.content.lower()
-        failed = [criterion for criterion in step.acceptance_criteria if criterion.lower() not in content_lower]
-        total = max(1, len(step.acceptance_criteria))
-        score = (total - len(failed)) / total
-        approved = result.status == "completed" and not failed
-        feedback = []
+        failed: list[str] = []
+        feedback: list[str] = []
+
+        structured = load_structured_report(result)
+        structured_report = structured.report
+
         if result.status != "completed":
+            failed.append("execution_status_completed")
             feedback.append("Execution status is not completed.")
-        feedback.extend(f"Missing criterion: {item}" for item in failed)
+
+        if structured.error:
+            failed.append("valid_structured_execution_report")
+            feedback.append(structured.error)
+        elif structured_report is None:
+            if task.require_structured_report:
+                failed.append("structured_execution_report_present")
+                feedback.append("Structured execution report is required, but EXECUTION_REPORT.json was not found.")
+        else:
+            feedback.append(f"Structured execution report parsed successfully from {structured.source}.")
+            if structured_report.status != "completed":
+                failed.append("report.status=completed")
+                feedback.append(f"Structured report status is not completed: {structured_report.status}.")
+            for test in structured_report.tests:
+                if test.status != "passed":
+                    failed.append(f"test_status_passed:{test.name}")
+                    feedback.append(f"Test report `{test.name}` is not passed: {test.status}.")
+            if task.require_structured_report and not structured_report.changed_files:
+                failed.append("changed_files_non_empty")
+                feedback.append("Structured report changed_files is empty.")
+            if task.require_structured_report and not structured_report.commands_run:
+                failed.append("commands_run_non_empty")
+                feedback.append("Structured report commands_run is empty.")
+
+            task_mentions_tests = "test" in task.description.lower() or any(
+                "test" in criterion.lower() for criterion in step.acceptance_criteria
+            )
+            if task.require_structured_report and task_mentions_tests and not structured_report.tests:
+                failed.append("tests_non_empty")
+                feedback.append("Task appears to require tests, but structured report tests is empty.")
+
+        for criterion in step.acceptance_criteria:
+            if structured_report is not None:
+                handled_ok, reason = evaluate_structured_criterion(criterion, structured_report)
+                if reason is None:
+                    if handled_ok:
+                        continue
+                    failed.append(criterion)
+                    feedback.append(f"Structured criterion failed: {criterion}")
+                    continue
+                if reason != "UNHANDLED":
+                    failed.append(criterion)
+                    feedback.append(reason)
+                    continue
+
+            if criterion.lower() not in content_lower:
+                failed.append(criterion)
+                feedback.append(f"Missing criterion: {criterion}")
+
+        explicit_total = len(step.acceptance_criteria)
+        structural_total = 1 if (task.require_structured_report or structured_report is not None) else 0
+        total = max(1, explicit_total + structural_total)
+        # Internal structural failures are counted pessimistically. Duplicate
+        # entries are removed for cleaner reports but still preserve order.
+        deduped_failed = list(dict.fromkeys(failed))
+        score = max(0.0, (total - len(deduped_failed)) / total)
+        approved = not deduped_failed
         if approved:
-            feedback.append("All explicit acceptance criteria are present in the artifact.")
+            if structured_report is not None:
+                feedback.append("Structured report and explicit acceptance criteria passed.")
+            else:
+                feedback.append("All explicit acceptance criteria are present in the artifact.")
         return ValidationResult(
             step_id=step.id,
             attempt=result.attempt,
             approved=approved,
             score=score,
-            failed_criteria=failed,
+            failed_criteria=deduped_failed,
             feedback=feedback,
         )

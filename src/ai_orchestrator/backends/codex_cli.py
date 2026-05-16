@@ -133,6 +133,29 @@ class CodexCliBackend(MockBackend):
 
         feedback = "\n".join(f"- {item}" for item in previous_feedback) or "- none"
         criteria = "\n".join(f"- {item}" for item in step.acceptance_criteria) or "- no explicit criteria"
+        structured_report_instruction = ""
+        if task.require_structured_report:
+            structured_report_instruction = """
+
+Structured execution report is required. Create or overwrite `EXECUTION_REPORT.json` at the workspace root. It must be valid JSON, not Markdown, and match this schema:
+{
+  "schema_version": "1.0",
+  "status": "completed | failed | partial",
+  "summary": "short summary of what changed",
+  "changed_files": ["relative/path.ext"],
+  "commands_run": [
+    {"command": "command string", "exit_code": 0, "status": "passed | failed | skipped", "summary": "short result"}
+  ],
+  "tests": [
+    {"name": "test name", "command": "test command", "status": "passed | failed | skipped | not_run", "total": 0, "passed": 0, "failed": 0, "output": "short test output"}
+  ],
+  "risks": ["risk or empty list"],
+  "assumptions": ["assumption or empty list"],
+  "validation_notes": ["note or empty list"]
+}
+Use `status: completed` only when the requested artifact is produced and required checks pass. If tests are requested, include at least one item in `tests` and set its status to `passed` only if the command actually passed.
+"""
+
         prompt = f"""You are the executor in a deterministic orchestration loop.
 
 Task:
@@ -146,7 +169,7 @@ Acceptance criteria:
 
 Previous validator feedback:
 {feedback}
-
+{structured_report_instruction}
 Produce the requested artifact in the workspace. Do not ask follow-up questions. If assumptions are needed, state them explicitly in the final response.
 """
 

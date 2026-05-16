@@ -69,7 +69,7 @@ class CodexCliBackendTests(unittest.TestCase):
 
     def test_execute_step_includes_workspace_files_in_content_and_artifacts(self):
         backend = CodexCliBackend(codex_cmd="codex")
-        task = TaskSpec(description="Create RESULT.md")
+        task = TaskSpec(description="Create RESULT.md", require_structured_report=True)
         step = PlanStep(id="step_1", title="Create file", description="Write RESULT.md")
 
         captured_run_kwargs = {}
@@ -112,6 +112,7 @@ class CodexCliBackendTests(unittest.TestCase):
         self.assertEqual(result.status, "completed")
         self.assertIn("Create RESULT.md", captured_run_kwargs["input"])
         self.assertIn("Produce the requested artifact", captured_run_kwargs["input"])
+        self.assertIn("EXECUTION_REPORT.json", captured_run_kwargs["input"])
         self.assertTrue(captured_cmd)
         self.assertNotIn("Create RESULT.md", captured_cmd)
         self.assertIn("## workspace files", result.content)

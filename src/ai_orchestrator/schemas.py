@@ -15,6 +15,7 @@ class TaskSpec(BaseModel):
     description: str
     acceptance_criteria: list[str] = Field(default_factory=list)
     max_retries: int = Field(default=2, ge=0, le=10)
+    require_structured_report: bool = False
 
     @field_validator("description")
     @classmethod
@@ -42,6 +43,75 @@ class Plan(BaseModel):
     task_id: str
     summary: str
     steps: list[PlanStep]
+
+
+class CommandRunReport(BaseModel):
+    """One command the executor claims to have run."""
+
+    command: str
+    exit_code: int | None = None
+    status: Literal["passed", "failed", "skipped"]
+    summary: str = ""
+
+    @field_validator("command")
+    @classmethod
+    def command_not_empty(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("command must not be empty")
+        return value
+
+
+class TestRunReport(BaseModel):
+    """One test command/result the executor claims to have run."""
+
+    name: str = "tests"
+    command: str
+    status: Literal["passed", "failed", "skipped", "not_run"]
+    total: int | None = None
+    passed: int | None = None
+    failed: int | None = None
+    output: str = ""
+
+    @field_validator("command")
+    @classmethod
+    def command_not_empty(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("test command must not be empty")
+        return value
+
+
+class StructuredExecutionReport(BaseModel):
+    """Machine-readable execution report produced by executor backends.
+
+    The report is intentionally small and conservative. It does not prove that
+    the executor is truthful; it gives the deterministic validator a typed
+    contract to inspect before falling back to text matching.
+    """
+
+    schema_version: Literal["1.0"] = "1.0"
+    status: Literal["completed", "failed", "partial"]
+    summary: str
+    changed_files: list[str] = Field(default_factory=list)
+    commands_run: list[CommandRunReport] = Field(default_factory=list)
+    tests: list[TestRunReport] = Field(default_factory=list)
+    risks: list[str] = Field(default_factory=list)
+    assumptions: list[str] = Field(default_factory=list)
+    validation_notes: list[str] = Field(default_factory=list)
+
+    @field_validator("summary")
+    @classmethod
+    def summary_not_empty(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("summary must not be empty")
+        return value
+
+    @field_validator("changed_files", "risks", "assumptions", "validation_notes")
+    @classmethod
+    def strip_string_lists(cls, value: list[str]) -> list[str]:
+        return [item.strip() for item in value if item.strip()]
 
 
 class ExecutionResult(BaseModel):
