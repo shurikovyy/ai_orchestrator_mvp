@@ -78,6 +78,16 @@ def build_run_parser() -> argparse.ArgumentParser:
         default=60,
         help="Timeout in seconds for each validator-rerun test command.",
     )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Print orchestrator progress logs to the console while a run is executing.",
+    )
+    parser.add_argument(
+        "--stream-codex-output",
+        action="store_true",
+        help="Stream Codex CLI stdout/stderr to the console while codex exec is running.",
+    )
     return parser
 
 
@@ -103,6 +113,14 @@ def build_accept_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Validate and print what would be applied, but do not modify or commit the target repo.",
     )
+    parser.add_argument(
+        "--init-target-git",
+        action="store_true",
+        help=(
+            "If the target workspace is not a git repo, initialize it and create a baseline commit before applying. "
+            "Use this only for disposable/toy seed workspaces, not production repos."
+        ),
+    )
     return parser
 
 
@@ -119,13 +137,13 @@ def run_main(argv: list[str] | None = None) -> int:
         seed_workspace_path=args.seed_workspace,
         validation_command_timeout_seconds=args.validation_command_timeout,
     )
-    if args.backend in {"codex", "codex_cli"} and args.codex_cmd:
+    if args.backend in {"codex", "codex_cli"} and (args.codex_cmd or args.stream_codex_output):
         from ai_orchestrator.backends.codex_cli import CodexCliBackend
 
-        backend = CodexCliBackend(codex_cmd=args.codex_cmd)
+        backend = CodexCliBackend(codex_cmd=args.codex_cmd, stream_output=args.stream_codex_output)
     else:
         backend = get_backend(args.backend)
-    engine = TaskExecutionEngine(backend=backend, runs_dir=Path(args.runs_dir))
+    engine = TaskExecutionEngine(backend=backend, runs_dir=Path(args.runs_dir), verbose=args.verbose)
     state = engine.run(task)
     run_dir = Path(args.runs_dir) / state.run_id
     final_report = run_dir / "final_report.md"
@@ -149,6 +167,7 @@ def accept_main(argv: list[str] | None = None) -> int:
             target_workspace_override=args.target_workspace,
             commit_message=args.commit_message,
             dry_run=args.dry_run,
+            init_target_git=args.init_target_git,
         )
     except Exception as exc:  # noqa: BLE001 - CLI should print deterministic error text.
         print(f"accept_status=failed")

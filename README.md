@@ -1,4 +1,4 @@
-# AI Orchestrator MVP 0.1.7
+# AI Orchestrator MVP 0.1.7.1
 
 Минимальный workflow-first инструмент для управляемого цикла:
 
@@ -8,7 +8,7 @@ user task -> planner -> executor -> validator -> retry/rework -> final_report
 
 Ключевая идея: **Codex/LLM выполняет работу, но не принимает решение о приемке**. Приемка остается в детерминированном Python-коде.
 
-## Что умеет 0.1.7
+## Что умеет 0.1.7.1
 
 - хранит состояние запуска в `.runs/<run_id>/state.json`;
 - сохраняет логи и артефакты в `.runs/<run_id>/artifacts/`;
@@ -21,8 +21,11 @@ user task -> planner -> executor -> validator -> retry/rework -> final_report
 - опционально сверяет `changed_files` с фактическими файлами workspace через `--validate-workspace-manifest`;
 - поддерживает `--seed-workspace <path>`: копирует существующий toy/project workspace в isolated run workspace;
 - при seed workspace сохраняет baseline manifest до Codex и проверяет `changed_files` как diff относительно baseline;
-- создает `REVIEW_PACKET.md` после каждого run;
-- поддерживает controlled accept/commit через `ai-orchestrator accept-run <run_id>`.
+- создает `REVIEW_PACKET.md` после каждого run и пишет в него финальный, а не промежуточный статус;
+- поддерживает controlled accept/commit через `ai-orchestrator accept-run <run_id>`;
+- поддерживает console progress logs через `--verbose`;
+- поддерживает live Codex CLI streaming через `--stream-codex-output`;
+- для disposable/toy seed workspace может инициализировать git через `accept-run --init-target-git`.
 
 ## Что не коммитить и не архивировать
 
@@ -71,7 +74,7 @@ python -m venv .venv
 Ожидаемо:
 
 ```text
-Ran 29 tests ... OK
+Ran 31 tests ... OK
 ```
 
 ### 3. Подключить portable Node только для текущей Git Bash-сессии
@@ -233,6 +236,8 @@ TASK_EOF
   --rerun-report-test-commands \
   --validate-workspace-manifest \
   --validation-command-timeout 60 \
+  --verbose \
+  --stream-codex-output \
   --max-retries 2
 ```
 
@@ -518,6 +523,8 @@ TASK_EOF
   --rerun-report-test-commands \
   --validate-workspace-manifest \
   --validation-command-timeout 60 \
+  --verbose \
+  --stream-codex-output \
   --max-retries 2
 ```
 
@@ -626,6 +633,17 @@ Dry-run без изменений и commit:
   --dry-run
 ```
 
+Если `toy_seed_project` уже создан, но не был заранее инициализирован как git repo, для disposable/toy проверки можно выполнить:
+
+```bash
+./.venv/Scripts/python.exe -m ai_orchestrator.cli accept-run "$RUN_ID" \
+  --runs-dir .runs \
+  --commit-message "fix: correct toy subtract implementation" \
+  --init-target-git
+```
+
+Для реальных проектов `--init-target-git` использовать не нужно: целевой проект должен быть уже существующим clean git repo.
+
 ## Troubleshooting
 
 ### `ModuleNotFoundError: No module named 'ai_orchestrator'`
@@ -699,6 +717,33 @@ SEED_WORKSPACE="$(pwd -W)/toy_seed_project"
 
 Исправление: убрать неизмененный файл из `changed_files`.
 
+
+### `accept-run` отказался: target workspace is not a git repository
+
+Причина: target workspace из `--seed-workspace` не содержит `.git`, а `accept-run` делает именно git commit.
+
+Правильный вариант для seed-проекта:
+
+```bash
+git -C toy_seed_project init
+git -C toy_seed_project config user.email "local@example.com"
+git -C toy_seed_project config user.name "Local User"
+git -C toy_seed_project add .
+git -C toy_seed_project commit -m "seed toy project baseline"
+```
+
+Затем повтори:
+
+```bash
+./.venv/Scripts/python.exe -m ai_orchestrator.cli accept-run "$RUN_ID" --runs-dir .runs
+```
+
+Для disposable/toy проверки можно вместо ручного init использовать:
+
+```bash
+./.venv/Scripts/python.exe -m ai_orchestrator.cli accept-run "$RUN_ID" --runs-dir .runs --init-target-git
+```
+
 ### `accept-run` отказался: target git repository is dirty
 
 Причина: в seed/target repo уже есть незакоммиченные или untracked изменения. Это защитное поведение.
@@ -713,7 +758,7 @@ git -C toy_seed_project status --short
 
 ## Что дальше
 
-0.1.7 закрывает ручной gate `review → accept-run → commit`. Следующий архитектурный шаг — task queue/pipeline runner:
+0.1.7.1 закрывает ручной gate `review → accept-run → commit`. Следующий архитектурный шаг — task queue/pipeline runner:
 
 ```text
 0.1.8 — tasks.yaml + run-task + explicit accept-run gate

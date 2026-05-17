@@ -6,6 +6,8 @@ import re
 import shlex
 import shutil
 import subprocess
+import sys
+import threading
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -56,6 +58,7 @@ class CodexCliBackend(MockBackend):
         *,
         codex_cmd: str | Sequence[str] | None = None,
         timeout_seconds: int = 1800,
+        stream_output: bool = False,
     ) -> None:
         # Priority:
         # 1. Explicit CLI argument passed by ai_orchestrator.cli
@@ -65,6 +68,7 @@ class CodexCliBackend(MockBackend):
         raw_cmd = codex_cmd or os.environ.get("AI_ORCHESTRATOR_CODEX_CMD") or os.environ.get("CODEX_CMD") or "codex"
         self.codex_cmd = self._normalize_command(raw_cmd)
         self.timeout_seconds = timeout_seconds
+        self.stream_output = stream_output
 
     @staticmethod
     def _strip_matching_quotes(value: str) -> str:
@@ -160,6 +164,70 @@ class CodexCliBackend(MockBackend):
             if isinstance(changed_files, list):
                 paths.update(str(item) for item in changed_files)
         return paths
+
+
+    @staticmethod
+    def _stream_process_output(stream, sink: list[str], prefix: str) -> None:
+        for line in iter(stream.readline, ""):
+            sink.append(line)
+            print(f"{prefix}{line.rstrip()}", file=sys.stderr, flush=True)
+        stream.close()
+
+    def _run_codex_process(self, cmd: list[str], prompt: str) -> subprocess.CompletedProcess[str]:
+        if not self.stream_output:
+            return subprocess.run(
+                cmd,
+                input=prompt,
+                text=True,
+                capture_output=True,
+                timeout=self.timeout_seconds,
+                check=False,
+            )
+
+        print("[codex-cli] starting codex exec", file=sys.stderr, flush=True)
+        stdout_lines: list[str] = []
+        stderr_lines: list[str] = []
+        process = subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+        )
+        assert process.stdin is not None
+        assert process.stdout is not None
+        assert process.stderr is not None
+        process.stdin.write(prompt)
+        process.stdin.close()
+
+        stdout_thread = threading.Thread(
+            target=self._stream_process_output,
+            args=(process.stdout, stdout_lines, "[codex:stdout] "),
+            daemon=True,
+        )
+        stderr_thread = threading.Thread(
+            target=self._stream_process_output,
+            args=(process.stderr, stderr_lines, "[codex:stderr] "),
+            daemon=True,
+        )
+        stdout_thread.start()
+        stderr_thread.start()
+        timed_out = False
+        try:
+            returncode = process.wait(timeout=self.timeout_seconds)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            process.kill()
+            returncode = process.wait()
+        stdout_thread.join(timeout=5)
+        stderr_thread.join(timeout=5)
+        stdout = "".join(stdout_lines)
+        stderr = "".join(stderr_lines)
+        if timed_out:
+            stderr += f"\nERROR: codex exec timed out after {self.timeout_seconds} seconds."
+        print(f"[codex-cli] finished codex exec exit_code={returncode}", file=sys.stderr, flush=True)
+        return subprocess.CompletedProcess(cmd, returncode, stdout, stderr)
 
     def execute_step(
         self,
@@ -290,14 +358,7 @@ Produce the requested artifact in the workspace. Do not ask follow-up questions.
         # Pass the executor prompt through stdin instead of as a positional
         # command-line argument. This avoids Windows .cmd/newline quoting issues
         # where Codex receives only the first prompt line.
-        completed = subprocess.run(
-            cmd,
-            input=prompt,
-            text=True,
-            capture_output=True,
-            timeout=self.timeout_seconds,
-            check=False,
-        )
+        completed = self._run_codex_process(cmd, prompt)
         content_parts = [
             "# Codex execution result",
             f"command: {command_display}",

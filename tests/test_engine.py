@@ -49,6 +49,18 @@ class EngineTests(unittest.TestCase):
             self.assertIn(state.final_status, {"approved", "failed"})
             self.assertEqual(len(state.executions), 1)
 
+    def test_review_packet_uses_final_status(self) -> None:
+        with temporary_test_dir() as tmp:
+            task = TaskSpec(
+                description="Create demo artifact",
+                acceptance_criteria=["has title", "mentions validation loop"],
+                max_retries=2,
+            )
+            state = TaskExecutionEngine(MockBackend(), tmp).run(task)
+            packet = (tmp / state.run_id / "REVIEW_PACKET.md").read_text(encoding="utf-8")
+            self.assertIn("Run status: `approved`", packet)
+            self.assertNotIn("Run status: `running`", packet)
+
 
 if __name__ == "__main__":
     unittest.main()

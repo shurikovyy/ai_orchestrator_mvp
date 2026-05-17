@@ -10,27 +10,37 @@ from ai_orchestrator.schemas import RunState, TaskSpec
 class TaskExecutionEngine:
     """Deterministic plan -> execute -> validate -> rework engine."""
 
-    def __init__(self, backend: Backend, runs_dir: Path) -> None:
+    def __init__(self, backend: Backend, runs_dir: Path, *, verbose: bool = False) -> None:
         self.backend = backend
         self.runs_dir = runs_dir
+        self.verbose = verbose
+
+    def _log(self, message: str) -> None:
+        if self.verbose:
+            print(f"[orchestrator] {message}", flush=True)
 
     def run(self, task: TaskSpec) -> RunState:
         state = RunState(task=task)
         run_dir = self.runs_dir / state.run_id
         artifacts_dir = run_dir / "artifacts"
+        self._log(f"created run_id={state.run_id}")
         state.save_json(run_dir / "state.json")
 
+        self._log("planning task")
         plan = self.backend.plan(task)
         state.plan = plan
         state.final_status = "planned"
         state.touch()
         state.save_json(run_dir / "state.json")
+        self._log(f"plan ready: {len(plan.steps)} step(s)")
 
         all_approved = True
         for step in plan.steps:
             previous_feedback: list[str] = []
             approved = False
+            self._log(f"starting step={step.id} title={step.title!r}")
             for attempt in range(1, task.max_retries + 2):
+                self._log(f"executing step={step.id} attempt={attempt}")
                 state.final_status = "running"
                 result = self.backend.execute_step(
                     task=task,
@@ -40,18 +50,31 @@ class TaskExecutionEngine:
                     artifacts_dir=artifacts_dir,
                 )
                 state.executions.append(result)
+                self._log(f"execution finished step={step.id} attempt={attempt} status={result.status}")
+                self._log(f"validating step={step.id} attempt={attempt}")
                 validation = self.backend.validate_step(task=task, step=step, result=result)
                 state.validations.append(validation)
+                self._log(
+                    f"validation finished step={step.id} attempt={attempt} "
+                    f"approved={validation.approved} score={validation.score:.2f}"
+                )
                 state.touch()
                 state.save_json(run_dir / "state.json")
                 if validation.approved:
                     approved = True
                     break
                 previous_feedback = validation.feedback
+                if previous_feedback:
+                    self._log("validator feedback: " + " | ".join(previous_feedback))
             if not approved:
                 all_approved = False
 
         state.final_status = "approved" if all_approved else "failed"
+        state.touch()
+        # Save the final status before writing REVIEW_PACKET.md; the review packet
+        # is built from state.json and must not show a stale `running` status.
+        state.save_json(run_dir / "state.json")
+        self._log(f"run finished status={state.final_status}; writing reports")
         final_report = self._write_final_report(state, run_dir)
         review_packet = write_review_packet(run_dir)
         # Make reports discoverable through synthetic execution notes.

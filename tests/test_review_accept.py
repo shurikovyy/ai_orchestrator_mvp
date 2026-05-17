@@ -137,6 +137,26 @@ class ReviewAcceptTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "dirty"):
                 accept_run(run_id=run_dir.name, runs_dir=run_dir.parent, commit_message="fix: subtract")
 
+    def test_accept_run_can_initialize_disposable_target_git_repo(self) -> None:
+        with temporary_test_dir() as tmp:
+            repo = tmp / "seed_repo"
+            (repo / "src").mkdir(parents=True)
+            (repo / "src" / "toy_calc.py").write_text(
+                "def subtract(a, b):\n    return a + b\n", encoding="utf-8"
+            )
+            run_dir, _ = make_approved_run(tmp, target_repo=repo)
+            result = accept_run(
+                run_id=run_dir.name,
+                runs_dir=run_dir.parent,
+                commit_message="fix: subtract",
+                init_target_git=True,
+            )
+            self.assertIsNotNone(result.commit_hash)
+            self.assertTrue((repo / ".git").exists())
+            self.assertIn("return a - b", (repo / "src" / "toy_calc.py").read_text(encoding="utf-8"))
+            self.assertIn("fix: subtract", git(repo, "log", "-1", "--pretty=%s").stdout)
+            self.assertGreaterEqual(int(git(repo, "rev-list", "--count", "HEAD").stdout.strip()), 2)
+
 
 if __name__ == "__main__":
     unittest.main()

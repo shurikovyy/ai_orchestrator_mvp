@@ -286,6 +286,7 @@ def accept_run(
     target_workspace_override: str | None = None,
     commit_message: str | None = None,
     dry_run: bool = False,
+    init_target_git: bool = False,
 ) -> AcceptRunResult:
     run_dir = runs_dir / run_id
     data = build_review_packet_data(run_dir, target_workspace_override=target_workspace_override)
@@ -302,7 +303,27 @@ def accept_run(
     if not target_workspace.exists() or not target_workspace.is_dir():
         raise FileNotFoundError(f"target workspace does not exist or is not a directory: {target_workspace}")
     if not (target_workspace / ".git").exists():
-        raise ValueError(f"target workspace is not a git repository: {target_workspace}")
+        if not init_target_git:
+            raise ValueError(
+                f"target workspace is not a git repository: {target_workspace}. "
+                "Initialize it first with `git init && git add . && git commit -m baseline`, "
+                "or rerun accept-run with --init-target-git for disposable/toy workspaces."
+            )
+        if dry_run:
+            raise ValueError("--dry-run cannot initialize a missing target git repository")
+        _run_git(target_workspace, ["init"], check=True)
+        if not _run_git(target_workspace, ["config", "user.email"], check=False).stdout.strip():
+            _run_git(target_workspace, ["config", "user.email", "ai-orchestrator@example.invalid"], check=True)
+        if not _run_git(target_workspace, ["config", "user.name"], check=False).stdout.strip():
+            _run_git(target_workspace, ["config", "user.name", "AI Orchestrator"], check=True)
+        _run_git(target_workspace, ["add", "--", "."], check=True)
+        baseline_status = _run_git(target_workspace, ["status", "--porcelain"], check=True).stdout.strip()
+        if baseline_status:
+            _run_git(
+                target_workspace,
+                ["commit", "-m", f"chore: seed baseline before accepting {run_id}"],
+                check=True,
+            )
 
     dirty_before = _run_git(target_workspace, ["status", "--porcelain"], check=True).stdout.strip()
     if dirty_before:
