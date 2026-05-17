@@ -173,7 +173,12 @@ def accept_main(argv: list[str] | None = None) -> int:
         print(f"accept_status=failed")
         print(f"error={exc}")
         return 1
-    print("accept_status=accepted" if not args.dry_run else "accept_status=dry_run_ok")
+    if args.dry_run:
+        print("accept_status=dry_run_ok")
+    elif result.no_target_changes:
+        print("accept_status=accepted_noop")
+    else:
+        print("accept_status=accepted")
     print(f"run_id={result.run_id}")
     print(f"target_workspace={result.target_workspace}")
     print(f"commit_hash={result.commit_hash or '(none)'}")

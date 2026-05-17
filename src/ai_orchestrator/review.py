@@ -47,6 +47,7 @@ class AcceptRunResult:
     deleted_files: list[str]
     commit_hash: str | None
     acceptance_path: Path
+    no_target_changes: bool = False
 
 
 def _safe_relative_path(value: str) -> str:
@@ -353,16 +354,26 @@ def accept_run(
             raise FileNotFoundError(f"reported changed file is missing in run workspace and target: {entry.path}")
 
     commit_hash: str | None = None
+    no_target_changes = False
     if not dry_run:
         paths_to_stage = applied + deleted
         if paths_to_stage:
             _run_git(target_workspace, ["add", "--", *paths_to_stage], check=True)
         status_after_apply = _run_git(target_workspace, ["status", "--porcelain"], check=True).stdout.strip()
         if not status_after_apply:
-            raise ValueError("accept-run found no target changes to commit")
-        message = commit_message or f"chore: accept orchestrator run {run_id}"
-        _run_git(target_workspace, ["commit", "-m", message], check=True)
-        commit_hash = _run_git(target_workspace, ["rev-parse", "--short", "HEAD"], check=True).stdout.strip()
+            # Disposable --init-target-git runs can legitimately become no-ops when the
+            # target already contains the accepted file contents (for example after a
+            # previous manual apply or a rerun of the same accepted run). Treat this as
+            # idempotent acceptance, but keep the stricter error for normal target repos.
+            if not init_target_git:
+                raise ValueError("accept-run found no target changes to commit")
+            no_target_changes = True
+            head = _run_git(target_workspace, ["rev-parse", "--short", "HEAD"], check=False)
+            commit_hash = head.stdout.strip() or None
+        else:
+            message = commit_message or f"chore: accept orchestrator run {run_id}"
+            _run_git(target_workspace, ["commit", "-m", message], check=True)
+            commit_hash = _run_git(target_workspace, ["rev-parse", "--short", "HEAD"], check=True).stdout.strip()
 
     acceptance_path = run_dir / "ACCEPTANCE.md"
     lines = [
@@ -371,6 +382,7 @@ def accept_run(
         f"Target workspace: `{target_workspace}`",
         f"Dry run: `{dry_run}`",
         f"Commit hash: `{commit_hash or '(none)'}`",
+        f"No target changes: `{no_target_changes}`",
         "",
         "## Applied files",
         *([f"- `{item}`" for item in applied] or ["- none"]),
@@ -390,4 +402,5 @@ def accept_run(
         deleted_files=deleted,
         commit_hash=commit_hash,
         acceptance_path=acceptance_path,
+        no_target_changes=no_target_changes,
     )

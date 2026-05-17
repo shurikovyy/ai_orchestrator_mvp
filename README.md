@@ -781,3 +781,8 @@ accept-run commit
 ↓
 next task
 ```
+
+
+## accept-run idempotent disposable note
+
+For disposable toy workspaces using `--init-target-git`, `accept-run` can return `accept_status=accepted_noop` when the target already matches the accepted workspace contents. Normal existing git repositories still reject empty accepts with `accept-run found no target changes to commit`.
