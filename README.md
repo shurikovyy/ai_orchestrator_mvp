@@ -1,4 +1,4 @@
-# AI Orchestrator MVP 0.1.7.1
+# AI Orchestrator MVP 0.1.8
 
 Минимальный workflow-first инструмент для управляемого цикла:
 
@@ -8,7 +8,7 @@ user task -> planner -> executor -> validator -> retry/rework -> final_report
 
 Ключевая идея: **Codex/LLM выполняет работу, но не принимает решение о приемке**. Приемка остается в детерминированном Python-коде.
 
-## Что умеет 0.1.7.1
+## Что умеет 0.1.8
 
 - хранит состояние запуска в `.runs/<run_id>/state.json`;
 - сохраняет логи и артефакты в `.runs/<run_id>/artifacts/`;
@@ -562,6 +562,85 @@ Workspace file manifest matches structured report changed_files.
 `tests/__init__.py` может появиться, если точная команда `python -m unittest discover -s tests -t .` требует импортируемый каталог `tests/`. Неизмененные seed-файлы перечисляться не должны.
 
 
+## Task queue / run-task
+
+`run-task` lets you keep repeatable task definitions in `tasks.yaml` instead of pasting a long multiline `TASK` string and repeating the same CLI flags on every run.
+
+Example `tasks.yaml`:
+
+```yaml
+project: ai_orchestrator_mvp
+defaults:
+  backend: codex_cli
+  max_retries: 2
+  require_structured_report: true
+  rerun_report_test_commands: true
+  validate_workspace_manifest: true
+  validation_command_timeout: 60
+  stream_codex_output: true
+  verbose: true
+
+tasks:
+  - id: "0.1.8"
+    title: "Add task queue runner"
+    prompt: |
+      Implement task queue support for ai_orchestrator_mvp.
+      Add run-task command that loads a task from tasks.yaml by id.
+      Do not commit.
+    criteria:
+      - "report.status=completed"
+      - "tests.status=passed"
+    seed_workspace: null
+    commit_message: "feat: add task queue runner"
+
+  - id: "toy-fix"
+    title: "Fix toy subtract bug"
+    prompt: |
+      You are working in an isolated copy of a seeded Python toy project.
+
+      Fix the bug in src/toy_calc.py so that subtract(a, b) returns a - b.
+      Run:
+        python -m unittest discover -s tests -t .
+      Create EXECUTION_REPORT.json using the required structured schema.
+      Do not create EXECUTION_REPORT.md.
+    criteria:
+      - "report.status=completed"
+      - "changed_files includes src/toy_calc.py"
+      - "commands_run includes python -m unittest discover -s tests -t ."
+      - "tests.status=passed"
+    seed_workspace: "toy_seed_project_0172"
+    commit_message: "fix: correct toy subtract implementation"
+```
+
+Run one task by id:
+
+```bash
+./.venv/Scripts/python.exe -m ai_orchestrator.cli run-task toy-fix \
+  --tasks-file tasks.yaml
+```
+
+Optional CLI overrides still work and take priority over `tasks.yaml`:
+
+```bash
+./.venv/Scripts/python.exe -m ai_orchestrator.cli run-task toy-fix \
+  --tasks-file tasks.yaml \
+  --backend codex_cli \
+  --codex-cmd "$CODEX_CMD" \
+  --max-retries 3 \
+  --verbose \
+  --stream-codex-output
+```
+
+`run-task` only prepares and executes the run. It does **not** call `accept-run`, does **not** apply changes back to the target repo, and does **not** create a git commit automatically.
+
+After review, the next step stays manual:
+
+- review `.runs/<run_id>/REVIEW_PACKET.md`
+- either use `accept-run` explicitly
+- or apply/commit manually with your normal git workflow
+
+The optional `commit_message` field is stored as run metadata only. `run-task` never turns it into an automatic commit.
+
 ## Controlled accept/commit
 
 После `status=approved` orchestrator создает:
@@ -758,10 +837,10 @@ git -C toy_seed_project status --short
 
 ## Что дальше
 
-0.1.7.1 закрывает ручной gate `review → accept-run → commit`. Следующий архитектурный шаг — task queue/pipeline runner:
+0.1.8 закрывает ручной gate `review → run-task → review packet → accept-run/commit`. Следующий архитектурный шаг — multi-task queue/pipeline runner:
 
 ```text
-0.1.8 — tasks.yaml + run-task + explicit accept-run gate
+0.1.9 — multi-task queue/pipeline orchestration
 ```
 
 Идея:

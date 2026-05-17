@@ -12,6 +12,7 @@ class TaskSpec(BaseModel):
     """User-level task contract."""
 
     id: str = Field(default_factory=lambda: f"task_{uuid4().hex[:8]}")
+    title: str | None = None
     description: str
     acceptance_criteria: list[str] = Field(default_factory=list)
     max_retries: int = Field(default=2, ge=0, le=10)
@@ -20,6 +21,15 @@ class TaskSpec(BaseModel):
     validate_workspace_manifest: bool = False
     seed_workspace_path: str | None = None
     validation_command_timeout_seconds: int = Field(default=60, ge=1, le=600)
+    commit_message: str | None = None
+
+    @field_validator("title", "commit_message")
+    @classmethod
+    def blank_optional_strings_to_none(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        return value or None
 
     @field_validator("seed_workspace_path")
     @classmethod

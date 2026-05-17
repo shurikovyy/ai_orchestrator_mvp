@@ -2,12 +2,24 @@ from __future__ import annotations
 
 import argparse
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
-from ai_orchestrator.backends import get_backend
+from ai_orchestrator.backends import Backend, get_backend
 from ai_orchestrator.engine import TaskExecutionEngine
 from ai_orchestrator.review import accept_run
-from ai_orchestrator.schemas import TaskSpec
+from ai_orchestrator.schemas import RunState, TaskSpec
+from ai_orchestrator.task_queue import load_task_queue_config, resolve_task_definition
+
+
+@dataclass(frozen=True)
+class RunCommandConfig:
+    task: TaskSpec
+    backend_name: str
+    runs_dir: Path
+    codex_cmd: str | None = None
+    verbose: bool = False
+    stream_codex_output: bool = False
 
 
 def build_run_parser() -> argparse.ArgumentParser:
@@ -91,6 +103,54 @@ def build_run_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def build_run_task_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="ai-orchestrator run-task",
+        description="Load one task from tasks.yaml and execute it through the existing orchestrator engine.",
+    )
+    parser.add_argument("task_id", help="Task id to load from tasks.yaml")
+    parser.add_argument(
+        "--tasks-file",
+        required=True,
+        help="Path to tasks.yaml containing project defaults and task definitions.",
+    )
+    parser.add_argument(
+        "--backend",
+        choices=["mock", "codex_cli", "codex"],
+        default=None,
+        help="Optional backend override. Takes priority over task/defaults.",
+    )
+    parser.add_argument(
+        "--codex-cmd",
+        default=None,
+        help="Optional Codex CLI command override. Takes priority over task/defaults.",
+    )
+    parser.add_argument(
+        "--max-retries",
+        type=int,
+        default=None,
+        help="Optional retry override. Takes priority over task/defaults.",
+    )
+    parser.add_argument(
+        "--runs-dir",
+        default=".runs",
+        help="Directory where run state, logs, and artifacts are stored.",
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        default=None,
+        help="Force verbose orchestrator logging for this run-task execution.",
+    )
+    parser.add_argument(
+        "--stream-codex-output",
+        action="store_true",
+        default=None,
+        help="Force live Codex CLI stdout/stderr streaming for this run-task execution.",
+    )
+    return parser
+
+
 def build_accept_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="ai-orchestrator accept-run",
@@ -124,9 +184,51 @@ def build_accept_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def run_main(argv: list[str] | None = None) -> int:
-    parser = build_run_parser()
-    args = parser.parse_args(argv)
+def _build_backend(config: RunCommandConfig) -> Backend:
+    if config.backend_name in {"codex", "codex_cli"} and (config.codex_cmd or config.stream_codex_output):
+        from ai_orchestrator.backends.codex_cli import CodexCliBackend
+
+        return CodexCliBackend(codex_cmd=config.codex_cmd, stream_output=config.stream_codex_output)
+    return get_backend(config.backend_name)
+
+
+def execute_run(config: RunCommandConfig) -> tuple[RunState, Backend]:
+    backend = _build_backend(config)
+    engine = TaskExecutionEngine(backend=backend, runs_dir=config.runs_dir, verbose=config.verbose)
+    state = engine.run(config.task)
+    return state, backend
+
+
+def _run_paths(runs_dir: Path, run_id: str) -> tuple[Path, Path, Path]:
+    run_dir = runs_dir / run_id
+    return run_dir / "final_report.md", run_dir / "REVIEW_PACKET.md", run_dir / "state.json"
+
+
+def _print_run_summary(
+    *,
+    task_id: str | None,
+    state: RunState,
+    backend: Backend,
+    runs_dir: Path,
+    absolute_paths: bool = False,
+) -> None:
+    final_report, review_packet, state_path = _run_paths(runs_dir, state.run_id)
+    if absolute_paths:
+        final_report = final_report.resolve()
+        review_packet = review_packet.resolve()
+        state_path = state_path.resolve()
+    if task_id is not None:
+        print(f"task_id={task_id}")
+    print(f"run_id={state.run_id}")
+    print(f"status={state.final_status}")
+    print(f"backend={backend.name}")
+    print(f"final_report={final_report}")
+    if review_packet.exists():
+        print(f"review_packet={review_packet}")
+    print(f"state={state_path}")
+
+
+def build_run_command_config_from_args(args: argparse.Namespace) -> RunCommandConfig:
     task = TaskSpec(
         description=args.task,
         acceptance_criteria=args.criteria,
@@ -137,23 +239,59 @@ def run_main(argv: list[str] | None = None) -> int:
         seed_workspace_path=args.seed_workspace,
         validation_command_timeout_seconds=args.validation_command_timeout,
     )
-    if args.backend in {"codex", "codex_cli"} and (args.codex_cmd or args.stream_codex_output):
-        from ai_orchestrator.backends.codex_cli import CodexCliBackend
+    return RunCommandConfig(
+        task=task,
+        backend_name=args.backend,
+        runs_dir=Path(args.runs_dir),
+        codex_cmd=args.codex_cmd,
+        verbose=args.verbose,
+        stream_codex_output=args.stream_codex_output,
+    )
 
-        backend = CodexCliBackend(codex_cmd=args.codex_cmd, stream_output=args.stream_codex_output)
-    else:
-        backend = get_backend(args.backend)
-    engine = TaskExecutionEngine(backend=backend, runs_dir=Path(args.runs_dir), verbose=args.verbose)
-    state = engine.run(task)
-    run_dir = Path(args.runs_dir) / state.run_id
-    final_report = run_dir / "final_report.md"
-    review_packet = run_dir / "REVIEW_PACKET.md"
-    print(f"run_id={state.run_id}")
-    print(f"status={state.final_status}")
-    print(f"backend={backend.name}")
-    print(f"final_report={final_report}")
-    print(f"review_packet={review_packet}")
-    print(f"state={run_dir / 'state.json'}")
+
+def build_run_task_command_config_from_args(args: argparse.Namespace) -> tuple[str, RunCommandConfig]:
+    queue_config = load_task_queue_config(args.tasks_file)
+    resolved = resolve_task_definition(
+        queue_config,
+        task_id=args.task_id,
+        tasks_file=args.tasks_file,
+        backend=args.backend,
+        codex_cmd=args.codex_cmd,
+        max_retries=args.max_retries,
+        verbose=args.verbose,
+        stream_codex_output=args.stream_codex_output,
+    )
+    return resolved.task_id, RunCommandConfig(
+        task=resolved.to_task_spec(),
+        backend_name=resolved.backend,
+        runs_dir=Path(args.runs_dir),
+        codex_cmd=resolved.codex_cmd,
+        verbose=resolved.verbose,
+        stream_codex_output=resolved.stream_codex_output,
+    )
+
+
+def run_main(argv: list[str] | None = None) -> int:
+    parser = build_run_parser()
+    args = parser.parse_args(argv)
+    config = build_run_command_config_from_args(args)
+    state, backend = execute_run(config)
+    _print_run_summary(task_id=None, state=state, backend=backend, runs_dir=config.runs_dir)
+    return 0 if state.final_status == "approved" else 1
+
+
+def run_task_main(argv: list[str] | None = None) -> int:
+    parser = build_run_task_parser()
+    args = parser.parse_args(argv)
+    try:
+        task_id, config = build_run_task_command_config_from_args(args)
+        state, backend = execute_run(config)
+    except Exception as exc:  # noqa: BLE001 - CLI should print deterministic error text.
+        print(f"task_id={args.task_id}")
+        print("status=failed")
+        print(f"error={exc}")
+        return 1
+    _print_run_summary(task_id=task_id, state=state, backend=backend, runs_dir=config.runs_dir, absolute_paths=True)
     return 0 if state.final_status == "approved" else 1
 
 
@@ -170,7 +308,7 @@ def accept_main(argv: list[str] | None = None) -> int:
             init_target_git=args.init_target_git,
         )
     except Exception as exc:  # noqa: BLE001 - CLI should print deterministic error text.
-        print(f"accept_status=failed")
+        print("accept_status=failed")
         print(f"error={exc}")
         return 1
     if args.dry_run:
@@ -196,6 +334,8 @@ def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if args and args[0] == "accept-run":
         return accept_main(args[1:])
+    if args and args[0] == "run-task":
+        return run_task_main(args[1:])
     return run_main(args)
 
 
