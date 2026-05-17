@@ -43,6 +43,7 @@ class TaskDefinition(BaseModel):
     id: str
     title: str | None = None
     prompt: str
+    enabled: bool = True
     criteria: list[str] = Field(default_factory=list)
     backend: BackendName | None = None
     codex_cmd: str | None = None
@@ -145,14 +146,6 @@ def _pick_first_not_none(*values):
     return None
 
 
-def _task_label(raw_task: object, index: int) -> str:
-    if isinstance(raw_task, dict):
-        raw_id = raw_task.get("id")
-        if isinstance(raw_id, str) and raw_id.strip():
-            return f"task `{raw_id.strip()}`"
-    return f"task at index {index}"
-
-
 def _validate_raw_payload(payload: object) -> None:
     if payload is None:
         raise TaskQueueConfigError("tasks file is empty")
@@ -215,6 +208,17 @@ def load_task_queue_config(tasks_file: str | Path) -> TaskQueueConfig:
         raise TaskQueueConfigError(_format_validation_error(exc)) from exc
 
 
+def get_task_definition(config: TaskQueueConfig, task_id: str) -> TaskDefinition:
+    normalized_task_id = task_id.strip()
+    if not normalized_task_id:
+        raise TaskQueueConfigError("task id must not be empty")
+
+    task = next((item for item in config.tasks if item.id == normalized_task_id), None)
+    if task is None:
+        raise TaskQueueConfigError(f"task id not found: {normalized_task_id}")
+    return task
+
+
 def resolve_task_definition(
     config: TaskQueueConfig,
     *,
@@ -226,14 +230,7 @@ def resolve_task_definition(
     verbose: bool | None = None,
     stream_codex_output: bool | None = None,
 ) -> ResolvedTaskDefinition:
-    normalized_task_id = task_id.strip()
-    if not normalized_task_id:
-        raise TaskQueueConfigError("task id must not be empty")
-
-    task = next((item for item in config.tasks if item.id == normalized_task_id), None)
-    if task is None:
-        raise TaskQueueConfigError(f"task id not found: {normalized_task_id}")
-
+    task = get_task_definition(config, task_id)
     defaults = config.defaults
     resolved_seed_workspace: str | None = None
     if task.seed_workspace is not None:

@@ -2,24 +2,19 @@ from __future__ import annotations
 
 import argparse
 import sys
-from dataclasses import dataclass
 from pathlib import Path
 
-from ai_orchestrator.backends import Backend, get_backend
-from ai_orchestrator.engine import TaskExecutionEngine
+from ai_orchestrator.backends import Backend
+from ai_orchestrator.pipeline import PipelinePlan, PipelineRunResult, run_pipeline
 from ai_orchestrator.review import accept_run
 from ai_orchestrator.schemas import RunState, TaskSpec
 from ai_orchestrator.task_queue import load_task_queue_config, resolve_task_definition
-
-
-@dataclass(frozen=True)
-class RunCommandConfig:
-    task: TaskSpec
-    backend_name: str
-    runs_dir: Path
-    codex_cmd: str | None = None
-    verbose: bool = False
-    stream_codex_output: bool = False
+from ai_orchestrator.task_runner import (
+    RunCommandConfig,
+    build_run_config_from_resolved_task,
+    execute_run,
+    get_run_artifact_paths,
+)
 
 
 def build_run_parser() -> argparse.ArgumentParser:
@@ -151,6 +146,74 @@ def build_run_task_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def build_run_pipeline_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="ai-orchestrator run-pipeline",
+        description="Run multiple tasks from tasks.yaml in declaration order.",
+    )
+    parser.add_argument(
+        "--tasks-file",
+        required=True,
+        help="Path to tasks.yaml containing project defaults and task definitions.",
+    )
+    parser.add_argument(
+        "--from-task",
+        default=None,
+        help="Start pipeline execution from the specified task id, inclusive.",
+    )
+    parser.add_argument(
+        "--only",
+        action="append",
+        default=None,
+        help="Run only the specified task id. Repeat to select multiple tasks.",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print the task execution plan without creating pipeline artifacts or executing tasks.",
+    )
+    parser.add_argument(
+        "--continue-on-failure",
+        action="store_true",
+        help="Continue executing later tasks even if an earlier task fails.",
+    )
+    parser.add_argument(
+        "--backend",
+        choices=["mock", "codex_cli", "codex"],
+        default=None,
+        help="Optional backend override. Takes priority over task/defaults.",
+    )
+    parser.add_argument(
+        "--codex-cmd",
+        default=None,
+        help="Optional Codex CLI command override. Takes priority over task/defaults.",
+    )
+    parser.add_argument(
+        "--max-retries",
+        type=int,
+        default=None,
+        help="Optional retry override. Takes priority over task/defaults.",
+    )
+    parser.add_argument(
+        "--runs-dir",
+        default=".runs",
+        help="Directory where run state, logs, and pipeline artifacts are stored.",
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        default=None,
+        help="Print pipeline and orchestrator progress logs to the console.",
+    )
+    parser.add_argument(
+        "--stream-codex-output",
+        action="store_true",
+        default=None,
+        help="Force live Codex CLI stdout/stderr streaming for every selected task.",
+    )
+    return parser
+
+
 def build_accept_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="ai-orchestrator accept-run",
@@ -184,26 +247,6 @@ def build_accept_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _build_backend(config: RunCommandConfig) -> Backend:
-    if config.backend_name in {"codex", "codex_cli"} and (config.codex_cmd or config.stream_codex_output):
-        from ai_orchestrator.backends.codex_cli import CodexCliBackend
-
-        return CodexCliBackend(codex_cmd=config.codex_cmd, stream_output=config.stream_codex_output)
-    return get_backend(config.backend_name)
-
-
-def execute_run(config: RunCommandConfig) -> tuple[RunState, Backend]:
-    backend = _build_backend(config)
-    engine = TaskExecutionEngine(backend=backend, runs_dir=config.runs_dir, verbose=config.verbose)
-    state = engine.run(config.task)
-    return state, backend
-
-
-def _run_paths(runs_dir: Path, run_id: str) -> tuple[Path, Path, Path]:
-    run_dir = runs_dir / run_id
-    return run_dir / "final_report.md", run_dir / "REVIEW_PACKET.md", run_dir / "state.json"
-
-
 def _print_run_summary(
     *,
     task_id: str | None,
@@ -212,7 +255,7 @@ def _print_run_summary(
     runs_dir: Path,
     absolute_paths: bool = False,
 ) -> None:
-    final_report, review_packet, state_path = _run_paths(runs_dir, state.run_id)
+    final_report, review_packet, state_path = get_run_artifact_paths(runs_dir, state.run_id)
     if absolute_paths:
         final_report = final_report.resolve()
         review_packet = review_packet.resolve()
@@ -261,14 +304,7 @@ def build_run_task_command_config_from_args(args: argparse.Namespace) -> tuple[s
         verbose=args.verbose,
         stream_codex_output=args.stream_codex_output,
     )
-    return resolved.task_id, RunCommandConfig(
-        task=resolved.to_task_spec(),
-        backend_name=resolved.backend,
-        runs_dir=Path(args.runs_dir),
-        codex_cmd=resolved.codex_cmd,
-        verbose=resolved.verbose,
-        stream_codex_output=resolved.stream_codex_output,
-    )
+    return resolved.task_id, build_run_config_from_resolved_task(resolved, runs_dir=args.runs_dir)
 
 
 def run_main(argv: list[str] | None = None) -> int:
@@ -293,6 +329,56 @@ def run_task_main(argv: list[str] | None = None) -> int:
         return 1
     _print_run_summary(task_id=task_id, state=state, backend=backend, runs_dir=config.runs_dir, absolute_paths=True)
     return 0 if state.final_status == "approved" else 1
+
+
+def _print_pipeline_dry_run(plan: PipelinePlan) -> None:
+    print("dry_run=true")
+    print(f"tasks_file={plan.tasks_file}")
+    print(f"selected_tasks={','.join(task.task_id for task in plan.selected_tasks)}")
+    for task in plan.selected_tasks:
+        action = "run" if task.enabled else "skip_disabled"
+        print(f"planned_task={task.task_id} action={action}")
+
+
+def _print_pipeline_summary(result: PipelineRunResult) -> None:
+    enabled_tasks_total = sum(1 for task in result.state.selected_tasks if task.enabled)
+    tasks_approved = sum(1 for task in result.state.tasks if task.status == "approved")
+    tasks_failed = sum(1 for task in result.state.tasks if task.status == "failed")
+    print(f"pipeline_id={result.state.pipeline_id}")
+    print(f"status={result.state.status}")
+    print(f"tasks_total={enabled_tasks_total}")
+    print(f"tasks_approved={tasks_approved}")
+    print(f"tasks_failed={tasks_failed}")
+    print(f"pipeline_report={result.pipeline_report.resolve()}")
+    print(f"pipeline_state={result.pipeline_state_path.resolve()}")
+
+
+def run_pipeline_main(argv: list[str] | None = None) -> int:
+    parser = build_run_pipeline_parser()
+    args = parser.parse_args(argv)
+    try:
+        result = run_pipeline(
+            tasks_file=args.tasks_file,
+            runs_dir=args.runs_dir,
+            from_task=args.from_task,
+            only=args.only,
+            dry_run=args.dry_run,
+            continue_on_failure=args.continue_on_failure,
+            backend=args.backend,
+            codex_cmd=args.codex_cmd,
+            max_retries=args.max_retries,
+            verbose=args.verbose,
+            stream_codex_output=args.stream_codex_output,
+        )
+    except Exception as exc:  # noqa: BLE001 - CLI should print deterministic error text.
+        print("status=failed")
+        print(f"error={exc}")
+        return 1
+    if isinstance(result, PipelinePlan):
+        _print_pipeline_dry_run(result)
+        return 0
+    _print_pipeline_summary(result)
+    return 0 if result.state.status == "approved" else 1
 
 
 def accept_main(argv: list[str] | None = None) -> int:
@@ -336,6 +422,8 @@ def main(argv: list[str] | None = None) -> int:
         return accept_main(args[1:])
     if args and args[0] == "run-task":
         return run_task_main(args[1:])
+    if args and args[0] == "run-pipeline":
+        return run_pipeline_main(args[1:])
     return run_main(args)
 
 

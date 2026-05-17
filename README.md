@@ -1,4 +1,4 @@
-# AI Orchestrator MVP 0.1.8
+# AI Orchestrator MVP 0.1.9
 
 Минимальный workflow-first инструмент для управляемого цикла:
 
@@ -8,7 +8,7 @@ user task -> planner -> executor -> validator -> retry/rework -> final_report
 
 Ключевая идея: **Codex/LLM выполняет работу, но не принимает решение о приемке**. Приемка остается в детерминированном Python-коде.
 
-## Что умеет 0.1.8
+## Что умеет 0.1.9
 
 - хранит состояние запуска в `.runs/<run_id>/state.json`;
 - сохраняет логи и артефакты в `.runs/<run_id>/artifacts/`;
@@ -640,6 +640,104 @@ After review, the next step stays manual:
 - or apply/commit manually with your normal git workflow
 
 The optional `commit_message` field is stored as run metadata only. `run-task` never turns it into an automatic commit.
+
+## Multi-task pipeline runner
+
+`run-pipeline` builds on top of the same `tasks.yaml` / `run-task` mechanism, but executes multiple tasks sequentially in declaration order.
+
+High-level difference:
+
+- `run-task` executes one task by id
+- `run-pipeline` selects multiple tasks, runs them one by one, and creates pipeline-level artifacts
+
+`run-pipeline` does **not** call `accept-run`, does **not** apply changes back to the target repo, and does **not** create git commits. It only creates task run artifacts plus:
+
+```text
+.runs/pipelines/<pipeline_id>/pipeline_state.json
+.runs/pipelines/<pipeline_id>/PIPELINE_REPORT.md
+```
+
+Example `tasks.yaml` for pipeline runs:
+
+```yaml
+project: ai_orchestrator_mvp
+defaults:
+  backend: mock
+  max_retries: 2
+  verbose: true
+
+tasks:
+  - id: "0.1.9"
+    title: "Add multi-task pipeline runner"
+    prompt: |
+      Implement pipeline support for ai_orchestrator_mvp.
+      Add run-pipeline command.
+      Do not commit.
+    criteria:
+      - "deterministic demo artifact"
+
+  - id: "docs-followup"
+    title: "Document pipeline flow"
+    prompt: |
+      Update README examples for the new pipeline flow.
+      Do not commit.
+    criteria:
+      - "deterministic demo artifact"
+
+  - id: "future-disabled"
+    title: "Disabled example task"
+    enabled: false
+    prompt: |
+      This task is intentionally disabled for now.
+```
+
+Example 1: dry-run
+
+```bash
+python -m ai_orchestrator.cli run-pipeline \
+  --tasks-file tasks.yaml \
+  --dry-run
+```
+
+Example 2: run all enabled tasks
+
+```bash
+python -m ai_orchestrator.cli run-pipeline \
+  --tasks-file tasks.yaml \
+  --verbose
+```
+
+Example 3: run from task
+
+```bash
+python -m ai_orchestrator.cli run-pipeline \
+  --tasks-file tasks.yaml \
+  --from-task 0.1.9 \
+  --verbose
+```
+
+Example 4: run only selected tasks
+
+```bash
+python -m ai_orchestrator.cli run-pipeline \
+  --tasks-file tasks.yaml \
+  --only task-a \
+  --only task-c \
+  --verbose
+```
+
+Useful flags:
+
+- `--dry-run` prints the plan only and does not create `pipeline_id`, `pipeline_state.json`, `PIPELINE_REPORT.md`, or task run directories
+- `--from-task <task_id>` starts with one task and includes every task after it
+- `--only <task_id>` restricts execution to specific task ids while keeping declaration order from `tasks.yaml`
+- `--continue-on-failure` keeps running later tasks, but final pipeline status is still failed if any task fails
+
+`pipeline_state.json` stores the pipeline id, tasks file path, final status, selected tasks, executed task results, and per-task artifact paths. `PIPELINE_REPORT.md` stores the readable summary table and the explicit line:
+
+```text
+No accept-run or commit was performed by run-pipeline.
+```
 
 ## Controlled accept/commit
 
