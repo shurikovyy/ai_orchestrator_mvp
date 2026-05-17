@@ -3,6 +3,7 @@
 __pycache__/
 *.pyc
 src/*.egg-info/
+*.egg-info/
 .tmp_tests/
 
 # Runtime artifacts
@@ -17,6 +18,14 @@ node_modules/
 
 # Local env files
 .env
+tasks.yaml
 
 # Local seed/smoke-test workspaces
 toy_seed_project/
+toy_seed_project_*/
+toy_seed_project*/
+
+# Common local caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/

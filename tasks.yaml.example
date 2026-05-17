@@ -1,0 +1,61 @@
+project: ai_orchestrator_mvp
+
+defaults:
+  backend: mock
+  max_retries: 2
+  require_structured_report: false
+  rerun_report_test_commands: false
+  validate_workspace_manifest: false
+  validation_command_timeout: 60
+  stream_codex_output: false
+  verbose: true
+
+tasks:
+  - id: "mock-smoke"
+    title: "Mock smoke test"
+    backend: mock
+    prompt: |
+      Create a short architecture note for an AI task orchestrator.
+      The note must mention validation loop.
+    criteria:
+      - "validation loop"
+
+  - id: "toy-fix"
+    # Template for a codex_cli seed-workspace task.
+    # Create toy_seed_project_0172 locally before enabling this task.
+    # After that, set enabled: true or run the task separately after editing your local tasks.yaml.
+    enabled: false
+    title: "Fix toy subtract bug"
+    backend: codex_cli
+    require_structured_report: true
+    rerun_report_test_commands: true
+    validate_workspace_manifest: true
+    stream_codex_output: true
+    # Relative seed_workspace paths are resolved relative to this tasks.yaml file.
+    # In Git Bash with Windows Python, pass --codex-cmd as a Windows-style path.
+    seed_workspace: "toy_seed_project_0172"
+    prompt: |
+      You are working in an isolated copy of a seeded Python toy project.
+
+      Fix the bug in src/toy_calc.py so that subtract(a, b) returns a - b.
+      Do not rewrite the project from scratch.
+      Do not create unrelated files.
+      Run:
+        python -m unittest discover -s tests -t .
+      Create EXECUTION_REPORT.json using the required structured schema.
+      Do not create EXECUTION_REPORT.md.
+      Do not run git commands unless the workspace is a git repository.
+
+      The structured report changed_files must include only files added, modified, or deleted relative to the seed baseline.
+    criteria:
+      - "report.status=completed"
+      - "changed_files includes src/toy_calc.py"
+      - "commands_run includes python -m unittest discover -s tests -t ."
+      - "tests.status=passed"
+
+  - id: "disabled-example"
+    enabled: false
+    title: "Disabled example task"
+    prompt: |
+      This task is disabled and should not run in pipeline mode.
+    criteria: []

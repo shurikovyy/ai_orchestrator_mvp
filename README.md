@@ -1,4 +1,4 @@
-# AI Orchestrator MVP 0.1.9
+# AI Orchestrator MVP 0.1.9.1
 
 Минимальный workflow-first инструмент для управляемого цикла:
 
@@ -8,7 +8,7 @@ user task -> planner -> executor -> validator -> retry/rework -> final_report
 
 Ключевая идея: **Codex/LLM выполняет работу, но не принимает решение о приемке**. Приемка остается в детерминированном Python-коде.
 
-## Что умеет 0.1.9
+## Что умеет 0.1.9.1
 
 - хранит состояние запуска в `.runs/<run_id>/state.json`;
 - сохраняет логи и артефакты в `.runs/<run_id>/artifacts/`;
@@ -566,6 +566,88 @@ Workspace file manifest matches structured report changed_files.
 
 `run-task` lets you keep repeatable task definitions in `tasks.yaml` instead of pasting a long multiline `TASK` string and repeating the same CLI flags on every run.
 
+## Task queue quickstart
+
+1. Copy the committed template into a local working file:
+
+```bash
+cp tasks.yaml.example tasks.yaml
+```
+
+2. `tasks.yaml.example` is safe by default: only `mock-smoke` is enabled, while `toy-fix` and `disabled-example` stay disabled.
+
+3. A fresh `tasks.yaml.example` or copied `tasks.yaml` can be used with `run-pipeline --dry-run` without creating `toy_seed_project_0172` first.
+
+```bash
+python -m ai_orchestrator.cli run-pipeline --tasks-file tasks.yaml.example --dry-run
+```
+
+4. Edit your local `tasks.yaml` with the tasks you want to run.
+
+5. Run the safe mock smoke test:
+
+```bash
+python -m ai_orchestrator.cli run-task mock-smoke --tasks-file tasks.yaml --verbose
+```
+
+6. Preview the pipeline plan without executing anything:
+
+```bash
+python -m ai_orchestrator.cli run-pipeline --tasks-file tasks.yaml --dry-run
+```
+
+7. Run the pipeline for all enabled tasks:
+
+```bash
+python -m ai_orchestrator.cli run-pipeline --tasks-file tasks.yaml --verbose
+```
+
+## Enable toy-fix after creating a seed workspace
+
+Keep `toy-fix` as `enabled: false` until the local `seed_workspace` exists. If `toy_seed_project_0172` is missing, leave the task disabled.
+
+Once you have created `toy_seed_project_0172`, set `enabled: true` in your local `tasks.yaml` or run that task separately after editing the file.
+
+For a `codex_cli` task on Windows Python + Git Bash, one workable example is:
+
+```bash
+unset CODEX_HOME
+NODE_HOME="/c/Users/Slivin.Aleksandr/Tools/node"
+export PATH="$NODE_HOME:$PATH"
+hash -r
+CODEX_CMD="$(pwd -W)/node_modules/.bin/codex.cmd"
+
+python -m ai_orchestrator.cli run-task toy-fix \
+  --tasks-file tasks.yaml \
+  --codex-cmd "$CODEX_CMD" \
+  --verbose \
+  --stream-codex-output
+```
+
+This is only an environment example. Keep `seed_workspace` and other task paths relative inside `tasks.yaml` whenever possible.
+
+## Local files policy
+
+- `tasks.yaml` is a local working file and is usually not committed.
+- `tasks.yaml.example` is the committed template that teammates can copy and edit.
+- `.runs/` contains runtime artifacts and should not be committed.
+- `toy_seed_project*` directories are disposable local test repos/workspaces and should not be committed.
+- `node_modules/` and `.venv/` are local dependency directories and should not be committed.
+
+## Safety policy
+
+- `run-task` does not perform a git commit.
+- `run-pipeline` does not perform a git commit.
+- `run-pipeline` does not call `accept-run`.
+- `accept-run` is a separate manual step after review.
+- The final commit is created by the user after reviewing the generated artifacts.
+
+## YAML gotchas
+
+- Quote task ids, for example `id: "mock-smoke"`.
+- Quote strings like `"on"`, `"off"`, `"yes"`, and `"no"` when you mean strings, because YAML may coerce them to booleans.
+- Relative `seed_workspace` paths are resolved relative to the `tasks.yaml` file location, not the current shell directory.
+
 Example `tasks.yaml`:
 
 ```yaml
@@ -594,6 +676,7 @@ tasks:
     commit_message: "feat: add task queue runner"
 
   - id: "toy-fix"
+    enabled: false
     title: "Fix toy subtract bug"
     prompt: |
       You are working in an isolated copy of a seeded Python toy project.
@@ -611,6 +694,8 @@ tasks:
     seed_workspace: "toy_seed_project_0172"
     commit_message: "fix: correct toy subtract implementation"
 ```
+
+This example keeps `toy-fix` disabled until `toy_seed_project_0172` exists locally.
 
 Run one task by id:
 
@@ -875,6 +960,8 @@ unset CODEX_HOME
 ```
 
 ### `seed workspace does not exist`
+
+If `toy_seed_project_0172` or another local seed workspace does not exist yet, keep that task at `enabled: false` until the directory is created.
 
 Если запускаешь Windows Python из Git Bash, не передавай `/c/Users/...` как seed path. Используй Windows-style path:
 
