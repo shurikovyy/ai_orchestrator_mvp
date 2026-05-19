@@ -209,12 +209,37 @@ class RunState(BaseModel):
     run_id: str = Field(default_factory=lambda: f"run_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{uuid4().hex[:6]}")
     task: TaskSpec
     backend_name: str | None = None
+    human_review_decision: str | None = None
+    human_review_decided_at: datetime | None = None
+    human_review_feedback: str | None = None
+    human_review_feedback_path: str | None = None
+    human_review_decision_path: str | None = None
     plan: Plan | None = None
     executions: list[ExecutionResult] = Field(default_factory=list)
     validations: list[ValidationResult] = Field(default_factory=list)
     final_status: Literal["created", "planned", "running", "approved", "failed"] = "created"
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    @field_validator("backend_name", "human_review_feedback", "human_review_feedback_path", "human_review_decision_path")
+    @classmethod
+    def optional_strings_blank_to_none(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        return value or None
+
+    @field_validator("human_review_decision")
+    @classmethod
+    def human_review_decision_is_allowed(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip().lower()
+        if not value:
+            return None
+        if value not in {"approved", "rejected"}:
+            raise ValueError("human_review_decision must be one of: approved, rejected")
+        return value
 
     def touch(self) -> None:
         self.updated_at = datetime.now(timezone.utc)

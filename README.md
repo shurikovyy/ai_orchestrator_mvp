@@ -734,6 +734,56 @@ Safety notes:
 - Feedback may contain sensitive review notes.
 - `.runs/<new_run_id>/REWORK_FEEDBACK.md` is stored under ignored runtime artifacts.
 
+### Human review decisions
+
+Validator approval is a technical approval gate, not a human acceptance decision. `review-run` records the explicit human reviewer decision after `final_report.md` and `REVIEW_PACKET.md` already exist.
+
+Approved review:
+
+```bash
+python -m ai_orchestrator.cli review-run run_20260519_120000_abcd12 \
+  --runs-dir .runs \
+  --decision approved
+```
+
+Rejected review with feedback:
+
+```bash
+python -m ai_orchestrator.cli review-run run_20260519_120000_abcd12 \
+  --runs-dir .runs \
+  --decision rejected \
+  --feedback review_feedback.md
+```
+
+Rework from stored rejected feedback:
+
+```bash
+python -m ai_orchestrator.cli rework-run run_20260519_120000_abcd12 \
+  --runs-dir .runs \
+  --backend codex_cli \
+  --codex-cmd "$CODEX_CMD" \
+  --verbose \
+  --stream-codex-output
+```
+
+Behavior:
+
+- validator-approved means the deterministic validator accepted the run technically;
+- human-review approved means a reviewer accepts the generated run artifacts;
+- human-review rejected means the reviewer provides feedback for rework;
+- `review-run` writes `REVIEW_DECISION.json` and `REVIEW_DECISION.md`;
+- if feedback is provided, `review-run` stores it in `.runs/<run_id>/REVIEW_FEEDBACK.md`;
+- `rework-run` can reuse stored feedback from a rejected human review decision when `--feedback` is omitted.
+
+Safety notes:
+
+- `review-run` does not call `accept-run`;
+- `review-run` does not create a commit;
+- feedback may contain sensitive notes;
+- `.runs` is ignored runtime storage;
+- commit remains manual;
+- `accept-run` remains a separate explicit step.
+
 ## Local files policy
 
 - `tasks.yaml` is a local working file and is usually not committed.

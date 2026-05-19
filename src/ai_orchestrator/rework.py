@@ -39,6 +39,28 @@ def load_rework_feedback(feedback_path: str | Path) -> tuple[Path, str]:
     return path, text
 
 
+def resolve_rework_feedback(
+    source_state: RunState,
+    *,
+    source_run_dir: Path,
+    feedback_path: str | Path | None,
+) -> tuple[Path, str]:
+    if feedback_path is not None:
+        return load_rework_feedback(feedback_path)
+
+    if source_state.human_review_decision == "rejected" and source_state.human_review_feedback:
+        stored_feedback_path = (
+            Path(source_state.human_review_feedback_path)
+            if source_state.human_review_feedback_path
+            else source_run_dir / "REVIEW_FEEDBACK.md"
+        )
+        return stored_feedback_path, source_state.human_review_feedback
+
+    raise ValueError(
+        "Feedback is required unless source run has a rejected human review decision with feedback."
+    )
+
+
 def resolve_rework_backend_name(source_state: RunState, backend_name_override: str | None) -> str:
     if backend_name_override:
         return backend_name_override
@@ -76,7 +98,7 @@ def execute_rework_run(
     *,
     source_run_id: str,
     runs_dir: str | Path,
-    feedback_path: str | Path,
+    feedback_path: str | Path | None = None,
     backend_name: str | None = None,
     codex_cmd: str | None = None,
     max_retries: int | None = None,
@@ -84,9 +106,14 @@ def execute_rework_run(
     stream_codex_output: bool = False,
 ) -> ReworkRunResult:
     runs_dir_path = Path(runs_dir)
+    source_run_dir = runs_dir_path / source_run_id
     source_state = load_source_run(runs_dir_path, source_run_id)
     resolved_backend_name = resolve_rework_backend_name(source_state, backend_name)
-    resolved_feedback_path, feedback_text = load_rework_feedback(feedback_path)
+    resolved_feedback_path, feedback_text = resolve_rework_feedback(
+        source_state,
+        source_run_dir=source_run_dir,
+        feedback_path=feedback_path,
+    )
     task = build_rework_task(
         source_state,
         feedback_text=feedback_text,

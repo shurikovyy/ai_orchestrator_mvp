@@ -9,6 +9,7 @@ from ai_orchestrator.backends import Backend
 from ai_orchestrator.pipeline import PipelinePlan, PipelineRunResult, run_pipeline
 from ai_orchestrator.rework import execute_rework_run
 from ai_orchestrator.review import accept_run
+from ai_orchestrator.review_decision import record_review_decision
 from ai_orchestrator.schemas import RunState, TaskSpec
 from ai_orchestrator.task_queue import TaskSummaryList, list_task_summaries, load_task_queue_config, resolve_task_definition
 from ai_orchestrator.task_runner import (
@@ -287,8 +288,11 @@ def build_rework_run_parser() -> argparse.ArgumentParser:
     parser.add_argument("--runs-dir", default=".runs", help="Directory containing run state and artifacts.")
     parser.add_argument(
         "--feedback",
-        required=True,
-        help="Path to a markdown/text file with human review feedback.",
+        default=None,
+        help=(
+            "Optional path to a markdown/text file with human review feedback. "
+            "If omitted, rework-run will try to use stored feedback from a rejected human review decision."
+        ),
     )
     parser.add_argument(
         "--backend",
@@ -316,6 +320,32 @@ def build_rework_run_parser() -> argparse.ArgumentParser:
         "--stream-codex-output",
         action="store_true",
         help="Stream Codex CLI stdout/stderr to the console while codex exec is running.",
+    )
+    return parser
+
+
+def build_review_run_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="ai-orchestrator review-run",
+        description="Record an explicit human review decision for an existing approved run.",
+    )
+    parser.add_argument("run_id", help="Existing run id to review.")
+    parser.add_argument("--runs-dir", default=".runs", help="Directory containing run state and artifacts.")
+    parser.add_argument(
+        "--decision",
+        required=True,
+        choices=["approved", "rejected"],
+        help="Human review decision to record.",
+    )
+    parser.add_argument(
+        "--feedback",
+        default=None,
+        help="Optional feedback file for approved decisions; required for rejected decisions.",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite an existing human review decision for this run.",
     )
     return parser
 
@@ -580,10 +610,37 @@ def rework_run_main(argv: list[str] | None = None) -> int:
     return 0 if result.status == "approved" else 1
 
 
+def review_run_main(argv: list[str] | None = None) -> int:
+    parser = build_review_run_parser()
+    args = parser.parse_args(argv)
+    try:
+        result = record_review_decision(
+            run_id=args.run_id,
+            runs_dir=args.runs_dir,
+            decision=args.decision,
+            feedback_path=args.feedback,
+            force=args.force,
+        )
+    except Exception as exc:  # noqa: BLE001 - CLI should print deterministic error text.
+        print(f"run_id={args.run_id}")
+        print("status=failed")
+        print(f"error={exc}")
+        return 1
+    print(f"run_id={result.run_id}")
+    print("status=review_recorded")
+    print(f"decision={result.decision}")
+    print(f"review_decision={result.review_decision_path}")
+    print(f"review_feedback={result.review_feedback_path or ''}")
+    print(f"state={result.state_path}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if args and args[0] == "accept-run":
         return accept_main(args[1:])
+    if args and args[0] == "review-run":
+        return review_run_main(args[1:])
     if args and args[0] == "rework-run":
         return rework_run_main(args[1:])
     if args and args[0] == "list-tasks":
