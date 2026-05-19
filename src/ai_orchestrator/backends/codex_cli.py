@@ -168,10 +168,23 @@ class CodexCliBackend(MockBackend):
 
     @staticmethod
     def _stream_process_output(stream, sink: list[str], prefix: str) -> None:
-        for line in iter(stream.readline, ""):
-            sink.append(line)
-            print(f"{prefix}{line.rstrip()}", file=sys.stderr, flush=True)
-        stream.close()
+        try:
+            for line in iter(stream.readline, ""):
+                sink.append(line)
+                print(f"{prefix}{line.rstrip()}", file=sys.stderr, flush=True)
+        except UnicodeDecodeError as exc:
+            diagnostic = f"ERROR: failed to decode subprocess stream: {exc}"
+            sink.append(diagnostic + "\n")
+            print(f"{prefix}{diagnostic}", file=sys.stderr, flush=True)
+        except Exception as exc:  # noqa: BLE001 - diagnostic path should never kill the stream thread.
+            diagnostic = f"ERROR: failed while reading subprocess stream: {type(exc).__name__}: {exc}"
+            sink.append(diagnostic + "\n")
+            print(f"{prefix}{diagnostic}", file=sys.stderr, flush=True)
+        finally:
+            try:
+                stream.close()
+            except Exception:  # noqa: BLE001 - best-effort cleanup only.
+                pass
 
     def _run_codex_process(self, cmd: list[str], prompt: str) -> subprocess.CompletedProcess[str]:
         if not self.stream_output:
@@ -180,6 +193,8 @@ class CodexCliBackend(MockBackend):
                 input=prompt,
                 text=True,
                 capture_output=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=self.timeout_seconds,
                 check=False,
             )
@@ -193,6 +208,8 @@ class CodexCliBackend(MockBackend):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             bufsize=1,
         )
         assert process.stdin is not None
