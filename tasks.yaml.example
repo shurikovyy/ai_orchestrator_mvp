@@ -59,3 +59,23 @@ tasks:
     prompt: |
       This task is disabled and should not run in pipeline mode.
     criteria: []
+
+  - id: "structured-plan-example"
+    enabled: false
+    title: "Structured plan example"
+    backend: mock
+    prompt: |
+      Demonstrate task-defined structured plan steps.
+    plan_steps:
+      - id: "inspect"
+        title: "Inspect"
+        description: |
+          Produce an inspection summary.
+        criteria:
+          - "inspection summary"
+      - id: "report"
+        title: "Report"
+        description: |
+          Produce a final report.
+        criteria:
+          - "final report"

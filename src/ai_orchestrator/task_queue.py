@@ -6,7 +6,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
-from ai_orchestrator.schemas import TaskSpec
+from ai_orchestrator.schemas import TaskPlanStepSpec, TaskSpec
 
 BackendName = Literal["mock", "codex", "codex_cli"]
 
@@ -45,6 +45,7 @@ class TaskDefinition(BaseModel):
     prompt: str
     enabled: bool = True
     criteria: list[str] = Field(default_factory=list)
+    plan_steps: list[TaskPlanStepSpec] = Field(default_factory=list)
     backend: BackendName | None = None
     codex_cmd: str | None = None
     seed_workspace: str | None = None
@@ -85,6 +86,16 @@ class TaskDefinition(BaseModel):
     @classmethod
     def strip_criteria(cls, value: list[str]) -> list[str]:
         return [item.strip() for item in value if item.strip()]
+
+    @field_validator("plan_steps")
+    @classmethod
+    def plan_steps_have_unique_ids(cls, value: list[TaskPlanStepSpec]) -> list[TaskPlanStepSpec]:
+        seen_ids: set[str] = set()
+        for step in value:
+            if step.id in seen_ids:
+                raise ValueError(f"duplicate plan step id: {step.id}")
+            seen_ids.add(step.id)
+        return value
 
 
 class TaskQueueConfig(BaseModel):
@@ -129,6 +140,7 @@ class ResolvedTaskDefinition:
     title: str | None
     prompt: str
     criteria: list[str]
+    plan_steps: list[TaskPlanStepSpec]
     backend: str
     codex_cmd: str | None
     seed_workspace: str | None
@@ -147,6 +159,7 @@ class ResolvedTaskDefinition:
             title=self.title,
             description=self.prompt,
             acceptance_criteria=list(self.criteria),
+            plan_steps=[step.model_copy(deep=True) for step in self.plan_steps],
             max_retries=self.max_retries,
             require_structured_report=self.require_structured_report,
             rerun_report_test_commands=self.rerun_report_test_commands,
@@ -208,6 +221,35 @@ def _validate_raw_payload(payload: object) -> None:
         raw_criteria = raw_task.get("criteria", [])
         if not isinstance(raw_criteria, list) or any(not isinstance(item, str) for item in raw_criteria):
             raise TaskQueueConfigError(f"task `{task_id}` criteria must be a list of strings")
+
+        raw_plan_steps = raw_task.get("plan_steps", [])
+        if raw_plan_steps is None:
+            raw_plan_steps = []
+        if not isinstance(raw_plan_steps, list):
+            raise TaskQueueConfigError(f"task `{task_id}` plan_steps must be a list")
+
+        seen_step_ids: set[str] = set()
+        for step_index, raw_step in enumerate(raw_plan_steps, start=1):
+            if not isinstance(raw_step, dict):
+                raise TaskQueueConfigError(f"task `{task_id}` plan step at index {step_index} must be a mapping")
+
+            raw_step_id = raw_step.get("id")
+            if not isinstance(raw_step_id, str) or not raw_step_id.strip():
+                raise TaskQueueConfigError(f"task `{task_id}` plan step at index {step_index} is missing required field: id")
+            step_id = raw_step_id.strip()
+            if step_id in seen_step_ids:
+                raise TaskQueueConfigError(f"task `{task_id}` has duplicate plan step id: {step_id}")
+            seen_step_ids.add(step_id)
+
+            raw_step_description = raw_step.get("description")
+            if not isinstance(raw_step_description, str) or not raw_step_description.strip():
+                raise TaskQueueConfigError(
+                    f"task `{task_id}` plan step `{step_id}` is missing required field: description"
+                )
+
+            raw_step_criteria = raw_step.get("criteria", [])
+            if not isinstance(raw_step_criteria, list) or any(not isinstance(item, str) for item in raw_step_criteria):
+                raise TaskQueueConfigError(f"task `{task_id}` plan step `{step_id}` criteria must be a list of strings")
 
 
 def _format_validation_error(exc: ValidationError) -> str:
@@ -341,6 +383,7 @@ def resolve_task_definition(
         title=task.title,
         prompt=task.prompt,
         criteria=list(task.criteria),
+        plan_steps=[step.model_copy(deep=True) for step in task.plan_steps],
         backend=str(resolved_backend),
         codex_cmd=resolved_codex_cmd,
         seed_workspace=resolved_seed_workspace,

@@ -68,6 +68,8 @@ class TaskExecutionEngine:
                     self._log("validator feedback: " + " | ".join(previous_feedback))
             if not approved:
                 all_approved = False
+                self._log(f"step={step.id} failed after retries; stopping remaining plan steps")
+                break
 
         state.final_status = "approved" if all_approved else "failed"
         state.touch()

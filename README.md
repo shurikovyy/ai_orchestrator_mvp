@@ -648,6 +648,49 @@ Safety notes:
 - `list-tasks` does not create a commit.
 - `list-tasks` is safe to use before creating a seed workspace such as `toy_seed_project_0172`.
 
+### Structured task-defined plans
+
+Default planner behavior is still the legacy one-step flow: one task description becomes one executor step with the task-level `criteria`.
+
+Tasks may now define deterministic `plan_steps` directly in `tasks.yaml`:
+
+```yaml
+tasks:
+  - id: "structured-plan-example"
+    title: "Structured plan example"
+    prompt: |
+      Overall task description.
+    plan_steps:
+      - id: "inspect"
+        title: "Inspect current state"
+        description: |
+          Inspect the repository and summarize the relevant files.
+        criteria:
+          - "inspection summary"
+      - id: "implement"
+        title: "Implement requested change"
+        description: |
+          Implement the requested change.
+        criteria:
+          - "implementation completed"
+      - id: "verify"
+        title: "Verify and report"
+        description: |
+          Run tests and create the required execution report.
+        criteria:
+          - "tests.status=passed"
+```
+
+Behavior:
+
+- `plan_steps` are deterministic task definitions, not an LLM planner output.
+- Each step has its own `criteria`; they map to internal `PlanStep.acceptance_criteria`.
+- Task-level `criteria` remain useful for legacy one-step tasks and are not copied into every structured step automatically.
+- The executor still receives only the current step description plus that step's criteria and prior validator feedback.
+- The validator evaluates each structured step independently.
+- Retries remain per step.
+- If a step exhausts retries and still fails, later steps do not run.
+
 ## Local files policy
 
 - `tasks.yaml` is a local working file and is usually not committed.

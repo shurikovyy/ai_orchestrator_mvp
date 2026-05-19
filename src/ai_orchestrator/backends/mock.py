@@ -24,6 +24,23 @@ class MockBackend(Backend):
     name = "mock"
 
     def plan(self, task: TaskSpec) -> Plan:
+        if task.plan_steps:
+            structured_steps = [
+                PlanStep(
+                    id=step.id,
+                    title=step.title or step.id or f"Step {index}",
+                    description=step.description,
+                    assigned_role=step.assigned_role,
+                    acceptance_criteria=list(step.criteria),
+                )
+                for index, step in enumerate(task.plan_steps, start=1)
+            ]
+            return Plan(
+                task_id=task.id,
+                summary=f"Structured task-defined plan with {len(structured_steps)} step(s).",
+                steps=structured_steps,
+            )
+
         criteria = task.acceptance_criteria or [
             "final artifact exists",
             "answer is structured",

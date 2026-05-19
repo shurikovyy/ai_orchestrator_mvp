@@ -8,6 +8,43 @@ from uuid import uuid4
 from pydantic import BaseModel, Field, field_validator
 
 
+class TaskPlanStepSpec(BaseModel):
+    id: str
+    title: str | None = None
+    description: str
+    assigned_role: Literal["planner", "executor", "validator", "codex_executor"] = "executor"
+    criteria: list[str] = Field(default_factory=list)
+
+    @field_validator("id")
+    @classmethod
+    def id_not_empty(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("plan step id must not be empty")
+        return value
+
+    @field_validator("title")
+    @classmethod
+    def title_blank_to_none(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        return value or None
+
+    @field_validator("description")
+    @classmethod
+    def description_not_empty(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("plan step description cannot be empty")
+        return value
+
+    @field_validator("criteria")
+    @classmethod
+    def criteria_not_empty(cls, value: list[str]) -> list[str]:
+        return [item.strip() for item in value if item.strip()]
+
+
 class TaskSpec(BaseModel):
     """User-level task contract."""
 
@@ -15,6 +52,7 @@ class TaskSpec(BaseModel):
     title: str | None = None
     description: str
     acceptance_criteria: list[str] = Field(default_factory=list)
+    plan_steps: list[TaskPlanStepSpec] = Field(default_factory=list)
     max_retries: int = Field(default=2, ge=0, le=10)
     require_structured_report: bool = False
     rerun_report_test_commands: bool = False
@@ -51,6 +89,16 @@ class TaskSpec(BaseModel):
     @classmethod
     def criteria_not_empty(cls, value: list[str]) -> list[str]:
         return [item.strip() for item in value if item.strip()]
+
+    @field_validator("plan_steps")
+    @classmethod
+    def plan_steps_have_unique_ids(cls, value: list[TaskPlanStepSpec]) -> list[TaskPlanStepSpec]:
+        seen_ids: set[str] = set()
+        for step in value:
+            if step.id in seen_ids:
+                raise ValueError(f"duplicate plan step id: {step.id}")
+            seen_ids.add(step.id)
+        return value
 
 
 class PlanStep(BaseModel):

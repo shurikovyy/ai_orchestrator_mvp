@@ -56,9 +56,9 @@ class ListTasksCliTests(unittest.TestCase):
 
             self.assertEqual(exit_code, 0, output)
             self.assertIn(f"tasks_file={example_path.resolve()}", output)
-            self.assertIn("tasks_total=3", output)
+            self.assertIn("tasks_total=4", output)
             self.assertIn("tasks_enabled=1", output)
-            self.assertIn("tasks_disabled=2", output)
+            self.assertIn("tasks_disabled=3", output)
             self.assertIn('task_id=mock-smoke enabled=true backend=mock title="Mock smoke test" seed_workspace=', output)
             self.assertIn(
                 'task_id=toy-fix enabled=false backend=codex_cli title="Fix toy subtract bug" seed_workspace=toy_seed_project_0172',
@@ -68,8 +68,13 @@ class ListTasksCliTests(unittest.TestCase):
                 'task_id=disabled-example enabled=false backend=mock title="Disabled example task" seed_workspace=',
                 output,
             )
+            self.assertIn(
+                'task_id=structured-plan-example enabled=false backend=mock title="Structured plan example" seed_workspace=',
+                output,
+            )
             self.assertLess(output.index("task_id=mock-smoke"), output.index("task_id=toy-fix"))
             self.assertLess(output.index("task_id=toy-fix"), output.index("task_id=disabled-example"))
+            self.assertLess(output.index("task_id=disabled-example"), output.index("task_id=structured-plan-example"))
             self.assertFalse((tmp / ".runs").exists())
             self.assertFalse((tmp / ".runs" / "pipelines").exists())
 
@@ -101,6 +106,7 @@ class ListTasksCliTests(unittest.TestCase):
             self.assertIn("task_id=mock-smoke", output)
             self.assertNotIn("task_id=toy-fix", output)
             self.assertNotIn("task_id=disabled-example", output)
+            self.assertNotIn("task_id=structured-plan-example", output)
             self.assertFalse((tmp / ".runs").exists())
 
     def test_disabled_only_shows_only_disabled_tasks(self) -> None:
@@ -110,12 +116,13 @@ class ListTasksCliTests(unittest.TestCase):
             exit_code, output = run_list_tasks("--tasks-file", str(example_path), "--disabled-only", cwd=tmp)
 
             self.assertEqual(exit_code, 0, output)
-            self.assertIn("tasks_total=2", output)
+            self.assertIn("tasks_total=3", output)
             self.assertIn("tasks_enabled=0", output)
-            self.assertIn("tasks_disabled=2", output)
+            self.assertIn("tasks_disabled=3", output)
             self.assertNotIn("task_id=mock-smoke", output)
             self.assertIn("task_id=toy-fix", output)
             self.assertIn("task_id=disabled-example", output)
+            self.assertIn("task_id=structured-plan-example", output)
             self.assertFalse((tmp / ".runs").exists())
 
     def test_enabled_only_and_disabled_only_together_returns_clear_error(self) -> None:
@@ -144,18 +151,23 @@ class ListTasksCliTests(unittest.TestCase):
             self.assertEqual(exit_code, 0, output)
             payload = json.loads(output)
             self.assertEqual(payload["tasks_file"], str(example_path.resolve()))
-            self.assertEqual(payload["tasks_total"], 3)
+            self.assertEqual(payload["tasks_total"], 4)
             self.assertEqual(payload["tasks_enabled"], 1)
-            self.assertEqual(payload["tasks_disabled"], 2)
+            self.assertEqual(payload["tasks_disabled"], 3)
 
             tasks = payload["tasks"]
-            self.assertEqual([task["id"] for task in tasks], ["mock-smoke", "toy-fix", "disabled-example"])
-            self.assertEqual([task["enabled"] for task in tasks], [True, False, False])
+            self.assertEqual(
+                [task["id"] for task in tasks],
+                ["mock-smoke", "toy-fix", "disabled-example", "structured-plan-example"],
+            )
+            self.assertEqual([task["enabled"] for task in tasks], [True, False, False, False])
             self.assertEqual(tasks[0]["backend"], "mock")
             self.assertIsNone(tasks[0]["seed_workspace"])
             self.assertEqual(tasks[0]["criteria_count"], 1)
             self.assertEqual(tasks[1]["backend"], "codex_cli")
             self.assertEqual(tasks[1]["seed_workspace"], "toy_seed_project_0172")
+            self.assertEqual(tasks[3]["backend"], "mock")
+            self.assertIsNone(tasks[3]["seed_workspace"])
             self.assertFalse((tmp / ".runs").exists())
 
 
