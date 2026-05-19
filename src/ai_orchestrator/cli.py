@@ -7,6 +7,7 @@ from pathlib import Path
 
 from ai_orchestrator.backends import Backend
 from ai_orchestrator.pipeline import PipelinePlan, PipelineRunResult, run_pipeline
+from ai_orchestrator.rework import execute_rework_run
 from ai_orchestrator.review import accept_run
 from ai_orchestrator.schemas import RunState, TaskSpec
 from ai_orchestrator.task_queue import TaskSummaryList, list_task_summaries, load_task_queue_config, resolve_task_definition
@@ -277,6 +278,48 @@ def build_accept_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def build_rework_run_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="ai-orchestrator rework-run",
+        description="Create a new run from an existing run plus explicit human review feedback.",
+    )
+    parser.add_argument("source_run_id", help="Existing run id to rework.")
+    parser.add_argument("--runs-dir", default=".runs", help="Directory containing run state and artifacts.")
+    parser.add_argument(
+        "--feedback",
+        required=True,
+        help="Path to a markdown/text file with human review feedback.",
+    )
+    parser.add_argument(
+        "--backend",
+        choices=["mock", "codex_cli", "codex"],
+        default=None,
+        help="Optional backend override. Takes priority over the source run backend.",
+    )
+    parser.add_argument(
+        "--codex-cmd",
+        default=None,
+        help="Optional Codex CLI command override for codex_cli rework runs.",
+    )
+    parser.add_argument(
+        "--max-retries",
+        type=int,
+        default=None,
+        help="Optional retry override for the new rework run.",
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Print orchestrator progress logs to the console while the rework run is executing.",
+    )
+    parser.add_argument(
+        "--stream-codex-output",
+        action="store_true",
+        help="Stream Codex CLI stdout/stderr to the console while codex exec is running.",
+    )
+    return parser
+
+
 def _print_run_summary(
     *,
     task_id: str | None,
@@ -507,10 +550,42 @@ def accept_main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def rework_run_main(argv: list[str] | None = None) -> int:
+    parser = build_rework_run_parser()
+    args = parser.parse_args(argv)
+    try:
+        result = execute_rework_run(
+            source_run_id=args.source_run_id,
+            runs_dir=args.runs_dir,
+            feedback_path=args.feedback,
+            backend_name=args.backend,
+            codex_cmd=args.codex_cmd,
+            max_retries=args.max_retries,
+            verbose=args.verbose,
+            stream_codex_output=args.stream_codex_output,
+        )
+    except Exception as exc:  # noqa: BLE001 - CLI should print deterministic error text.
+        print(f"source_run_id={args.source_run_id}")
+        print("status=failed")
+        print(f"error={exc}")
+        return 1
+    print(f"source_run_id={result.source_run_id}")
+    print(f"rework_run_id={result.rework_run_id}")
+    print(f"status={result.status}")
+    print(f"backend={result.backend_name}")
+    print(f"final_report={result.final_report}")
+    print(f"review_packet={result.review_packet}")
+    print(f"state={result.state_path}")
+    print(f"rework_feedback={result.rework_feedback}")
+    return 0 if result.status == "approved" else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if args and args[0] == "accept-run":
         return accept_main(args[1:])
+    if args and args[0] == "rework-run":
+        return rework_run_main(args[1:])
     if args and args[0] == "list-tasks":
         return list_tasks_main(args[1:])
     if args and args[0] == "run-task":

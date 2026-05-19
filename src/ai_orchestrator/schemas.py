@@ -60,8 +60,11 @@ class TaskSpec(BaseModel):
     seed_workspace_path: str | None = None
     validation_command_timeout_seconds: int = Field(default=60, ge=1, le=600)
     commit_message: str | None = None
+    rework_of_run_id: str | None = None
+    rework_feedback: str | None = None
+    rework_feedback_path: str | None = None
 
-    @field_validator("title", "commit_message")
+    @field_validator("title", "commit_message", "rework_of_run_id", "rework_feedback", "rework_feedback_path")
     @classmethod
     def blank_optional_strings_to_none(cls, value: str | None) -> str | None:
         if value is None:
@@ -205,6 +208,7 @@ class ValidationResult(BaseModel):
 class RunState(BaseModel):
     run_id: str = Field(default_factory=lambda: f"run_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{uuid4().hex[:6]}")
     task: TaskSpec
+    backend_name: str | None = None
     plan: Plan | None = None
     executions: list[ExecutionResult] = Field(default_factory=list)
     validations: list[ValidationResult] = Field(default_factory=list)

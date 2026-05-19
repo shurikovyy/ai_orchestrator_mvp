@@ -691,6 +691,49 @@ Behavior:
 - Retries remain per step.
 - If a step exhausts retries and still fails, later steps do not run.
 
+### Explicit rework loop
+
+`rework-run` creates a brand new run from an older run plus explicit human review feedback. It does not modify the old run, does not call `accept-run`, and does not create a commit.
+
+Examples:
+
+```bash
+python -m ai_orchestrator.cli rework-run run_20260519_120000_abcd12 \
+  --runs-dir .runs \
+  --feedback review_feedback.md \
+  --backend codex_cli \
+  --codex-cmd "$CODEX_CMD" \
+  --verbose \
+  --stream-codex-output
+```
+
+```bash
+python -m ai_orchestrator.cli rework-run run_20260519_120000_abcd12 \
+  --runs-dir .runs \
+  --feedback review_feedback.md \
+  --backend mock \
+  --verbose
+```
+
+Behavior:
+
+- `rework-run` reads `.runs/<source_run_id>/state.json`.
+- It requires a non-empty human feedback file.
+- It creates a new run with the same task context plus `rework_of_run_id`, `rework_feedback`, and `rework_feedback_path`.
+- The executor receives the human feedback as authoritative correction guidance.
+- The new run gets its own `final_report.md`, `REVIEW_PACKET.md`, and `state.json`.
+- A copy of the feedback is stored as `.runs/<new_run_id>/REWORK_FEEDBACK.md`.
+- The old run is preserved unchanged for audit/review history.
+
+Safety notes:
+
+- `rework-run` does not call `accept-run`.
+- `rework-run` does not create a commit.
+- Commit or accept remains a manual review gate.
+- Commit the feedback file only if that is intentional.
+- Feedback may contain sensitive review notes.
+- `.runs/<new_run_id>/REWORK_FEEDBACK.md` is stored under ignored runtime artifacts.
+
 ## Local files policy
 
 - `tasks.yaml` is a local working file and is usually not committed.

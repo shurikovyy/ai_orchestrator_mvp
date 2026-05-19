@@ -104,6 +104,25 @@ def _build_file_diff(*, old_path: Path | None, new_path: Path | None, display_pa
     return "\n".join(diff_lines)
 
 
+def _build_rework_context_lines(state: RunState) -> list[str]:
+    if not state.task.rework_of_run_id:
+        return []
+    excerpt = (state.task.rework_feedback or "").strip().replace("\r\n", "\n")
+    if len(excerpt) > 1200:
+        excerpt = excerpt[:1200].rstrip() + "\n... feedback excerpt clipped ..."
+    return [
+        "## Rework context",
+        f"- Source run: `{state.task.rework_of_run_id}`",
+        f"- Feedback file: `{state.task.rework_feedback_path or '(none)'}`",
+        "- Feedback excerpt:",
+        "",
+        "```text",
+        excerpt or "(none)",
+        "```",
+        "",
+    ]
+
+
 def _target_workspace_from_state(state: RunState, override: str | None = None) -> Path | None:
     raw = override or state.task.seed_workspace_path
     if not raw:
@@ -195,8 +214,9 @@ def write_review_packet(run_dir: Path, *, target_workspace_override: str | None 
         "## Task",
         state.task.description,
         "",
-        "## Structured report",
     ]
+    lines.extend(_build_rework_context_lines(state))
+    lines.append("## Structured report")
     if report is None:
         lines.append("No valid EXECUTION_REPORT.json was found.")
     else:

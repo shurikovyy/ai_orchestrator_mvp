@@ -78,11 +78,19 @@ class MockBackend(Backend):
 
         feedback_block = "\n".join(f"- {item}" for item in previous_feedback) or "- none"
         criteria_block = "\n".join(f"- {item}" for item in criteria_to_include) or "- no explicit criteria"
+        rework_feedback_block = task.rework_feedback.strip() if task.rework_feedback else ""
+        if rework_feedback_block:
+            rework_feedback_block = f"REWORK_FEEDBACK_RECEIVED\n{rework_feedback_block}"
+        else:
+            rework_feedback_block = "(none)"
 
         content = f"""# Result for: {step.title}
 
 ## Task
 {task.description}
+
+## Rework feedback
+{rework_feedback_block}
 
 ## Previous feedback
 {feedback_block}

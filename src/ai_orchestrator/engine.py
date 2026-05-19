@@ -20,7 +20,7 @@ class TaskExecutionEngine:
             print(f"[orchestrator] {message}", flush=True)
 
     def run(self, task: TaskSpec) -> RunState:
-        state = RunState(task=task)
+        state = RunState(task=task, backend_name=self.backend.name)
         run_dir = self.runs_dir / state.run_id
         artifacts_dir = run_dir / "artifacts"
         self._log(f"created run_id={state.run_id}")
@@ -86,6 +86,26 @@ class TaskExecutionEngine:
         (run_dir / "LATEST_REVIEW_PACKET.txt").write_text(str(review_packet), encoding="utf-8")
         return state
 
+    @staticmethod
+    def _build_rework_context_lines(task: TaskSpec) -> list[str]:
+        if not task.rework_of_run_id:
+            return []
+        excerpt = (task.rework_feedback or "").strip().replace("\r\n", "\n")
+        if len(excerpt) > 1000:
+            excerpt = excerpt[:1000].rstrip() + "\n... feedback excerpt clipped ..."
+        return [
+            "## Rework context",
+            f"Source run: `{task.rework_of_run_id}`",
+            f"Feedback: `{task.rework_feedback_path or '(none)'}`",
+            "",
+            "Feedback excerpt:",
+            "",
+            "```text",
+            excerpt or "(none)",
+            "```",
+            "",
+        ]
+
     def _write_final_report(self, state: RunState, run_dir: Path) -> Path:
         report_path = run_dir / "final_report.md"
         lines = [
@@ -97,8 +117,9 @@ class TaskExecutionEngine:
             "## Task",
             state.task.description,
             "",
-            "## Plan",
         ]
+        lines.extend(self._build_rework_context_lines(state.task))
+        lines.append("## Plan")
         if state.plan:
             lines.append(state.plan.summary)
             for step in state.plan.steps:

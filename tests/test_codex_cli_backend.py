@@ -152,6 +152,43 @@ class CodexCliBackendTests(unittest.TestCase):
         self.assertIn("ORCHESTRATOR_SMOKE_TEST_OK", result.content)
         self.assertIn(str(artifacts_dir / "workspace" / "RESULT.md"), result.artifact_paths)
 
+    def test_execute_step_includes_rework_feedback_in_prompt(self):
+        backend = CodexCliBackend(codex_cmd="codex")
+        task = TaskSpec(
+            description="Create RESULT.md",
+            rework_of_run_id="run_source_123",
+            rework_feedback='Please mention "REWORK_FEEDBACK_APPLIED".',
+        )
+        step = PlanStep(id="step_1", title="Create file", description="Write RESULT.md")
+        captured_run_kwargs = {}
+
+        def fake_run(cmd, **kwargs):
+            del cmd
+            captured_run_kwargs.update(kwargs)
+            return subprocess.CompletedProcess(args=["codex", "exec"], returncode=0, stdout="ok", stderr="")
+
+        with temporary_test_dir() as artifacts_dir, patch.object(
+            CodexCliBackend,
+            "_command_exists",
+            return_value=True,
+        ), patch(
+            "ai_orchestrator.backends.codex_cli.subprocess.run",
+            side_effect=fake_run,
+        ):
+            backend.execute_step(
+                task=task,
+                step=step,
+                attempt=1,
+                previous_feedback=[],
+                artifacts_dir=artifacts_dir,
+            )
+
+        prompt = captured_run_kwargs["input"]
+        self.assertIn("Human review feedback for this rework run:", prompt)
+        self.assertIn('Please mention "REWORK_FEEDBACK_APPLIED".', prompt)
+        self.assertIn("Treat this feedback as authoritative correction guidance.", prompt)
+        self.assertIn("Do not ignore it.", prompt)
+
     def test_run_codex_process_stream_mode_uses_utf8_replace_for_popen(self):
         backend = CodexCliBackend(codex_cmd="codex", stream_output=True)
         captured_popen_kwargs = {}

@@ -316,6 +316,19 @@ class CodexCliBackend(MockBackend):
 
         feedback = "\n".join(f"- {item}" for item in previous_feedback) or "- none"
         criteria = "\n".join(f"- {item}" for item in step.acceptance_criteria) or "- no explicit criteria"
+        rework_feedback_block = ""
+        if task.rework_feedback:
+            rework_feedback_block = f"""
+
+Human review feedback for this rework run:
+{task.rework_feedback}
+
+Rules:
+- Treat this feedback as authoritative correction guidance.
+- Do not ignore it.
+- If it conflicts with the original task, explain the conflict in EXECUTION_REPORT.json assumptions/risks.
+- Do not ask follow-up questions.
+"""
         structured_report_instruction = ""
         if task.require_structured_report:
             structured_report_instruction = """
@@ -357,6 +370,7 @@ Acceptance criteria:
 
 Previous validator feedback:
 {feedback}
+{rework_feedback_block}
 {structured_report_instruction}
 Produce the requested artifact in the workspace. Do not ask follow-up questions. If assumptions are needed, state them explicitly in the final response.
 """
