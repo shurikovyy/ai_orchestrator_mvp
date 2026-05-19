@@ -626,6 +626,28 @@ python -m ai_orchestrator.cli run-task toy-fix \
 
 This is only an environment example. Keep `seed_workspace` and other task paths relative inside `tasks.yaml` whenever possible.
 
+### Listing tasks
+
+`list-tasks` is a read-only introspection command. It only reads `tasks.yaml` or `tasks.yaml.example` and prints task metadata.
+
+Examples:
+
+```bash
+python -m ai_orchestrator.cli list-tasks --tasks-file tasks.yaml.example
+python -m ai_orchestrator.cli list-tasks --tasks-file tasks.yaml --enabled-only
+python -m ai_orchestrator.cli list-tasks --tasks-file tasks.yaml --disabled-only
+python -m ai_orchestrator.cli list-tasks --tasks-file tasks.yaml --format json
+```
+
+Safety notes:
+
+- `list-tasks` does not run tasks.
+- `list-tasks` does not create `.runs`.
+- `list-tasks` does not call Codex.
+- `list-tasks` does not call `accept-run`.
+- `list-tasks` does not create a commit.
+- `list-tasks` is safe to use before creating a seed workspace such as `toy_seed_project_0172`.
+
 ## Local files policy
 
 - `tasks.yaml` is a local working file and is usually not committed.

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -8,7 +9,7 @@ from ai_orchestrator.backends import Backend
 from ai_orchestrator.pipeline import PipelinePlan, PipelineRunResult, run_pipeline
 from ai_orchestrator.review import accept_run
 from ai_orchestrator.schemas import RunState, TaskSpec
-from ai_orchestrator.task_queue import load_task_queue_config, resolve_task_definition
+from ai_orchestrator.task_queue import TaskSummaryList, list_task_summaries, load_task_queue_config, resolve_task_definition
 from ai_orchestrator.task_runner import (
     RunCommandConfig,
     build_run_config_from_resolved_task,
@@ -214,6 +215,35 @@ def build_run_pipeline_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def build_list_tasks_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="ai-orchestrator list-tasks",
+        description="List task definitions from tasks.yaml without executing anything.",
+    )
+    parser.add_argument(
+        "--tasks-file",
+        required=True,
+        help="Path to tasks.yaml or tasks.yaml.example containing task definitions.",
+    )
+    parser.add_argument(
+        "--enabled-only",
+        action="store_true",
+        help="Show only enabled tasks.",
+    )
+    parser.add_argument(
+        "--disabled-only",
+        action="store_true",
+        help="Show only disabled tasks.",
+    )
+    parser.add_argument(
+        "--format",
+        choices=["text", "json"],
+        default="text",
+        help="Output format. Defaults to text.",
+    )
+    return parser
+
+
 def build_accept_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="ai-orchestrator accept-run",
@@ -353,6 +383,67 @@ def _print_pipeline_summary(result: PipelineRunResult) -> None:
     print(f"pipeline_state={result.pipeline_state_path.resolve()}")
 
 
+def _print_task_summary_text(summary_list: TaskSummaryList) -> None:
+    print(f"tasks_file={summary_list.tasks_file}")
+    print(f"tasks_total={summary_list.tasks_total}")
+    print(f"tasks_enabled={summary_list.tasks_enabled}")
+    print(f"tasks_disabled={summary_list.tasks_disabled}")
+    for task in summary_list.tasks:
+        print(
+            " ".join(
+                [
+                    f"task_id={task.task_id}",
+                    f"enabled={str(task.enabled).lower()}",
+                    f"backend={task.backend}",
+                    f"title={json.dumps(task.title, ensure_ascii=False)}",
+                    f"seed_workspace={task.seed_workspace or ''}",
+                ]
+            )
+        )
+
+
+def _print_task_summary_json(summary_list: TaskSummaryList) -> None:
+    payload = {
+        "tasks_file": str(summary_list.tasks_file),
+        "tasks_total": summary_list.tasks_total,
+        "tasks_enabled": summary_list.tasks_enabled,
+        "tasks_disabled": summary_list.tasks_disabled,
+        "tasks": [
+            {
+                "id": task.task_id,
+                "title": task.title,
+                "enabled": task.enabled,
+                "backend": task.backend,
+                "seed_workspace": task.seed_workspace,
+                "criteria_count": task.criteria_count,
+            }
+            for task in summary_list.tasks
+        ],
+    }
+    print(json.dumps(payload, indent=2, ensure_ascii=False))
+
+
+def list_tasks_main(argv: list[str] | None = None) -> int:
+    parser = build_list_tasks_parser()
+    args = parser.parse_args(argv)
+    try:
+        summary_list = list_task_summaries(
+            args.tasks_file,
+            enabled_only=args.enabled_only,
+            disabled_only=args.disabled_only,
+        )
+    except Exception as exc:  # noqa: BLE001 - CLI should print deterministic error text.
+        print("status=failed")
+        print(f"error={exc}")
+        return 1
+
+    if args.format == "json":
+        _print_task_summary_json(summary_list)
+    else:
+        _print_task_summary_text(summary_list)
+    return 0
+
+
 def run_pipeline_main(argv: list[str] | None = None) -> int:
     parser = build_run_pipeline_parser()
     args = parser.parse_args(argv)
@@ -420,6 +511,8 @@ def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if args and args[0] == "accept-run":
         return accept_main(args[1:])
+    if args and args[0] == "list-tasks":
+        return list_tasks_main(args[1:])
     if args and args[0] == "run-task":
         return run_task_main(args[1:])
     if args and args[0] == "run-pipeline":

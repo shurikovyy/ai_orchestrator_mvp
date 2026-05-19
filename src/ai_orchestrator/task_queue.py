@@ -96,6 +96,34 @@ class TaskQueueConfig(BaseModel):
 
 
 @dataclass(frozen=True)
+class TaskSummary:
+    task_id: str
+    title: str
+    enabled: bool
+    backend: str
+    seed_workspace: str | None
+    criteria_count: int
+
+
+@dataclass(frozen=True)
+class TaskSummaryList:
+    tasks_file: Path
+    tasks: list[TaskSummary]
+
+    @property
+    def tasks_total(self) -> int:
+        return len(self.tasks)
+
+    @property
+    def tasks_enabled(self) -> int:
+        return sum(1 for task in self.tasks if task.enabled)
+
+    @property
+    def tasks_disabled(self) -> int:
+        return sum(1 for task in self.tasks if not task.enabled)
+
+
+@dataclass(frozen=True)
 class ResolvedTaskDefinition:
     task_id: str
     title: str | None
@@ -217,6 +245,39 @@ def get_task_definition(config: TaskQueueConfig, task_id: str) -> TaskDefinition
     if task is None:
         raise TaskQueueConfigError(f"task id not found: {normalized_task_id}")
     return task
+
+
+def build_task_summary(task: TaskDefinition, defaults: TaskDefaults) -> TaskSummary:
+    resolved_backend = _pick_first_not_none(task.backend, defaults.backend, "mock")
+    return TaskSummary(
+        task_id=task.id,
+        title=task.title or "",
+        enabled=bool(task.enabled),
+        backend=str(resolved_backend),
+        seed_workspace=task.seed_workspace,
+        criteria_count=len(task.criteria),
+    )
+
+
+def list_task_summaries(
+    tasks_file: str | Path,
+    *,
+    enabled_only: bool = False,
+    disabled_only: bool = False,
+) -> TaskSummaryList:
+    if enabled_only and disabled_only:
+        raise TaskQueueConfigError("--enabled-only and --disabled-only cannot be used together")
+
+    normalized_tasks_file = Path(tasks_file).expanduser().resolve()
+    config = load_task_queue_config(normalized_tasks_file)
+    summaries = [build_task_summary(task, config.defaults) for task in config.tasks]
+
+    if enabled_only:
+        summaries = [task for task in summaries if task.enabled]
+    elif disabled_only:
+        summaries = [task for task in summaries if not task.enabled]
+
+    return TaskSummaryList(tasks_file=normalized_tasks_file, tasks=summaries)
 
 
 def resolve_task_definition(
