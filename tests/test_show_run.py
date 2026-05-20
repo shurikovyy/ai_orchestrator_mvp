@@ -13,7 +13,7 @@ from uuid import uuid4
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from ai_orchestrator.backends.mock import MockBackend
-from ai_orchestrator.apply import accept_run, apply_run
+from ai_orchestrator.apply import accept_run, apply_run, load_run_state
 from ai_orchestrator.cli import show_run_main
 from ai_orchestrator.engine import TaskExecutionEngine
 from ai_orchestrator.rework import execute_rework_run
@@ -111,6 +111,26 @@ def make_approved_accept_run(root: Path, *, target_repo: Path, status: str = "ap
     return run_dir, state
 
 
+def add_workspace_changed_file(run_dir: Path, relative_path: str, content: str) -> None:
+    workspace = run_dir / "artifacts" / "workspace"
+    file_path = workspace / Path(relative_path)
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    file_path.write_text(content, encoding="utf-8")
+
+    report_path = workspace / "EXECUTION_REPORT.json"
+    report_payload = json.loads(report_path.read_text(encoding="utf-8"))
+    if relative_path not in report_payload["changed_files"]:
+        report_payload["changed_files"].append(relative_path)
+    report_path.write_text(json.dumps(report_payload, indent=2), encoding="utf-8")
+
+    state = load_run_state(run_dir)
+    execution = state.executions[-1]
+    artifact_path = str(file_path)
+    if artifact_path not in execution.artifact_paths:
+        execution.artifact_paths.append(artifact_path)
+    state.save_json(run_dir / "state.json")
+
+
 def make_approved_source_run(runs_dir: Path, *, task: TaskSpec | None = None) -> tuple[Path, str]:
     source_task = task or TaskSpec(
         description="Create deterministic demo artifact",
@@ -167,18 +187,38 @@ class ShowRunTests(unittest.TestCase):
             run_dir, _state = make_approved_accept_run(tmp, target_repo=repo)
             record_review_decision(run_id=run_dir.name, runs_dir=run_dir.parent, decision="approved")
             (repo / "src" / "toy_calc.py").write_text(
-                "def subtract(a, b):\n    return a + b\n", encoding="utf-8"
+                "def subtract(a, b):\n    return a - b\n", encoding="utf-8"
             )
-            apply_run(run_id=run_dir.name, runs_dir=run_dir.parent)
+            git(repo, "add", ".")
+            git(repo, "commit", "-m", "align target with workspace")
+            add_workspace_changed_file(run_dir, "docs/show_run_apply_note.md", "# show-run apply note\n")
+            result = apply_run(run_id=run_dir.name, runs_dir=run_dir.parent)
             stdout = StringIO()
             with redirect_stdout(stdout):
                 exit_code = show_run_main([run_dir.name, "--runs-dir", str(run_dir.parent)])
             output = stdout.getvalue()
 
         self.assertEqual(exit_code, 0, output)
+        self.assertEqual(result.target_status, "dirty")
+        self.assertIn("docs/show_run_apply_note.md", result.applied_files)
+        self.assertTrue(git(repo, "status", "--short").stdout.strip())
         self.assertEqual(output_value(output, "application_status"), "applied")
         self.assertEqual(output_value(output, "apply_report_exists"), "true")
         self.assertEqual(output_value(output, "next_action"), "manual_commit")
+
+    def test_show_run_regression_noop_apply_run_still_fails(self) -> None:
+        with temporary_test_dir() as tmp:
+            repo = make_git_seed_repo(tmp)
+            run_dir, _state = make_approved_accept_run(tmp, target_repo=repo)
+            record_review_decision(run_id=run_dir.name, runs_dir=run_dir.parent, decision="approved")
+            (repo / "src" / "toy_calc.py").write_text(
+                "def subtract(a, b):\n    return a - b\n", encoding="utf-8"
+            )
+            git(repo, "add", ".")
+            git(repo, "commit", "-m", "align target with workspace")
+
+            with self.assertRaisesRegex(ValueError, "apply-run found no target changes to inspect"):
+                apply_run(run_id=run_dir.name, runs_dir=run_dir.parent)
 
     def test_show_run_for_human_rejected_run(self) -> None:
         with temporary_test_dir() as tmp:

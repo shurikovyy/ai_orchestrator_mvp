@@ -14,7 +14,7 @@ from uuid import uuid4
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from ai_orchestrator.backends.mock import MockBackend
-from ai_orchestrator.apply import apply_run
+from ai_orchestrator.apply import apply_run, load_run_state
 from ai_orchestrator.cli import show_pipeline_main
 from ai_orchestrator.engine import TaskExecutionEngine
 from ai_orchestrator.pipeline import PipelineSelectedTask, PipelineState, PipelineTaskResult
@@ -114,6 +114,26 @@ def make_approved_accept_run(root: Path, *, target_repo: Path, status: str = "ap
     )
     state.save_json(run_dir / "state.json")
     return run_dir, state
+
+
+def add_workspace_changed_file(run_dir: Path, relative_path: str, content: str) -> None:
+    workspace = run_dir / "artifacts" / "workspace"
+    file_path = workspace / Path(relative_path)
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    file_path.write_text(content, encoding="utf-8")
+
+    report_path = workspace / "EXECUTION_REPORT.json"
+    report_payload = json.loads(report_path.read_text(encoding="utf-8"))
+    if relative_path not in report_payload["changed_files"]:
+        report_payload["changed_files"].append(relative_path)
+    report_path.write_text(json.dumps(report_payload, indent=2), encoding="utf-8")
+
+    state = load_run_state(run_dir)
+    execution = state.executions[-1]
+    artifact_path = str(file_path)
+    if artifact_path not in execution.artifact_paths:
+        execution.artifact_paths.append(artifact_path)
+    state.save_json(run_dir / "state.json")
 
 
 def make_approved_source_run(runs_dir: Path, *, task: TaskSpec | None = None) -> tuple[Path, str]:
@@ -269,8 +289,11 @@ class ShowPipelineTests(unittest.TestCase):
             run_dir, _state = make_approved_accept_run(tmp, target_repo=repo)
             record_review_decision(run_id=run_dir.name, runs_dir=run_dir.parent, decision="approved")
             (repo / "src" / "toy_calc.py").write_text(
-                "def subtract(a, b):\n    return a + b\n", encoding="utf-8"
+                "def subtract(a, b):\n    return a - b\n", encoding="utf-8"
             )
+            git(repo, "add", ".")
+            git(repo, "commit", "-m", "align target with workspace")
+            add_workspace_changed_file(run_dir, "docs/show_pipeline_apply_note.md", "# show-pipeline apply note\n")
             apply_run(run_id=run_dir.name, runs_dir=run_dir.parent)
             create_pipeline_fixture(
                 tmp,

@@ -100,6 +100,26 @@ def make_approved_run(root: Path, *, target_repo: Path, status: str = "approved"
     return run_dir, state
 
 
+def add_workspace_changed_file(run_dir: Path, relative_path: str, content: str) -> None:
+    workspace = run_dir / "artifacts" / "workspace"
+    file_path = workspace / Path(relative_path)
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    file_path.write_text(content, encoding="utf-8")
+
+    report_path = workspace / "EXECUTION_REPORT.json"
+    report_payload = json.loads(report_path.read_text(encoding="utf-8"))
+    if relative_path not in report_payload["changed_files"]:
+        report_payload["changed_files"].append(relative_path)
+    report_path.write_text(json.dumps(report_payload, indent=2), encoding="utf-8")
+
+    state = load_run_state(run_dir)
+    execution = state.executions[-1]
+    artifact_path = str(file_path)
+    if artifact_path not in execution.artifact_paths:
+        execution.artifact_paths.append(artifact_path)
+    state.save_json(run_dir / "state.json")
+
+
 def output_value(output: str, key: str) -> str:
     prefix = f"{key}="
     for line in output.splitlines():
@@ -125,8 +145,11 @@ class ApplyRunTests(unittest.TestCase):
             run_dir, _ = make_approved_run(tmp, target_repo=repo)
             record_review_decision(run_id=run_dir.name, runs_dir=run_dir.parent, decision="approved")
             (repo / "src" / "toy_calc.py").write_text(
-                "def subtract(a, b):\n    return a + b\n", encoding="utf-8"
+                "def subtract(a, b):\n    return a - b\n", encoding="utf-8"
             )
+            git(repo, "add", ".")
+            git(repo, "commit", "-m", "align target with workspace")
+            add_workspace_changed_file(run_dir, "docs/apply_run_note.md", "# apply run note\n")
             head_before = git(repo, "rev-parse", "HEAD").stdout.strip()
             commit_count_before = git(repo, "rev-list", "--count", "HEAD").stdout.strip()
 
@@ -137,15 +160,15 @@ class ApplyRunTests(unittest.TestCase):
             status_short = git(repo, "status", "--short").stdout
             self.assertEqual(result.review_gate, "human_approved")
             self.assertEqual(result.target_status, "dirty")
-            self.assertIn("src/toy_calc.py", result.applied_files)
+            self.assertIn("docs/apply_run_note.md", result.applied_files)
             self.assertIn("EXECUTION_REPORT.json", result.skipped_files)
             self.assertEqual(result.deleted_files, [])
-            self.assertIn("return a - b", (repo / "src" / "toy_calc.py").read_text(encoding="utf-8"))
+            self.assertEqual((repo / "docs" / "apply_run_note.md").read_text(encoding="utf-8"), "# apply run note\n")
             self.assertFalse((repo / "EXECUTION_REPORT.json").exists())
             self.assertEqual(git(repo, "rev-parse", "HEAD").stdout.strip(), head_before)
             self.assertEqual(git(repo, "rev-list", "--count", "HEAD").stdout.strip(), commit_count_before)
-            self.assertIn(" M src/toy_calc.py", status_short)
-            self.assertNotIn("M  src/toy_calc.py", status_short)
+            self.assertTrue(status_short.strip())
+            self.assertEqual(git(repo, "diff", "--cached", "--name-only").stdout.strip(), "")
             self.assertTrue(apply_report_md.exists())
             self.assertTrue(apply_report_json.exists())
             self.assertFalse((run_dir / "ACCEPTANCE.md").exists())
@@ -153,7 +176,7 @@ class ApplyRunTests(unittest.TestCase):
             self.assertIsNotNone(state.applied_at)
             self.assertEqual(state.apply_report_path, str(apply_report_md.resolve()))
             self.assertEqual(state.apply_target_workspace, str(repo.resolve()))
-            self.assertEqual(state.applied_files, ["src/toy_calc.py"])
+            self.assertIn("docs/apply_run_note.md", state.applied_files)
             self.assertEqual(state.deleted_files, [])
             self.assertEqual(state.skipped_files, ["EXECUTION_REPORT.json"])
             self.assertIn("Status: `applied`", apply_report_md.read_text(encoding="utf-8"))
@@ -197,12 +220,34 @@ class ApplyRunTests(unittest.TestCase):
             repo = make_git_seed_repo(tmp)
             run_dir, _ = make_approved_run(tmp, target_repo=repo)
             (repo / "src" / "toy_calc.py").write_text(
-                "def subtract(a, b):\n    return a + b\n", encoding="utf-8"
+                "def subtract(a, b):\n    return a - b\n", encoding="utf-8"
             )
+            git(repo, "add", ".")
+            git(repo, "commit", "-m", "align target with workspace")
+            add_workspace_changed_file(run_dir, "docs/unreviewed_apply_note.md", "# unreviewed apply note\n")
 
             result = apply_run(run_id=run_dir.name, runs_dir=run_dir.parent, allow_unreviewed=True)
             self.assertEqual(result.review_gate, "bypassed_unreviewed")
+            self.assertIn("docs/unreviewed_apply_note.md", result.applied_files)
+            self.assertTrue((repo / "docs" / "unreviewed_apply_note.md").exists())
             self.assertTrue((run_dir / "APPLY_REPORT.md").exists())
+
+    def test_apply_run_still_fails_when_clean_target_has_no_changes_to_inspect(self) -> None:
+        with temporary_test_dir() as tmp:
+            repo = make_git_seed_repo(tmp)
+            run_dir, _ = make_approved_run(tmp, target_repo=repo)
+            (repo / "src" / "toy_calc.py").write_text(
+                "def subtract(a, b):\n    return a - b\n", encoding="utf-8"
+            )
+            git(repo, "add", ".")
+            git(repo, "commit", "-m", "align target with workspace")
+            record_review_decision(run_id=run_dir.name, runs_dir=run_dir.parent, decision="approved")
+
+            with self.assertRaisesRegex(ValueError, "apply-run found no target changes to inspect"):
+                apply_run(run_id=run_dir.name, runs_dir=run_dir.parent)
+
+            self.assertFalse((run_dir / "APPLY_REPORT.md").exists())
+            self.assertFalse((run_dir / "APPLY_REPORT.json").exists())
 
     def test_apply_run_refuses_dirty_target_repo(self) -> None:
         with temporary_test_dir() as tmp:
