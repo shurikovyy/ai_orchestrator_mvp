@@ -820,6 +820,44 @@ Behavior:
 - `done`: the run already has `ACCEPTANCE.md`;
 - `rework_or_inspect_failure`: validator did not approve the run, so inspect `final_report.md` / validation feedback first.
 
+### Inspecting pipeline lifecycle status
+
+`show-pipeline` is a read-only inspection command for pipeline-level lifecycle state. It aggregates per-run status via the same `show-run` logic and combines it with `pipeline_state.json` and `PIPELINE_REPORT.md`.
+
+Examples:
+
+```bash
+python -m ai_orchestrator.cli show-pipeline pipeline_20260520_120000_abcd12 --runs-dir .runs
+```
+
+```bash
+python -m ai_orchestrator.cli show-pipeline pipeline_20260520_120000_abcd12 --runs-dir .runs --show-paths
+```
+
+```bash
+python -m ai_orchestrator.cli show-pipeline pipeline_20260520_120000_abcd12 --runs-dir .runs --format json
+```
+
+Behavior:
+
+- `show-pipeline` is read-only;
+- it does not run agents or Codex;
+- it does not re-run validation;
+- it does not call `review-run`, `rework-run`, or `accept-run`;
+- it does not create a commit;
+- it recommends the next safe pipeline-level action.
+
+`next_action` values:
+
+- `review_runs`: at least one validator-approved run still needs human review;
+- `rework_run`: at least one run has a rejected human review decision;
+- `accept_runs`: at least one run is human-approved and waiting for explicit `accept-run`;
+- `done`: all executed runs already have `ACCEPTANCE.md`;
+- `rework_or_inspect_failure`: at least one run did not pass validator approval;
+- `inspect_pipeline`: inspect `pipeline_state.json` / run references first, for example when a referenced run is missing.
+
+`show-pipeline` works after `run-pipeline`; it is an inspection/triage command, not a replacement for pipeline execution.
+
 ### Accept gate requires human review approval
 
 Validator approval is only a technical approval. By default, `accept-run` now requires a recorded human review approval before it can apply files back to a target repo and create a commit.

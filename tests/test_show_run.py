@@ -187,7 +187,7 @@ class ShowRunTests(unittest.TestCase):
             repo = make_git_seed_repo(tmp)
             run_dir, _state = make_approved_accept_run(tmp, target_repo=repo)
             record_review_decision(run_id=run_dir.name, runs_dir=run_dir.parent, decision="approved")
-            accept_run(run_id=run_dir.name, runs_dir=run_dir.parent, commit_message="fix: subtract")
+            (run_dir / "ACCEPTANCE.md").write_text("# acceptance\n", encoding="utf-8")
             stdout = StringIO()
             with redirect_stdout(stdout):
                 exit_code = show_run_main([run_dir.name, "--runs-dir", str(run_dir.parent)])

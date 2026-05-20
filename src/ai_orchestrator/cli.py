@@ -6,6 +6,11 @@ import sys
 from pathlib import Path
 
 from ai_orchestrator.backends import Backend
+from ai_orchestrator.pipeline_status import (
+    build_pipeline_status_summary,
+    format_pipeline_status_json,
+    format_pipeline_status_text,
+)
 from ai_orchestrator.pipeline import PipelinePlan, PipelineRunResult, run_pipeline
 from ai_orchestrator.run_status import build_run_status_summary, format_run_status_json, format_run_status_text
 from ai_orchestrator.rework import execute_rework_run
@@ -305,6 +310,27 @@ def build_show_run_parser() -> argparse.ArgumentParser:
         "--show-paths",
         action="store_true",
         help="Include key artifact paths in text output. JSON always includes artifact paths.",
+    )
+    return parser
+
+
+def build_show_pipeline_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="ai-orchestrator show-pipeline",
+        description="Show the lifecycle/status summary for one existing pipeline without modifying any artifacts.",
+    )
+    parser.add_argument("pipeline_id", help="Pipeline id to inspect.")
+    parser.add_argument("--runs-dir", default=".runs", help="Directory containing run and pipeline artifacts.")
+    parser.add_argument(
+        "--format",
+        choices=["text", "json"],
+        default="text",
+        help="Output format. Defaults to text.",
+    )
+    parser.add_argument(
+        "--show-paths",
+        action="store_true",
+        help="Include key pipeline artifact paths in text output. JSON always includes artifact paths.",
     )
     return parser
 
@@ -630,6 +656,24 @@ def show_run_main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def show_pipeline_main(argv: list[str] | None = None) -> int:
+    parser = build_show_pipeline_parser()
+    args = parser.parse_args(argv)
+    try:
+        summary = build_pipeline_status_summary(pipeline_id=args.pipeline_id, runs_dir=args.runs_dir)
+    except Exception as exc:  # noqa: BLE001 - CLI should print deterministic error text.
+        print(f"pipeline_id={args.pipeline_id}")
+        print("status=failed")
+        print(f"error={exc}")
+        return 1
+
+    if args.format == "json":
+        print(format_pipeline_status_json(summary))
+    else:
+        print(format_pipeline_status_text(summary, show_paths=args.show_paths))
+    return 0
+
+
 def rework_run_main(argv: list[str] | None = None) -> int:
     parser = build_rework_run_parser()
     args = parser.parse_args(argv)
@@ -687,6 +731,8 @@ def review_run_main(argv: list[str] | None = None) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
+    if args and args[0] == "show-pipeline":
+        return show_pipeline_main(args[1:])
     if args and args[0] == "show-run":
         return show_run_main(args[1:])
     if args and args[0] == "accept-run":

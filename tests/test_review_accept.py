@@ -145,6 +145,9 @@ class ReviewAcceptTests(unittest.TestCase):
         with temporary_test_dir() as tmp:
             repo = make_git_seed_repo(tmp)
             run_dir, _ = make_approved_run(tmp, target_repo=repo)
+            (repo / "src" / "toy_calc.py").write_text(
+                "def subtract(a, b):\n    return a + b\n", encoding="utf-8"
+            )
             result = accept_run(
                 run_id=run_dir.name,
                 runs_dir=run_dir.parent,
