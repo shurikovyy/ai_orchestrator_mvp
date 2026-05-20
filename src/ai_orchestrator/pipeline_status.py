@@ -17,6 +17,7 @@ class PipelineTaskStatusSummary:
     backend: str | None
     human_review_decision: str | None
     acceptance_status: str
+    application_status: str
     is_rework: bool
     source_run_id: str | None
     feedback_present: bool
@@ -62,6 +63,8 @@ def _run_artifact_paths_for_missing(task_result: PipelineTaskResult, runs_dir: P
         "review_decision_md": str((run_dir / "REVIEW_DECISION.md").resolve()),
         "review_feedback": str((run_dir / "REVIEW_FEEDBACK.md").resolve()),
         "rework_feedback": str((run_dir / "REWORK_FEEDBACK.md").resolve()),
+        "apply_report": str((run_dir / "APPLY_REPORT.md").resolve()),
+        "apply_report_json": str((run_dir / "APPLY_REPORT.json").resolve()),
         "acceptance": str((run_dir / "ACCEPTANCE.md").resolve()),
     }
 
@@ -74,6 +77,8 @@ def _exists_from_artifacts(artifacts: dict[str, str]) -> dict[str, bool]:
         "review_decision_md": Path(artifacts["review_decision_md"]).exists(),
         "review_feedback": Path(artifacts["review_feedback"]).exists(),
         "rework_feedback": Path(artifacts["rework_feedback"]).exists(),
+        "apply_report": Path(artifacts["apply_report"]).exists(),
+        "apply_report_json": Path(artifacts["apply_report_json"]).exists(),
         "acceptance": Path(artifacts["acceptance"]).exists(),
     }
 
@@ -87,6 +92,7 @@ def _build_task_summary_from_run_summary(task_result: PipelineTaskResult, run_su
         backend=run_summary.backend,
         human_review_decision=run_summary.human_review_decision,
         acceptance_status=run_summary.acceptance_status,
+        application_status=run_summary.application_status,
         is_rework=run_summary.is_rework,
         source_run_id=run_summary.source_run_id,
         feedback_present=run_summary.feedback_present,
@@ -107,6 +113,7 @@ def _build_missing_task_summary(task_result: PipelineTaskResult, runs_dir: Path)
         backend=None,
         human_review_decision=None,
         acceptance_status="not_accepted",
+        application_status="not_applied",
         is_rework=False,
         source_run_id=None,
         feedback_present=False,
@@ -136,6 +143,9 @@ def _compute_counts(task_summaries: list[PipelineTaskStatusSummary]) -> dict[str
         "tasks_human_approved": sum(1 for task in task_summaries if task.human_review_decision == "approved"),
         "tasks_human_rejected": sum(1 for task in task_summaries if task.human_review_decision == "rejected"),
         "tasks_accepted": sum(1 for task in task_summaries if task.acceptance_status == "accepted"),
+        "tasks_applied": sum(1 for task in task_summaries if task.application_status == "applied"),
+        "tasks_waiting_apply": sum(1 for task in task_summaries if task.next_action == "apply_run"),
+        "tasks_waiting_manual_commit": sum(1 for task in task_summaries if task.next_action == "manual_commit"),
     }
 
 
@@ -154,8 +164,10 @@ def _compute_pipeline_next_action(
         return "rework_run"
     if any(task.next_action == "review_run" for task in task_summaries):
         return "review_runs"
-    if any(task.next_action == "accept_run" for task in task_summaries):
-        return "accept_runs"
+    if any(task.next_action == "apply_run" for task in task_summaries):
+        return "apply_runs"
+    if any(task.next_action == "manual_commit" for task in task_summaries):
+        return "manual_commit"
     if task_summaries and all(task.next_action == "done" for task in task_summaries):
         return "done"
     return "inspect_pipeline"
@@ -168,7 +180,7 @@ def build_pipeline_status_summary(*, pipeline_id: str, runs_dir: str | Path) -> 
     if not pipeline_state_path.exists():
         raise FileNotFoundError(f"pipeline not found: {pipeline_id}")
 
-    state = PipelineState.model_validate_json(pipeline_state_path.read_text(encoding="utf-8"))
+    state = PipelineState.model_validate_json(pipeline_state_path.read_text(encoding="utf-8-sig"))
     task_summaries = [_build_task_summary(task_result, runs_dir_path) for task_result in state.tasks]
     warnings = [
         f"task `{task.task_id}` references missing run `{task.run_id}`"
@@ -210,6 +222,9 @@ def format_pipeline_status_text(summary: PipelineStatusSummary, *, show_paths: b
         f"tasks_human_approved={summary.counts['tasks_human_approved']}",
         f"tasks_human_rejected={summary.counts['tasks_human_rejected']}",
         f"tasks_accepted={summary.counts['tasks_accepted']}",
+        f"tasks_applied={summary.counts['tasks_applied']}",
+        f"tasks_waiting_apply={summary.counts['tasks_waiting_apply']}",
+        f"tasks_waiting_manual_commit={summary.counts['tasks_waiting_manual_commit']}",
         f"next_action={summary.next_action}",
     ]
     if show_paths:
@@ -227,6 +242,7 @@ def format_pipeline_status_text(summary: PipelineStatusSummary, *, show_paths: b
             f"validator_status={task.validator_status}",
             f"human_review_decision={task.human_review_decision or ''}",
             f"acceptance_status={task.acceptance_status}",
+            f"application_status={task.application_status}",
             f"is_rework={_bool_text(task.is_rework)}",
             f"source_run_id={task.source_run_id or ''}",
             f"next_action={task.next_action}",
@@ -256,6 +272,7 @@ def format_pipeline_status_json(summary: PipelineStatusSummary) -> str:
                 "backend": task.backend,
                 "human_review_decision": task.human_review_decision,
                 "acceptance_status": task.acceptance_status,
+                "application_status": task.application_status,
                 "is_rework": task.is_rework,
                 "source_run_id": task.source_run_id,
                 "feedback_present": task.feedback_present,

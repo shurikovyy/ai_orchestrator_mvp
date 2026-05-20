@@ -14,12 +14,14 @@ class RunStatusSummary:
     backend: str | None
     human_review_decision: str | None
     acceptance_status: str
+    application_status: str
     is_rework: bool
     source_run_id: str | None
     feedback_present: bool
     final_report_exists: bool
     review_packet_exists: bool
     review_decision_exists: bool
+    apply_report_exists: bool
     acceptance_exists: bool
     next_action: str
     artifacts: dict[str, str]
@@ -39,6 +41,8 @@ def _build_artifact_paths(run_dir: Path) -> dict[str, Path]:
         "review_decision_md": run_dir / "REVIEW_DECISION.md",
         "review_feedback": run_dir / "REVIEW_FEEDBACK.md",
         "rework_feedback": run_dir / "REWORK_FEEDBACK.md",
+        "apply_report": run_dir / "APPLY_REPORT.md",
+        "apply_report_json": run_dir / "APPLY_REPORT.json",
         "acceptance": run_dir / "ACCEPTANCE.md",
     }
 
@@ -47,6 +51,7 @@ def _compute_next_action(
     *,
     validator_status: str,
     human_review_decision: str | None,
+    application_status: str,
     acceptance_exists: bool,
 ) -> str:
     if validator_status != "approved":
@@ -55,8 +60,10 @@ def _compute_next_action(
         return "rework_run"
     if acceptance_exists:
         return "done"
+    if application_status == "applied":
+        return "manual_commit"
     if human_review_decision == "approved":
-        return "accept_run"
+        return "apply_run"
     return "review_run"
 
 
@@ -76,13 +83,17 @@ def build_run_status_summary(*, run_id: str, runs_dir: str | Path) -> RunStatusS
         "review_decision_md": artifact_paths["review_decision_md"].exists(),
         "review_feedback": artifact_paths["review_feedback"].exists(),
         "rework_feedback": artifact_paths["rework_feedback"].exists(),
+        "apply_report": artifact_paths["apply_report"].exists(),
+        "apply_report_json": artifact_paths["apply_report_json"].exists(),
         "acceptance": artifact_paths["acceptance"].exists(),
     }
     acceptance_exists = exists["acceptance"]
+    application_status = "applied" if state.apply_status == "applied" or exists["apply_report"] or exists["apply_report_json"] else "not_applied"
     human_review_decision = state.human_review_decision
     next_action = _compute_next_action(
         validator_status=state.final_status,
         human_review_decision=human_review_decision,
+        application_status=application_status,
         acceptance_exists=acceptance_exists,
     )
     feedback_present = bool(
@@ -98,12 +109,14 @@ def build_run_status_summary(*, run_id: str, runs_dir: str | Path) -> RunStatusS
         backend=state.backend_name,
         human_review_decision=human_review_decision,
         acceptance_status="accepted" if acceptance_exists else "not_accepted",
+        application_status=application_status,
         is_rework=bool(state.task.rework_of_run_id),
         source_run_id=state.task.rework_of_run_id,
         feedback_present=feedback_present,
         final_report_exists=exists["final_report"],
         review_packet_exists=exists["review_packet"],
         review_decision_exists=exists["review_decision"],
+        apply_report_exists=exists["apply_report"],
         acceptance_exists=acceptance_exists,
         next_action=next_action,
         artifacts={name: str(path.resolve()) for name, path in artifact_paths.items()},
@@ -118,12 +131,14 @@ def format_run_status_text(summary: RunStatusSummary, *, show_paths: bool = Fals
         f"backend={summary.backend or ''}",
         f"human_review_decision={summary.human_review_decision or ''}",
         f"acceptance_status={summary.acceptance_status}",
+        f"application_status={summary.application_status}",
         f"is_rework={_bool_text(summary.is_rework)}",
         f"source_run_id={summary.source_run_id or ''}",
         f"feedback_present={_bool_text(summary.feedback_present)}",
         f"final_report_exists={_bool_text(summary.final_report_exists)}",
         f"review_packet_exists={_bool_text(summary.review_packet_exists)}",
         f"review_decision_exists={_bool_text(summary.review_decision_exists)}",
+        f"apply_report_exists={_bool_text(summary.apply_report_exists)}",
         f"acceptance_exists={_bool_text(summary.acceptance_exists)}",
         f"next_action={summary.next_action}",
     ]
@@ -133,6 +148,8 @@ def format_run_status_text(summary: RunStatusSummary, *, show_paths: bool = Fals
                 f"final_report={summary.artifacts['final_report']}",
                 f"review_packet={summary.artifacts['review_packet']}",
                 f"review_decision={summary.artifacts['review_decision']}",
+                f"apply_report={summary.artifacts['apply_report']}",
+                f"apply_report_json={summary.artifacts['apply_report_json']}",
                 f"acceptance={summary.artifacts['acceptance']}",
                 f"state={summary.artifacts['state']}",
             ]
@@ -147,6 +164,7 @@ def format_run_status_json(summary: RunStatusSummary) -> str:
         "backend": summary.backend,
         "human_review_decision": summary.human_review_decision,
         "acceptance_status": summary.acceptance_status,
+        "application_status": summary.application_status,
         "is_rework": summary.is_rework,
         "source_run_id": summary.source_run_id,
         "feedback_present": summary.feedback_present,

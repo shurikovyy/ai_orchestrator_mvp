@@ -16,7 +16,7 @@ from ai_orchestrator.backends.mock import MockBackend
 from ai_orchestrator.cli import show_run_main
 from ai_orchestrator.engine import TaskExecutionEngine
 from ai_orchestrator.rework import execute_rework_run
-from ai_orchestrator.review import accept_run
+from ai_orchestrator.review import accept_run, apply_run
 from ai_orchestrator.review_decision import record_review_decision
 from ai_orchestrator.schemas import ExecutionResult, RunState, TaskSpec, ValidationResult
 
@@ -158,7 +158,27 @@ class ShowRunTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 0, output)
         self.assertEqual(output_value(output, "human_review_decision"), "approved")
-        self.assertEqual(output_value(output, "next_action"), "accept_run")
+        self.assertEqual(output_value(output, "application_status"), "not_applied")
+        self.assertEqual(output_value(output, "next_action"), "apply_run")
+
+    def test_show_run_after_apply_run_reports_manual_commit_state(self) -> None:
+        with temporary_test_dir() as tmp:
+            repo = make_git_seed_repo(tmp)
+            run_dir, _state = make_approved_accept_run(tmp, target_repo=repo)
+            record_review_decision(run_id=run_dir.name, runs_dir=run_dir.parent, decision="approved")
+            (repo / "src" / "toy_calc.py").write_text(
+                "def subtract(a, b):\n    return a + b\n", encoding="utf-8"
+            )
+            apply_run(run_id=run_dir.name, runs_dir=run_dir.parent)
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                exit_code = show_run_main([run_dir.name, "--runs-dir", str(run_dir.parent)])
+            output = stdout.getvalue()
+
+        self.assertEqual(exit_code, 0, output)
+        self.assertEqual(output_value(output, "application_status"), "applied")
+        self.assertEqual(output_value(output, "apply_report_exists"), "true")
+        self.assertEqual(output_value(output, "next_action"), "manual_commit")
 
     def test_show_run_for_human_rejected_run(self) -> None:
         with temporary_test_dir() as tmp:
@@ -187,7 +207,10 @@ class ShowRunTests(unittest.TestCase):
             repo = make_git_seed_repo(tmp)
             run_dir, _state = make_approved_accept_run(tmp, target_repo=repo)
             record_review_decision(run_id=run_dir.name, runs_dir=run_dir.parent, decision="approved")
-            (run_dir / "ACCEPTANCE.md").write_text("# acceptance\n", encoding="utf-8")
+            (repo / "src" / "toy_calc.py").write_text(
+                "def subtract(a, b):\n    return a + b\n", encoding="utf-8"
+            )
+            accept_run(run_id=run_dir.name, runs_dir=run_dir.parent, commit_message="fix: subtract")
             stdout = StringIO()
             with redirect_stdout(stdout):
                 exit_code = show_run_main([run_dir.name, "--runs-dir", str(run_dir.parent)])
@@ -256,13 +279,18 @@ class ShowRunTests(unittest.TestCase):
 
         self.assertEqual(payload["validator_status"], "approved")
         self.assertEqual(payload["human_review_decision"], "approved")
-        self.assertEqual(payload["next_action"], "accept_run")
+        self.assertEqual(payload["application_status"], "not_applied")
+        self.assertEqual(payload["next_action"], "apply_run")
         self.assertIn("artifacts", payload)
         self.assertIn("exists", payload)
         self.assertIn("final_report", payload["artifacts"])
         self.assertIn("review_packet", payload["artifacts"])
         self.assertIn("review_decision", payload["artifacts"])
+        self.assertIn("apply_report", payload["artifacts"])
+        self.assertIn("apply_report_json", payload["artifacts"])
         self.assertIn("acceptance", payload["artifacts"])
+        self.assertIn("apply_report", payload["exists"])
+        self.assertIn("apply_report_json", payload["exists"])
         self.assertIn("review_decision_md", payload["exists"])
 
     def test_show_run_show_paths_includes_artifact_paths(self) -> None:
@@ -278,6 +306,8 @@ class ShowRunTests(unittest.TestCase):
         self.assertIn("final_report=", output)
         self.assertIn("review_packet=", output)
         self.assertIn("review_decision=", output)
+        self.assertIn("apply_report=", output)
+        self.assertIn("apply_report_json=", output)
         self.assertIn("acceptance=", output)
         self.assertIn("state=", output)
 

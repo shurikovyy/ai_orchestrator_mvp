@@ -5,6 +5,7 @@ from io import StringIO
 from pathlib import Path
 import json
 import shutil
+import subprocess
 import sys
 import textwrap
 import unittest
@@ -16,8 +17,9 @@ from ai_orchestrator.backends.mock import MockBackend
 from ai_orchestrator.cli import show_pipeline_main
 from ai_orchestrator.engine import TaskExecutionEngine
 from ai_orchestrator.pipeline import PipelineSelectedTask, PipelineState, PipelineTaskResult
+from ai_orchestrator.review import apply_run
 from ai_orchestrator.review_decision import record_review_decision
-from ai_orchestrator.schemas import TaskSpec
+from ai_orchestrator.schemas import ExecutionResult, RunState, TaskSpec, ValidationResult
 
 TEST_TEMP_ROOT = Path(__file__).resolve().parents[1] / ".tmp_tests"
 TEST_TEMP_ROOT.mkdir(exist_ok=True)
@@ -43,6 +45,75 @@ def output_value(output: str, key: str) -> str:
 
 def write_text(path: Path, content: str) -> None:
     path.write_text(textwrap.dedent(content).lstrip(), encoding="utf-8")
+
+
+def git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(["git", "-C", str(repo), *args], text=True, capture_output=True, check=True)
+
+
+def make_git_seed_repo(root: Path) -> Path:
+    repo = root / "seed_repo"
+    (repo / "src").mkdir(parents=True)
+    (repo / "src" / "toy_calc.py").write_text(
+        "def subtract(a, b):\n    return a + b\n", encoding="utf-8"
+    )
+    subprocess.run(["git", "init", str(repo)], text=True, capture_output=True, check=True)
+    git(repo, "config", "user.email", "test@example.com")
+    git(repo, "config", "user.name", "Test User")
+    git(repo, "add", ".")
+    git(repo, "commit", "-m", "seed")
+    return repo
+
+
+def make_approved_accept_run(root: Path, *, target_repo: Path, status: str = "approved") -> tuple[Path, RunState]:
+    runs_dir = root / ".runs"
+    run_dir = runs_dir / "run_test_show_pipeline_apply"
+    workspace = run_dir / "artifacts" / "workspace"
+    (workspace / "src").mkdir(parents=True)
+    (workspace / "src" / "toy_calc.py").write_text(
+        "def subtract(a, b):\n    return a - b\n", encoding="utf-8"
+    )
+    report = {
+        "schema_version": "1.0",
+        "status": "completed",
+        "summary": "Fixed subtract.",
+        "changed_files": ["src/toy_calc.py", "EXECUTION_REPORT.json"],
+        "commands_run": [
+            {"command": "python -m unittest discover -s tests -t .", "exit_code": 0, "status": "passed", "summary": "ok"}
+        ],
+        "tests": [
+            {"name": "tests", "command": "python -m unittest discover -s tests -t .", "status": "passed", "total": 1, "passed": 1, "failed": 0, "output": "OK"}
+        ],
+        "risks": [],
+        "assumptions": [],
+        "validation_notes": [],
+    }
+    (workspace / "EXECUTION_REPORT.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+    task = TaskSpec(description="Fix subtract", seed_workspace_path=str(target_repo))
+    state = RunState(run_id="run_test_show_pipeline_apply", task=task, final_status=status)
+    content = "\n".join(
+        [
+            "# log",
+            "## workspace files",
+            "",
+            "### EXECUTION_REPORT.json",
+            json.dumps(report),
+        ]
+    )
+    state.executions.append(
+        ExecutionResult(
+            step_id="step_1",
+            attempt=1,
+            status="completed",
+            content=content,
+            artifact_paths=[str(workspace / "EXECUTION_REPORT.json"), str(workspace / "src" / "toy_calc.py")],
+        )
+    )
+    state.validations.append(
+        ValidationResult(step_id="step_1", attempt=1, approved=status == "approved", score=1.0, feedback=["ok"])
+    )
+    state.save_json(run_dir / "state.json")
+    return run_dir, state
 
 
 def make_approved_source_run(runs_dir: Path, *, task: TaskSpec | None = None) -> tuple[Path, str]:
@@ -143,7 +214,8 @@ class ShowPipelineTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 0, output)
         self.assertEqual(output_value(output, "tasks_human_approved"), "1")
-        self.assertEqual(output_value(output, "next_action"), "accept_runs")
+        self.assertEqual(output_value(output, "tasks_waiting_apply"), "1")
+        self.assertEqual(output_value(output, "next_action"), "apply_runs")
 
     def test_show_pipeline_with_human_rejected_run(self) -> None:
         with temporary_test_dir() as tmp:
@@ -190,6 +262,30 @@ class ShowPipelineTests(unittest.TestCase):
         self.assertEqual(exit_code, 0, output)
         self.assertEqual(output_value(output, "tasks_accepted"), "1")
         self.assertEqual(output_value(output, "next_action"), "done")
+
+    def test_show_pipeline_with_applied_not_accepted_run(self) -> None:
+        with temporary_test_dir() as tmp:
+            repo = make_git_seed_repo(tmp)
+            run_dir, _state = make_approved_accept_run(tmp, target_repo=repo)
+            record_review_decision(run_id=run_dir.name, runs_dir=run_dir.parent, decision="approved")
+            (repo / "src" / "toy_calc.py").write_text(
+                "def subtract(a, b):\n    return a + b\n", encoding="utf-8"
+            )
+            apply_run(run_id=run_dir.name, runs_dir=run_dir.parent)
+            create_pipeline_fixture(
+                tmp,
+                pipeline_id="pipeline_show_4b",
+                tasks=[build_pipeline_task_result("task-a", run_dir.name, run_dir.parent)],
+            )
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                exit_code = show_pipeline_main(["pipeline_show_4b", "--runs-dir", str(run_dir.parent)])
+            output = stdout.getvalue()
+
+        self.assertEqual(exit_code, 0, output)
+        self.assertEqual(output_value(output, "tasks_applied"), "1")
+        self.assertEqual(output_value(output, "tasks_waiting_manual_commit"), "1")
+        self.assertEqual(output_value(output, "next_action"), "manual_commit")
 
     def test_show_pipeline_with_validator_failed_run(self) -> None:
         with temporary_test_dir() as tmp:
@@ -294,9 +390,11 @@ class ShowPipelineTests(unittest.TestCase):
 
         self.assertEqual(payload["counts"]["tasks_total"], 1)
         self.assertEqual(payload["counts"]["tasks_human_approved"], 1)
-        self.assertEqual(payload["next_action"], "accept_runs")
+        self.assertEqual(payload["counts"]["tasks_waiting_apply"], 1)
+        self.assertEqual(payload["next_action"], "apply_runs")
         self.assertEqual(payload["tasks"][0]["task_id"], "task-a")
         self.assertEqual(payload["tasks"][0]["title"], "Task A")
+        self.assertEqual(payload["tasks"][0]["application_status"], "not_applied")
         self.assertIn("final_report", payload["tasks"][0]["artifacts"])
 
     def test_show_pipeline_show_paths_includes_pipeline_paths(self) -> None:

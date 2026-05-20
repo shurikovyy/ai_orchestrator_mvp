@@ -14,7 +14,7 @@ from ai_orchestrator.pipeline_status import (
 from ai_orchestrator.pipeline import PipelinePlan, PipelineRunResult, run_pipeline
 from ai_orchestrator.run_status import build_run_status_summary, format_run_status_json, format_run_status_text
 from ai_orchestrator.rework import execute_rework_run
-from ai_orchestrator.review import accept_run
+from ai_orchestrator.review import accept_run, apply_run
 from ai_orchestrator.review_decision import record_review_decision
 from ai_orchestrator.schemas import RunState, TaskSpec
 from ai_orchestrator.task_queue import TaskSummaryList, list_task_summaries, load_task_queue_config, resolve_task_definition
@@ -287,6 +287,34 @@ def build_accept_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "Allow accepting a validator-approved run without a recorded human review approval. "
+            "This does not override rejected human reviews."
+        ),
+    )
+    return parser
+
+
+def build_apply_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="ai-orchestrator apply-run",
+        description="Apply an approved run's changed files to the seed/target git repo without staging or committing.",
+    )
+    parser.add_argument("run_id", help="Run id to apply, for example run_20260516_122835_a9e9c2")
+    parser.add_argument("--runs-dir", default=".runs", help="Directory containing run state and artifacts.")
+    parser.add_argument(
+        "--target-workspace",
+        default=None,
+        help="Optional git repo to apply changes to. Defaults to the run's seed_workspace_path.",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Validate and print what would be applied, but do not modify the target repo.",
+    )
+    parser.add_argument(
+        "--allow-unreviewed",
+        action="store_true",
+        help=(
+            "Allow applying a validator-approved run without a recorded human review approval. "
             "This does not override rejected human reviews."
         ),
     )
@@ -638,6 +666,45 @@ def accept_main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def apply_main(argv: list[str] | None = None) -> int:
+    parser = build_apply_parser()
+    args = parser.parse_args(argv)
+    try:
+        result = apply_run(
+            run_id=args.run_id,
+            runs_dir=Path(args.runs_dir),
+            target_workspace_override=args.target_workspace,
+            dry_run=args.dry_run,
+            allow_unreviewed=args.allow_unreviewed,
+        )
+    except Exception as exc:  # noqa: BLE001 - CLI should print deterministic error text.
+        print("apply_status=failed")
+        print(f"run_id={args.run_id}")
+        print(f"error={exc}")
+        return 1
+    if args.dry_run:
+        print("apply_status=dry_run_ok")
+    else:
+        print("apply_status=applied")
+    print(f"run_id={result.run_id}")
+    print(f"target_workspace={result.target_workspace}")
+    if args.dry_run:
+        print("would_apply_files=" + ",".join(result.applied_files))
+        print("would_delete_files=" + ",".join(result.deleted_files))
+        print("would_skip_files=" + ",".join(result.skipped_files))
+    else:
+        print(f"apply_report={result.apply_report_path}")
+        if result.applied_files:
+            print("applied_files=" + ",".join(result.applied_files))
+        if result.deleted_files:
+            print("deleted_files=" + ",".join(result.deleted_files))
+        if result.skipped_files:
+            print("skipped_files=" + ",".join(result.skipped_files))
+    print(f"review_gate={result.review_gate}")
+    print(f"target_status={result.target_status}")
+    return 0
+
+
 def show_run_main(argv: list[str] | None = None) -> int:
     parser = build_show_run_parser()
     args = parser.parse_args(argv)
@@ -735,6 +802,8 @@ def main(argv: list[str] | None = None) -> int:
         return show_pipeline_main(args[1:])
     if args and args[0] == "show-run":
         return show_run_main(args[1:])
+    if args and args[0] == "apply-run":
+        return apply_main(args[1:])
     if args and args[0] == "accept-run":
         return accept_main(args[1:])
     if args and args[0] == "review-run":

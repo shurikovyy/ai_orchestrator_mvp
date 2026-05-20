@@ -786,7 +786,7 @@ Safety notes:
 
 ### Inspecting run lifecycle status
 
-`show-run` is a read-only inspection command. It aggregates status from `state.json` plus existing artifacts such as `final_report.md`, `REVIEW_PACKET.md`, `REVIEW_DECISION.json`, `REWORK_FEEDBACK.md`, and `ACCEPTANCE.md`.
+`show-run` is a read-only inspection command. It aggregates status from `state.json` plus existing artifacts such as `final_report.md`, `REVIEW_PACKET.md`, `REVIEW_DECISION.json`, `REWORK_FEEDBACK.md`, `APPLY_REPORT.md`, and `ACCEPTANCE.md`.
 
 Examples:
 
@@ -816,7 +816,8 @@ Behavior:
 
 - `review_run`: validator approved the run, but no human review decision is recorded yet;
 - `rework_run`: human review rejected the run and feedback/rework is the next step;
-- `accept_run`: validator approved the run and human review approved it, but acceptance has not been recorded yet;
+- `apply_run`: validator approved the run and human review approved it, but files have not been applied back to the target repo yet;
+- `manual_commit`: files were already applied with `apply-run`, so inspect `git diff`, run tests, and commit manually;
 - `done`: the run already has `ACCEPTANCE.md`;
 - `rework_or_inspect_failure`: validator did not approve the run, so inspect `final_report.md` / validation feedback first.
 
@@ -851,12 +852,51 @@ Behavior:
 
 - `review_runs`: at least one validator-approved run still needs human review;
 - `rework_run`: at least one run has a rejected human review decision;
-- `accept_runs`: at least one run is human-approved and waiting for explicit `accept-run`;
+- `apply_runs`: at least one run is human-approved and waiting for explicit `apply-run`;
+- `manual_commit`: at least one run was already applied and now needs manual git review/commit;
 - `done`: all executed runs already have `ACCEPTANCE.md`;
 - `rework_or_inspect_failure`: at least one run did not pass validator approval;
 - `inspect_pipeline`: inspect `pipeline_state.json` / run references first, for example when a referenced run is missing.
 
 `show-pipeline` works after `run-pipeline`; it is an inspection/triage command, not a replacement for pipeline execution.
+
+### Applying approved run without commit
+
+`apply-run` closes the gap between validator/human approval and a final manual git commit. It applies approved workspace files back into the target repo, but intentionally does **not** run `git add` and does **not** create a commit.
+
+Normal manual-commit workflow:
+
+```bash
+python -m ai_orchestrator.cli review-run run_20260519_120000_abcd12 \
+  --runs-dir .runs \
+  --decision approved
+
+python -m ai_orchestrator.cli apply-run run_20260519_120000_abcd12 \
+  --runs-dir .runs
+
+git diff --stat
+git diff
+python -m unittest discover -s tests
+git add ...
+git commit -m "fix: apply approved run manually"
+```
+
+Behavior:
+
+- `apply-run` requires validator approval;
+- it requires human review approval by default;
+- it can use `--allow-unreviewed` only for missing review decisions, never for rejected reviews;
+- it applies only allowed changed files from the isolated workspace;
+- it skips runtime/generated artifacts such as `EXECUTION_REPORT.json`;
+- it writes `.runs/<run_id>/APPLY_REPORT.md` and `.runs/<run_id>/APPLY_REPORT.json`;
+- it leaves the target repo dirty and unstaged on purpose for manual inspection;
+- it does not call `accept-run`;
+- it does not create a commit.
+
+Compare the two commands:
+
+- `apply-run`: apply files only, no staging, no commit;
+- `accept-run`: apply files and create a git commit.
 
 ### Accept gate requires human review approval
 

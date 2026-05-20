@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import difflib
+import json
 import shutil
 import subprocess
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 
 from ai_orchestrator.schemas import RunState, StructuredExecutionReport
@@ -54,6 +56,42 @@ class AcceptRunResult:
     no_target_changes: bool = False
 
 
+@dataclass(frozen=True)
+class ApplyRunResult:
+    run_id: str
+    target_workspace: Path
+    applied_files: list[str]
+    skipped_files: list[str]
+    deleted_files: list[str]
+    review_gate: str
+    review_decision: str
+    review_decision_path: str | None
+    review_gate_bypassed: bool
+    apply_report_path: Path | None
+    apply_report_json_path: Path | None
+    target_status: str
+
+
+@dataclass(frozen=True)
+class ReviewGateResolution:
+    review_gate: str
+    review_decision: str
+    review_decision_path: str | None
+    review_gate_bypassed: bool
+    review_gate_reason: str | None
+
+
+@dataclass(frozen=True)
+class PreparedApplyOperation:
+    run_id: str
+    run_dir: Path
+    state: RunState
+    data: ReviewPacketData
+    workspace_dir: Path
+    target_workspace: Path
+    review_gate: ReviewGateResolution
+
+
 def _safe_relative_path(value: str) -> str:
     normalized = _normalize_manifest_path(value)
     if not normalized:
@@ -78,7 +116,7 @@ def load_run_state(run_dir: Path) -> RunState:
     state_path = run_dir / "state.json"
     if not state_path.exists():
         raise FileNotFoundError(f"state.json not found: {state_path}")
-    return RunState.model_validate_json(state_path.read_text(encoding="utf-8"))
+    return RunState.model_validate_json(state_path.read_text(encoding="utf-8-sig"))
 
 
 def _read_text_or_empty(path: Path) -> list[str]:
@@ -134,16 +172,21 @@ def _target_workspace_from_state(state: RunState, override: str | None = None) -
     return Path(raw).expanduser().resolve()
 
 
-def _resolve_accept_review_gate(state: RunState, *, allow_unreviewed: bool) -> tuple[str, str, str | None, bool, str | None]:
+def _resolve_review_gate(
+    state: RunState,
+    *,
+    allow_unreviewed: bool,
+    action_name: str,
+) -> ReviewGateResolution:
     decision = state.human_review_decision
     decision_path = state.human_review_decision_path
     if decision == "approved":
-        return "human_approved", "approved", decision_path, False, None
+        return ReviewGateResolution("human_approved", "approved", decision_path, False, None)
     if decision == "rejected":
-        raise ValueError("run has rejected human review decision; run rework-run before accept-run")
+        raise ValueError(f"run has rejected human review decision; run rework-run before {action_name}")
     if decision is None:
         if allow_unreviewed:
-            return "bypassed_unreviewed", "missing", decision_path, True, "--allow-unreviewed"
+            return ReviewGateResolution("bypassed_unreviewed", "missing", decision_path, True, "--allow-unreviewed")
         raise ValueError(
             "run has no approved human review decision; run review-run --decision approved first or pass --allow-unreviewed"
         )
@@ -320,74 +363,115 @@ def _run_git(target_workspace: Path, args: list[str], *, check: bool = True) -> 
     return completed
 
 
-def accept_run(
+def _ensure_target_workspace_is_git_repo(
+    *,
+    target_workspace: Path,
+    run_id: str,
+    dry_run: bool,
+    init_target_git: bool,
+    action_name: str,
+) -> None:
+    if (target_workspace / ".git").exists():
+        return
+    if not init_target_git:
+        if action_name == "accept-run":
+            raise ValueError(
+                f"target workspace is not a git repository: {target_workspace}. "
+                "Initialize it first with `git init && git add . && git commit -m baseline`, "
+                "or rerun accept-run with --init-target-git for disposable/toy workspaces."
+            )
+        raise ValueError(
+            f"target workspace is not a git repository: {target_workspace}. "
+            "Initialize it first with `git init && git add . && git commit -m baseline`."
+        )
+    if dry_run:
+        raise ValueError("--dry-run cannot initialize a missing target git repository")
+    _run_git(target_workspace, ["init"], check=True)
+    if not _run_git(target_workspace, ["config", "user.email"], check=False).stdout.strip():
+        _run_git(target_workspace, ["config", "user.email", "ai-orchestrator@example.invalid"], check=True)
+    if not _run_git(target_workspace, ["config", "user.name"], check=False).stdout.strip():
+        _run_git(target_workspace, ["config", "user.name", "AI Orchestrator"], check=True)
+    _run_git(target_workspace, ["add", "--", "."], check=True)
+    baseline_status = _run_git(target_workspace, ["status", "--porcelain"], check=True).stdout.strip()
+    if baseline_status:
+        _run_git(
+            target_workspace,
+            ["commit", "-m", f"chore: seed baseline before accepting {run_id}"],
+            check=True,
+        )
+
+
+def _prepare_apply_operation(
     *,
     run_id: str,
     runs_dir: Path,
-    target_workspace_override: str | None = None,
-    commit_message: str | None = None,
-    dry_run: bool = False,
+    target_workspace_override: str | None,
+    dry_run: bool,
+    allow_unreviewed: bool,
+    action_name: str,
     init_target_git: bool = False,
-    allow_unreviewed: bool = False,
-) -> AcceptRunResult:
+) -> PreparedApplyOperation:
     run_dir = runs_dir / run_id
     data = build_review_packet_data(run_dir, target_workspace_override=target_workspace_override)
     state = data.state
     if state.final_status != "approved":
         raise ValueError(f"run {run_id} is not approved: {state.final_status}")
     if data.report is None:
-        raise ValueError("cannot accept run without a valid EXECUTION_REPORT.json")
+        raise ValueError(f"cannot {action_name} without a valid EXECUTION_REPORT.json")
     if data.workspace_dir is None or not data.workspace_dir.exists():
         raise ValueError("cannot infer run workspace from EXECUTION_REPORT.json")
     if data.target_workspace is None:
-        raise ValueError("accept-run requires a seed workspace or --target-workspace")
+        raise ValueError(f"{action_name} requires a seed workspace or --target-workspace")
     target_workspace = data.target_workspace
     if not target_workspace.exists() or not target_workspace.is_dir():
         raise FileNotFoundError(f"target workspace does not exist or is not a directory: {target_workspace}")
-    if not (target_workspace / ".git").exists():
-        if not init_target_git:
-            raise ValueError(
-                f"target workspace is not a git repository: {target_workspace}. "
-                "Initialize it first with `git init && git add . && git commit -m baseline`, "
-                "or rerun accept-run with --init-target-git for disposable/toy workspaces."
-            )
-        if dry_run:
-            raise ValueError("--dry-run cannot initialize a missing target git repository")
-        _run_git(target_workspace, ["init"], check=True)
-        if not _run_git(target_workspace, ["config", "user.email"], check=False).stdout.strip():
-            _run_git(target_workspace, ["config", "user.email", "ai-orchestrator@example.invalid"], check=True)
-        if not _run_git(target_workspace, ["config", "user.name"], check=False).stdout.strip():
-            _run_git(target_workspace, ["config", "user.name", "AI Orchestrator"], check=True)
-        _run_git(target_workspace, ["add", "--", "."], check=True)
-        baseline_status = _run_git(target_workspace, ["status", "--porcelain"], check=True).stdout.strip()
-        if baseline_status:
-            _run_git(
-                target_workspace,
-                ["commit", "-m", f"chore: seed baseline before accepting {run_id}"],
-                check=True,
-            )
+
+    _ensure_target_workspace_is_git_repo(
+        target_workspace=target_workspace,
+        run_id=run_id,
+        dry_run=dry_run,
+        init_target_git=init_target_git,
+        action_name=action_name,
+    )
 
     dirty_before = _run_git(target_workspace, ["status", "--porcelain"], check=True).stdout.strip()
     if dirty_before:
-        raise ValueError("target git repository is dirty; commit/stash changes before accept-run")
+        raise ValueError(f"target git repository is dirty; commit/stash changes before {action_name}")
 
-    review_gate, review_decision, review_decision_path, review_gate_bypassed, review_gate_reason = _resolve_accept_review_gate(
-        state,
-        allow_unreviewed=allow_unreviewed,
+    review_gate = _resolve_review_gate(state, allow_unreviewed=allow_unreviewed, action_name=action_name)
+    return PreparedApplyOperation(
+        run_id=run_id,
+        run_dir=run_dir,
+        state=state,
+        data=data,
+        workspace_dir=data.workspace_dir,
+        target_workspace=target_workspace,
+        review_gate=review_gate,
     )
 
+
+def _apply_changed_files(
+    prepared: PreparedApplyOperation,
+    *,
+    dry_run: bool,
+) -> tuple[list[str], list[str], list[str]]:
     applied: list[str] = []
     skipped: list[str] = []
     deleted: list[str] = []
-    for entry in data.changed_files:
+    for entry in prepared.data.changed_files:
         if not entry.apply_to_target:
             skipped.append(entry.path)
             continue
         rel = Path(_safe_relative_path(entry.path))
-        source_path = data.workspace_dir / rel
-        target_path = target_workspace / rel
+        source_path = prepared.workspace_dir / rel
+        target_path = prepared.target_workspace / rel
         if dry_run:
-            applied.append(entry.path)
+            if source_path.exists() and source_path.is_file():
+                applied.append(entry.path)
+            elif target_path.exists():
+                deleted.append(entry.path)
+            else:
+                raise FileNotFoundError(f"reported changed file is missing in run workspace and target: {entry.path}")
             continue
         if source_path.exists() and source_path.is_file():
             target_path.parent.mkdir(parents=True, exist_ok=True)
@@ -398,14 +482,202 @@ def accept_run(
             deleted.append(entry.path)
         else:
             raise FileNotFoundError(f"reported changed file is missing in run workspace and target: {entry.path}")
+    return applied, skipped, deleted
+
+
+def _build_apply_report_paths(run_dir: Path) -> tuple[Path, Path]:
+    return run_dir / "APPLY_REPORT.md", run_dir / "APPLY_REPORT.json"
+
+
+def _write_apply_report(
+    *,
+    run_dir: Path,
+    run_id: str,
+    target_workspace: Path,
+    review_gate: ReviewGateResolution,
+    applied_at: datetime,
+    applied_files: list[str],
+    deleted_files: list[str],
+    skipped_files: list[str],
+) -> tuple[Path, Path]:
+    md_path, json_path = _build_apply_report_paths(run_dir)
+    payload = {
+        "schema_version": "1.0",
+        "run_id": run_id,
+        "status": "applied",
+        "applied_at": applied_at.isoformat(),
+        "target_workspace": str(target_workspace.resolve()),
+        "review_gate": review_gate.review_gate,
+        "applied_files": applied_files,
+        "deleted_files": deleted_files,
+        "skipped_files": skipped_files,
+        "commit_created": False,
+        "git_add_performed": False,
+        "next_step": "Inspect git diff, run tests, then commit manually.",
+    }
+    json_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+    lines = [
+        f"# Apply Report: {run_id}",
+        "",
+        "Status: `applied`",
+        f"Target workspace: `{target_workspace.resolve()}`",
+        f"Review gate: `{review_gate.review_gate}`",
+        "",
+        "## Applied files",
+        *([f"- `{item}`" for item in applied_files] or ["- none"]),
+        "",
+        "## Deleted files",
+        *([f"- `{item}`" for item in deleted_files] or ["- none"]),
+        "",
+        "## Skipped files",
+        *([f"- `{item}`" for item in skipped_files] or ["- none"]),
+        "",
+        "## Next step",
+        "",
+        "Inspect:",
+        "",
+        "```bash",
+        "git diff --stat",
+        "git diff",
+        "```",
+        "",
+        "Run tests:",
+        "",
+        "```bash",
+        "python -m unittest discover -s tests",
+        "```",
+        "",
+        "Then commit manually if accepted.",
+    ]
+    md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return md_path, json_path
+
+
+def _record_apply_state(
+    *,
+    state: RunState,
+    run_dir: Path,
+    target_workspace: Path,
+    applied_at: datetime,
+    apply_report_path: Path,
+    applied_files: list[str],
+    deleted_files: list[str],
+    skipped_files: list[str],
+) -> None:
+    state.apply_status = "applied"
+    state.applied_at = applied_at
+    state.apply_report_path = str(apply_report_path.resolve())
+    state.apply_target_workspace = str(target_workspace.resolve())
+    state.applied_files = list(applied_files)
+    state.deleted_files = list(deleted_files)
+    state.skipped_files = list(skipped_files)
+    state.touch()
+    state.save_json(run_dir / "state.json")
+
+
+def apply_run(
+    *,
+    run_id: str,
+    runs_dir: Path,
+    target_workspace_override: str | None = None,
+    dry_run: bool = False,
+    allow_unreviewed: bool = False,
+) -> ApplyRunResult:
+    prepared = _prepare_apply_operation(
+        run_id=run_id,
+        runs_dir=runs_dir,
+        target_workspace_override=target_workspace_override,
+        dry_run=dry_run,
+        allow_unreviewed=allow_unreviewed,
+        action_name="apply-run",
+    )
+    applied, skipped, deleted = _apply_changed_files(prepared, dry_run=dry_run)
+    if dry_run:
+        return ApplyRunResult(
+            run_id=run_id,
+            target_workspace=prepared.target_workspace,
+            applied_files=applied,
+            skipped_files=skipped,
+            deleted_files=deleted,
+            review_gate=prepared.review_gate.review_gate,
+            review_decision=prepared.review_gate.review_decision,
+            review_decision_path=prepared.review_gate.review_decision_path,
+            review_gate_bypassed=prepared.review_gate.review_gate_bypassed,
+            apply_report_path=None,
+            apply_report_json_path=None,
+            target_status="clean",
+        )
+
+    status_after_apply = _run_git(prepared.target_workspace, ["status", "--porcelain"], check=True).stdout.strip()
+    if not status_after_apply:
+        raise ValueError("apply-run found no target changes to inspect")
+
+    applied_at = datetime.now(timezone.utc)
+    apply_report_path, apply_report_json_path = _write_apply_report(
+        run_dir=prepared.run_dir,
+        run_id=run_id,
+        target_workspace=prepared.target_workspace,
+        review_gate=prepared.review_gate,
+        applied_at=applied_at,
+        applied_files=applied,
+        deleted_files=deleted,
+        skipped_files=skipped,
+    )
+    _record_apply_state(
+        state=prepared.state,
+        run_dir=prepared.run_dir,
+        target_workspace=prepared.target_workspace,
+        applied_at=applied_at,
+        apply_report_path=apply_report_path,
+        applied_files=applied,
+        deleted_files=deleted,
+        skipped_files=skipped,
+    )
+    return ApplyRunResult(
+        run_id=run_id,
+        target_workspace=prepared.target_workspace,
+        applied_files=applied,
+        skipped_files=skipped,
+        deleted_files=deleted,
+        review_gate=prepared.review_gate.review_gate,
+        review_decision=prepared.review_gate.review_decision,
+        review_decision_path=prepared.review_gate.review_decision_path,
+        review_gate_bypassed=prepared.review_gate.review_gate_bypassed,
+        apply_report_path=apply_report_path,
+        apply_report_json_path=apply_report_json_path,
+        target_status="dirty",
+    )
+
+
+def accept_run(
+    *,
+    run_id: str,
+    runs_dir: Path,
+    target_workspace_override: str | None = None,
+    commit_message: str | None = None,
+    dry_run: bool = False,
+    init_target_git: bool = False,
+    allow_unreviewed: bool = False,
+) -> AcceptRunResult:
+    prepared = _prepare_apply_operation(
+        run_id=run_id,
+        runs_dir=runs_dir,
+        target_workspace_override=target_workspace_override,
+        dry_run=dry_run,
+        allow_unreviewed=allow_unreviewed,
+        action_name="accept-run",
+        init_target_git=init_target_git,
+    )
+    applied, skipped, deleted = _apply_changed_files(prepared, dry_run=dry_run)
 
     commit_hash: str | None = None
     no_target_changes = False
     if not dry_run:
         paths_to_stage = applied + deleted
         if paths_to_stage:
-            _run_git(target_workspace, ["add", "--", *paths_to_stage], check=True)
-        status_after_apply = _run_git(target_workspace, ["status", "--porcelain"], check=True).stdout.strip()
+            _run_git(prepared.target_workspace, ["add", "--", *paths_to_stage], check=True)
+        status_after_apply = _run_git(prepared.target_workspace, ["status", "--porcelain"], check=True).stdout.strip()
         if not status_after_apply:
             # Disposable --init-target-git runs can legitimately become no-ops when the
             # target already contains the accepted file contents (for example after a
@@ -414,27 +686,27 @@ def accept_run(
             if not init_target_git:
                 raise ValueError("accept-run found no target changes to commit")
             no_target_changes = True
-            head = _run_git(target_workspace, ["rev-parse", "--short", "HEAD"], check=False)
+            head = _run_git(prepared.target_workspace, ["rev-parse", "--short", "HEAD"], check=False)
             commit_hash = head.stdout.strip() or None
         else:
             message = commit_message or f"chore: accept orchestrator run {run_id}"
-            _run_git(target_workspace, ["commit", "-m", message], check=True)
-            commit_hash = _run_git(target_workspace, ["rev-parse", "--short", "HEAD"], check=True).stdout.strip()
+            _run_git(prepared.target_workspace, ["commit", "-m", message], check=True)
+            commit_hash = _run_git(prepared.target_workspace, ["rev-parse", "--short", "HEAD"], check=True).stdout.strip()
 
-    acceptance_path = run_dir / "ACCEPTANCE.md"
+    acceptance_path = prepared.run_dir / "ACCEPTANCE.md"
     lines = [
         f"# Acceptance: {run_id}",
         "",
-        f"Target workspace: `{target_workspace}`",
+        f"Target workspace: `{prepared.target_workspace}`",
         f"Dry run: `{dry_run}`",
         f"Commit hash: `{commit_hash or '(none)'}`",
         f"No target changes: `{no_target_changes}`",
         "",
         "## Review gate",
-        f"Decision: `{review_decision}`",
-        f"Bypassed: `{str(review_gate_bypassed).lower()}`",
-        f"Decision path: `{review_decision_path or '(none)'}`",
-        *([f"Reason: `{review_gate_reason}`"] if review_gate_reason else []),
+        f"Decision: `{prepared.review_gate.review_decision}`",
+        f"Bypassed: `{str(prepared.review_gate.review_gate_bypassed).lower()}`",
+        f"Decision path: `{prepared.review_gate.review_decision_path or '(none)'}`",
+        *([f"Reason: `{prepared.review_gate.review_gate_reason}`"] if prepared.review_gate.review_gate_reason else []),
         "",
         "## Applied files",
         *([f"- `{item}`" for item in applied] or ["- none"]),
@@ -448,15 +720,15 @@ def accept_run(
     acceptance_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return AcceptRunResult(
         run_id=run_id,
-        target_workspace=target_workspace,
+        target_workspace=prepared.target_workspace,
         applied_files=applied,
         skipped_files=skipped,
         deleted_files=deleted,
         commit_hash=commit_hash,
         acceptance_path=acceptance_path,
-        review_gate=review_gate,
-        review_decision=review_decision,
-        review_decision_path=review_decision_path,
-        review_gate_bypassed=review_gate_bypassed,
+        review_gate=prepared.review_gate.review_gate,
+        review_decision=prepared.review_gate.review_decision,
+        review_decision_path=prepared.review_gate.review_decision_path,
+        review_gate_bypassed=prepared.review_gate.review_gate_bypassed,
         no_target_changes=no_target_changes,
     )

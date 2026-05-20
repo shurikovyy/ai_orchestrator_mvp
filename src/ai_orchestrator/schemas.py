@@ -214,6 +214,13 @@ class RunState(BaseModel):
     human_review_feedback: str | None = None
     human_review_feedback_path: str | None = None
     human_review_decision_path: str | None = None
+    apply_status: str | None = None
+    applied_at: datetime | None = None
+    apply_report_path: str | None = None
+    apply_target_workspace: str | None = None
+    applied_files: list[str] = Field(default_factory=list)
+    deleted_files: list[str] = Field(default_factory=list)
+    skipped_files: list[str] = Field(default_factory=list)
     plan: Plan | None = None
     executions: list[ExecutionResult] = Field(default_factory=list)
     validations: list[ValidationResult] = Field(default_factory=list)
@@ -221,7 +228,15 @@ class RunState(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
-    @field_validator("backend_name", "human_review_feedback", "human_review_feedback_path", "human_review_decision_path")
+    @field_validator(
+        "backend_name",
+        "human_review_feedback",
+        "human_review_feedback_path",
+        "human_review_decision_path",
+        "apply_status",
+        "apply_report_path",
+        "apply_target_workspace",
+    )
     @classmethod
     def optional_strings_blank_to_none(cls, value: str | None) -> str | None:
         if value is None:
@@ -240,6 +255,23 @@ class RunState(BaseModel):
         if value not in {"approved", "rejected"}:
             raise ValueError("human_review_decision must be one of: approved, rejected")
         return value
+
+    @field_validator("apply_status")
+    @classmethod
+    def apply_status_is_allowed(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip().lower()
+        if not value:
+            return None
+        if value not in {"applied"}:
+            raise ValueError("apply_status must be one of: applied")
+        return value
+
+    @field_validator("applied_files", "deleted_files", "skipped_files")
+    @classmethod
+    def strip_optional_file_lists(cls, value: list[str]) -> list[str]:
+        return [item.strip() for item in value if item.strip()]
 
     def touch(self) -> None:
         self.updated_at = datetime.now(timezone.utc)
