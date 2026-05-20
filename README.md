@@ -898,6 +898,99 @@ Compare the two commands:
 - `apply-run`: apply files only, no staging, no commit;
 - `accept-run`: apply files and create a git commit.
 
+### Recommended manual commit workflow
+
+This is the recommended end-to-end flow when you want the orchestrator to prepare changes, but you want to keep the final git commit as a manual human decision.
+
+1. List tasks:
+
+```bash
+python -m ai_orchestrator.cli list-tasks --tasks-file tasks.yaml
+```
+
+2. Run a single pipeline task:
+
+```bash
+python -m ai_orchestrator.cli run-pipeline \
+  --tasks-file tasks.yaml \
+  --only <task_id> \
+  --codex-cmd "$CODEX_CMD" \
+  --verbose \
+  --stream-codex-output
+```
+
+3. Inspect the pipeline:
+
+```bash
+python -m ai_orchestrator.cli show-pipeline <pipeline_id> --runs-dir .runs
+```
+
+4. Inspect the specific run:
+
+```bash
+python -m ai_orchestrator.cli show-run <run_id> --runs-dir .runs --show-paths
+```
+
+5. Review `REVIEW_PACKET.md` manually.
+
+6. Record the human review decision.
+
+Approve:
+
+```bash
+python -m ai_orchestrator.cli review-run <run_id> \
+  --runs-dir .runs \
+  --decision approved
+```
+
+Reject:
+
+```bash
+python -m ai_orchestrator.cli review-run <run_id> \
+  --runs-dir .runs \
+  --decision rejected \
+  --feedback review_feedback.md
+```
+
+7. If rejected, create a rework run:
+
+```bash
+python -m ai_orchestrator.cli rework-run <run_id> \
+  --runs-dir .runs \
+  --backend codex_cli \
+  --codex-cmd "$CODEX_CMD" \
+  --verbose \
+  --stream-codex-output
+```
+
+8. If approved, apply changes without commit:
+
+```bash
+python -m ai_orchestrator.cli apply-run <run_id> --runs-dir .runs
+```
+
+9. Inspect the target repo manually:
+
+```bash
+git diff --stat
+git diff
+python -m unittest discover -s tests
+```
+
+10. Commit manually:
+
+```bash
+git add <files>
+git commit -m "..."
+```
+
+Practical guidance:
+
+- prefer `apply-run` when you want an explicit manual diff/test/commit gate;
+- use `accept-run` only when you want the orchestrator to perform the apply + git add + git commit flow for you;
+- `--allow-unreviewed` is an emergency/backward-compatibility flag only;
+- a rejected human review blocks both `apply-run` and `accept-run`.
+
 ### Accept gate requires human review approval
 
 Validator approval is only a technical approval. By default, `accept-run` now requires a recorded human review approval before it can apply files back to a target repo and create a commit.

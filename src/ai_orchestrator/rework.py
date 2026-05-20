@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from ai_orchestrator.review import load_run_state
+from ai_orchestrator.apply import load_run_state
 from ai_orchestrator.schemas import RunState, TaskSpec
 from ai_orchestrator.task_runner import RunCommandConfig, execute_run, get_run_artifact_paths
 

@@ -13,10 +13,10 @@ from uuid import uuid4
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from ai_orchestrator.backends.mock import MockBackend
+from ai_orchestrator.apply import accept_run, apply_run
 from ai_orchestrator.cli import show_run_main
 from ai_orchestrator.engine import TaskExecutionEngine
 from ai_orchestrator.rework import execute_rework_run
-from ai_orchestrator.review import accept_run, apply_run
 from ai_orchestrator.review_decision import record_review_decision
 from ai_orchestrator.schemas import ExecutionResult, RunState, TaskSpec, ValidationResult
 
@@ -207,9 +207,13 @@ class ShowRunTests(unittest.TestCase):
             repo = make_git_seed_repo(tmp)
             run_dir, _state = make_approved_accept_run(tmp, target_repo=repo)
             record_review_decision(run_id=run_dir.name, runs_dir=run_dir.parent, decision="approved")
-            (repo / "src" / "toy_calc.py").write_text(
-                "def subtract(a, b):\n    return a + b\n", encoding="utf-8"
-            )
+            workspace = run_dir / "artifacts" / "workspace"
+            (workspace / "docs").mkdir(parents=True, exist_ok=True)
+            (workspace / "docs" / "accept_note.md").write_text("# accepted change\n", encoding="utf-8")
+            report_path = workspace / "EXECUTION_REPORT.json"
+            report_payload = json.loads(report_path.read_text(encoding="utf-8"))
+            report_payload["changed_files"].append("docs/accept_note.md")
+            report_path.write_text(json.dumps(report_payload, indent=2), encoding="utf-8")
             accept_run(run_id=run_dir.name, runs_dir=run_dir.parent, commit_message="fix: subtract")
             stdout = StringIO()
             with redirect_stdout(stdout):

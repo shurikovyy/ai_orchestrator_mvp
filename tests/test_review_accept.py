@@ -11,7 +11,8 @@ from uuid import uuid4
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from ai_orchestrator.cli import build_accept_parser
-from ai_orchestrator.review import accept_run, write_review_packet
+from ai_orchestrator.apply import accept_run
+from ai_orchestrator.review import write_review_packet
 from ai_orchestrator.review_decision import record_review_decision
 from ai_orchestrator.schemas import ExecutionResult, RunState, TaskSpec, ValidationResult
 

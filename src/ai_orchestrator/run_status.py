@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import json
 from pathlib import Path
 
-from ai_orchestrator.review import load_run_state
+from ai_orchestrator.apply import load_run_state
 
 
 @dataclass(frozen=True)

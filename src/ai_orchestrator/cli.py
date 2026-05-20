@@ -5,6 +5,7 @@ import json
 import sys
 from pathlib import Path
 
+from ai_orchestrator.apply import accept_run, apply_run
 from ai_orchestrator.backends import Backend
 from ai_orchestrator.pipeline_status import (
     build_pipeline_status_summary,
@@ -14,7 +15,6 @@ from ai_orchestrator.pipeline_status import (
 from ai_orchestrator.pipeline import PipelinePlan, PipelineRunResult, run_pipeline
 from ai_orchestrator.run_status import build_run_status_summary, format_run_status_json, format_run_status_text
 from ai_orchestrator.rework import execute_rework_run
-from ai_orchestrator.review import accept_run, apply_run
 from ai_orchestrator.review_decision import record_review_decision
 from ai_orchestrator.schemas import RunState, TaskSpec
 from ai_orchestrator.task_queue import TaskSummaryList, list_task_summaries, load_task_queue_config, resolve_task_definition

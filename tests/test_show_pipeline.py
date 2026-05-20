@@ -14,10 +14,10 @@ from uuid import uuid4
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from ai_orchestrator.backends.mock import MockBackend
+from ai_orchestrator.apply import apply_run
 from ai_orchestrator.cli import show_pipeline_main
 from ai_orchestrator.engine import TaskExecutionEngine
 from ai_orchestrator.pipeline import PipelineSelectedTask, PipelineState, PipelineTaskResult
-from ai_orchestrator.review import apply_run
 from ai_orchestrator.review_decision import record_review_decision
 from ai_orchestrator.schemas import ExecutionResult, RunState, TaskSpec, ValidationResult
 
