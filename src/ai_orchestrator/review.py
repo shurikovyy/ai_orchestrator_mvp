@@ -47,6 +47,10 @@ class AcceptRunResult:
     deleted_files: list[str]
     commit_hash: str | None
     acceptance_path: Path
+    review_gate: str
+    review_decision: str
+    review_decision_path: str | None
+    review_gate_bypassed: bool
     no_target_changes: bool = False
 
 
@@ -128,6 +132,22 @@ def _target_workspace_from_state(state: RunState, override: str | None = None) -
     if not raw:
         return None
     return Path(raw).expanduser().resolve()
+
+
+def _resolve_accept_review_gate(state: RunState, *, allow_unreviewed: bool) -> tuple[str, str, str | None, bool, str | None]:
+    decision = state.human_review_decision
+    decision_path = state.human_review_decision_path
+    if decision == "approved":
+        return "human_approved", "approved", decision_path, False, None
+    if decision == "rejected":
+        raise ValueError("run has rejected human review decision; run rework-run before accept-run")
+    if decision is None:
+        if allow_unreviewed:
+            return "bypassed_unreviewed", "missing", decision_path, True, "--allow-unreviewed"
+        raise ValueError(
+            "run has no approved human review decision; run review-run --decision approved first or pass --allow-unreviewed"
+        )
+    raise ValueError(f"run has invalid human review decision: {decision}")
 
 
 def build_review_packet_data(run_dir: Path, *, target_workspace_override: str | None = None) -> ReviewPacketData:
@@ -308,6 +328,7 @@ def accept_run(
     commit_message: str | None = None,
     dry_run: bool = False,
     init_target_git: bool = False,
+    allow_unreviewed: bool = False,
 ) -> AcceptRunResult:
     run_dir = runs_dir / run_id
     data = build_review_packet_data(run_dir, target_workspace_override=target_workspace_override)
@@ -349,6 +370,11 @@ def accept_run(
     dirty_before = _run_git(target_workspace, ["status", "--porcelain"], check=True).stdout.strip()
     if dirty_before:
         raise ValueError("target git repository is dirty; commit/stash changes before accept-run")
+
+    review_gate, review_decision, review_decision_path, review_gate_bypassed, review_gate_reason = _resolve_accept_review_gate(
+        state,
+        allow_unreviewed=allow_unreviewed,
+    )
 
     applied: list[str] = []
     skipped: list[str] = []
@@ -404,6 +430,12 @@ def accept_run(
         f"Commit hash: `{commit_hash or '(none)'}`",
         f"No target changes: `{no_target_changes}`",
         "",
+        "## Review gate",
+        f"Decision: `{review_decision}`",
+        f"Bypassed: `{str(review_gate_bypassed).lower()}`",
+        f"Decision path: `{review_decision_path or '(none)'}`",
+        *([f"Reason: `{review_gate_reason}`"] if review_gate_reason else []),
+        "",
         "## Applied files",
         *([f"- `{item}`" for item in applied] or ["- none"]),
         "",
@@ -422,5 +454,9 @@ def accept_run(
         deleted_files=deleted,
         commit_hash=commit_hash,
         acceptance_path=acceptance_path,
+        review_gate=review_gate,
+        review_decision=review_decision,
+        review_decision_path=review_decision_path,
+        review_gate_bypassed=review_gate_bypassed,
         no_target_changes=no_target_changes,
     )

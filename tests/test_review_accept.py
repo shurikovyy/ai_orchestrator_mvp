@@ -10,7 +10,9 @@ from uuid import uuid4
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from ai_orchestrator.cli import build_accept_parser
 from ai_orchestrator.review import accept_run, write_review_packet
+from ai_orchestrator.review_decision import record_review_decision
 from ai_orchestrator.schemas import ExecutionResult, RunState, TaskSpec, ValidationResult
 
 TEST_TEMP_ROOT = Path(__file__).resolve().parents[1] / ".tmp_tests"
@@ -113,14 +115,91 @@ class ReviewAcceptTests(unittest.TestCase):
         with temporary_test_dir() as tmp:
             repo = make_git_seed_repo(tmp)
             run_dir, _ = make_approved_run(tmp, target_repo=repo)
+            record_review_decision(run_id=run_dir.name, runs_dir=run_dir.parent, decision="approved")
             result = accept_run(run_id=run_dir.name, runs_dir=run_dir.parent, commit_message="fix: subtract")
             self.assertIn("src/toy_calc.py", result.applied_files)
             self.assertIn("EXECUTION_REPORT.json", result.skipped_files)
             self.assertIsNotNone(result.commit_hash)
+            self.assertEqual(result.review_gate, "human_approved")
             self.assertIn("return a - b", (repo / "src" / "toy_calc.py").read_text(encoding="utf-8"))
             self.assertFalse((repo / "EXECUTION_REPORT.json").exists())
             self.assertIn("fix: subtract", git(repo, "log", "-1", "--pretty=%s").stdout)
             self.assertTrue(result.acceptance_path.exists())
+            acceptance_text = result.acceptance_path.read_text(encoding="utf-8")
+            self.assertIn("## Review gate", acceptance_text)
+            self.assertIn("Decision: `approved`", acceptance_text)
+            self.assertIn("Bypassed: `false`", acceptance_text)
+
+    def test_accept_run_refuses_missing_human_review_by_default(self) -> None:
+        with temporary_test_dir() as tmp:
+            repo = make_git_seed_repo(tmp)
+            run_dir, _ = make_approved_run(tmp, target_repo=repo)
+            with self.assertRaisesRegex(
+                ValueError,
+                r"run has no approved human review decision; run review-run --decision approved first or pass --allow-unreviewed",
+            ):
+                accept_run(run_id=run_dir.name, runs_dir=run_dir.parent, commit_message="fix: subtract")
+            self.assertFalse((run_dir / "ACCEPTANCE.md").exists())
+
+    def test_accept_run_allows_missing_human_review_with_allow_unreviewed(self) -> None:
+        with temporary_test_dir() as tmp:
+            repo = make_git_seed_repo(tmp)
+            run_dir, _ = make_approved_run(tmp, target_repo=repo)
+            result = accept_run(
+                run_id=run_dir.name,
+                runs_dir=run_dir.parent,
+                commit_message="fix: subtract",
+                allow_unreviewed=True,
+            )
+            self.assertEqual(result.review_gate, "bypassed_unreviewed")
+            acceptance_text = result.acceptance_path.read_text(encoding="utf-8")
+            self.assertIn("## Review gate", acceptance_text)
+            self.assertIn("Decision: `missing`", acceptance_text)
+            self.assertIn("Bypassed: `true`", acceptance_text)
+            self.assertIn("Reason: `--allow-unreviewed`", acceptance_text)
+
+    def test_accept_run_refuses_rejected_human_review(self) -> None:
+        with temporary_test_dir() as tmp:
+            repo = make_git_seed_repo(tmp)
+            run_dir, _ = make_approved_run(tmp, target_repo=repo)
+            feedback_path = tmp / "review_feedback.md"
+            feedback_path.write_text("Rejected by reviewer.\n", encoding="utf-8")
+            record_review_decision(
+                run_id=run_dir.name,
+                runs_dir=run_dir.parent,
+                decision="rejected",
+                feedback_path=feedback_path,
+            )
+            with self.assertRaisesRegex(
+                ValueError,
+                r"run has rejected human review decision; run rework-run before accept-run",
+            ):
+                accept_run(run_id=run_dir.name, runs_dir=run_dir.parent, commit_message="fix: subtract")
+            self.assertFalse((run_dir / "ACCEPTANCE.md").exists())
+
+    def test_accept_run_refuses_rejected_human_review_even_with_allow_unreviewed(self) -> None:
+        with temporary_test_dir() as tmp:
+            repo = make_git_seed_repo(tmp)
+            run_dir, _ = make_approved_run(tmp, target_repo=repo)
+            feedback_path = tmp / "review_feedback.md"
+            feedback_path.write_text("Rejected by reviewer.\n", encoding="utf-8")
+            record_review_decision(
+                run_id=run_dir.name,
+                runs_dir=run_dir.parent,
+                decision="rejected",
+                feedback_path=feedback_path,
+            )
+            with self.assertRaisesRegex(
+                ValueError,
+                r"run has rejected human review decision; run rework-run before accept-run",
+            ):
+                accept_run(
+                    run_id=run_dir.name,
+                    runs_dir=run_dir.parent,
+                    commit_message="fix: subtract",
+                    allow_unreviewed=True,
+                )
+            self.assertFalse((run_dir / "ACCEPTANCE.md").exists())
 
     def test_accept_run_refuses_non_approved_run(self) -> None:
         with temporary_test_dir() as tmp:
@@ -133,6 +212,7 @@ class ReviewAcceptTests(unittest.TestCase):
         with temporary_test_dir() as tmp:
             repo = make_git_seed_repo(tmp)
             run_dir, _ = make_approved_run(tmp, target_repo=repo)
+            record_review_decision(run_id=run_dir.name, runs_dir=run_dir.parent, decision="approved")
             (repo / "untracked.txt").write_text("dirty", encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "dirty"):
                 accept_run(run_id=run_dir.name, runs_dir=run_dir.parent, commit_message="fix: subtract")
@@ -151,6 +231,7 @@ class ReviewAcceptTests(unittest.TestCase):
             (repo / "src" / "toy_calc.py").write_text(
                 "def subtract(a, b):\n    return a + b\n", encoding="utf-8"
             )
+            record_review_decision(run_id=run_dir.name, runs_dir=run_dir.parent, decision="approved")
             self.assertIn("return a + b", (repo / "src" / "toy_calc.py").read_text(encoding="utf-8"))
             result = accept_run(
                 run_id=run_dir.name,
@@ -179,6 +260,7 @@ class ReviewAcceptTests(unittest.TestCase):
                 "def subtract(a, b):\n    return a - b\n", encoding="utf-8"
             )
             run_dir, _ = make_approved_run(tmp, target_repo=repo)
+            record_review_decision(run_id=run_dir.name, runs_dir=run_dir.parent, decision="approved")
             result = accept_run(
                 run_id=run_dir.name,
                 runs_dir=run_dir.parent,
@@ -188,6 +270,34 @@ class ReviewAcceptTests(unittest.TestCase):
             self.assertTrue(result.no_target_changes)
             self.assertIsNotNone(result.commit_hash)
             self.assertTrue((repo / ".git").exists())
+
+    def test_accept_run_old_state_without_human_review_requires_allow_unreviewed(self) -> None:
+        with temporary_test_dir() as tmp:
+            repo = make_git_seed_repo(tmp)
+            run_dir, _ = make_approved_run(tmp, target_repo=repo)
+            state_path = run_dir / "state.json"
+            import json
+
+            payload = json.loads(state_path.read_text(encoding="utf-8"))
+            payload.pop("human_review_decision", None)
+            payload.pop("human_review_decided_at", None)
+            payload.pop("human_review_feedback", None)
+            payload.pop("human_review_feedback_path", None)
+            payload.pop("human_review_decision_path", None)
+            state_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+            result = accept_run(
+                run_id=run_dir.name,
+                runs_dir=run_dir.parent,
+                commit_message="fix: subtract",
+                allow_unreviewed=True,
+            )
+            self.assertEqual(result.review_gate, "bypassed_unreviewed")
+
+    def test_accept_parser_exposes_allow_unreviewed_flag(self) -> None:
+        parser = build_accept_parser()
+        help_text = parser.format_help()
+        self.assertIn("--allow-unreviewed", help_text)
 
 
 if __name__ == "__main__":

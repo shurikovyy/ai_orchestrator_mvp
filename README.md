@@ -784,6 +784,53 @@ Safety notes:
 - commit remains manual;
 - `accept-run` remains a separate explicit step.
 
+### Accept gate requires human review approval
+
+Validator approval is only a technical approval. By default, `accept-run` now requires a recorded human review approval before it can apply files back to a target repo and create a commit.
+
+Normal approved flow:
+
+```bash
+python -m ai_orchestrator.cli review-run run_20260519_120000_abcd12 \
+  --runs-dir .runs \
+  --decision approved
+
+python -m ai_orchestrator.cli accept-run run_20260519_120000_abcd12 \
+  --runs-dir .runs \
+  --commit-message "fix: apply approved run"
+```
+
+Rejected flow:
+
+```bash
+python -m ai_orchestrator.cli review-run run_20260519_120000_abcd12 \
+  --runs-dir .runs \
+  --decision rejected \
+  --feedback review_feedback.md
+
+python -m ai_orchestrator.cli rework-run run_20260519_120000_abcd12 \
+  --runs-dir .runs \
+  --backend codex_cli \
+  --codex-cmd "$CODEX_CMD"
+```
+
+Emergency / backward-compatibility bypass:
+
+```bash
+python -m ai_orchestrator.cli accept-run run_20260519_120000_abcd12 \
+  --runs-dir .runs \
+  --allow-unreviewed
+```
+
+Policy:
+
+- human review `approved` allows `accept-run`;
+- human review `rejected` blocks `accept-run`;
+- missing human review blocks `accept-run` by default;
+- `--allow-unreviewed` only bypasses a missing review decision;
+- `--allow-unreviewed` does not override a rejected human review;
+- `--allow-unreviewed` is for emergency/backward-compatibility cases and should not be the normal workflow.
+
 ## Local files policy
 
 - `tasks.yaml` is a local working file and is usually not committed.

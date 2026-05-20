@@ -276,6 +276,14 @@ def build_accept_parser() -> argparse.ArgumentParser:
             "Use this only for disposable/toy seed workspaces, not production repos."
         ),
     )
+    parser.add_argument(
+        "--allow-unreviewed",
+        action="store_true",
+        help=(
+            "Allow accepting a validator-approved run without a recorded human review approval. "
+            "This does not override rejected human reviews."
+        ),
+    )
     return parser
 
 
@@ -556,6 +564,7 @@ def accept_main(argv: list[str] | None = None) -> int:
             commit_message=args.commit_message,
             dry_run=args.dry_run,
             init_target_git=args.init_target_git,
+            allow_unreviewed=args.allow_unreviewed,
         )
     except Exception as exc:  # noqa: BLE001 - CLI should print deterministic error text.
         print("accept_status=failed")
@@ -568,6 +577,7 @@ def accept_main(argv: list[str] | None = None) -> int:
     else:
         print("accept_status=accepted")
     print(f"run_id={result.run_id}")
+    print(f"review_gate={result.review_gate}")
     print(f"target_workspace={result.target_workspace}")
     print(f"commit_hash={result.commit_hash or '(none)'}")
     print(f"acceptance={result.acceptance_path}")
