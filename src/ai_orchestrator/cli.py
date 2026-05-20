@@ -7,6 +7,7 @@ from pathlib import Path
 
 from ai_orchestrator.backends import Backend
 from ai_orchestrator.pipeline import PipelinePlan, PipelineRunResult, run_pipeline
+from ai_orchestrator.run_status import build_run_status_summary, format_run_status_json, format_run_status_text
 from ai_orchestrator.rework import execute_rework_run
 from ai_orchestrator.review import accept_run
 from ai_orchestrator.review_decision import record_review_decision
@@ -283,6 +284,27 @@ def build_accept_parser() -> argparse.ArgumentParser:
             "Allow accepting a validator-approved run without a recorded human review approval. "
             "This does not override rejected human reviews."
         ),
+    )
+    return parser
+
+
+def build_show_run_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="ai-orchestrator show-run",
+        description="Show the lifecycle/status summary for one existing run without modifying any artifacts.",
+    )
+    parser.add_argument("run_id", help="Run id to inspect.")
+    parser.add_argument("--runs-dir", default=".runs", help="Directory containing run state and artifacts.")
+    parser.add_argument(
+        "--format",
+        choices=["text", "json"],
+        default="text",
+        help="Output format. Defaults to text.",
+    )
+    parser.add_argument(
+        "--show-paths",
+        action="store_true",
+        help="Include key artifact paths in text output. JSON always includes artifact paths.",
     )
     return parser
 
@@ -590,6 +612,24 @@ def accept_main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def show_run_main(argv: list[str] | None = None) -> int:
+    parser = build_show_run_parser()
+    args = parser.parse_args(argv)
+    try:
+        summary = build_run_status_summary(run_id=args.run_id, runs_dir=args.runs_dir)
+    except Exception as exc:  # noqa: BLE001 - CLI should print deterministic error text.
+        print(f"run_id={args.run_id}")
+        print("status=failed")
+        print(f"error={exc}")
+        return 1
+
+    if args.format == "json":
+        print(format_run_status_json(summary))
+    else:
+        print(format_run_status_text(summary, show_paths=args.show_paths))
+    return 0
+
+
 def rework_run_main(argv: list[str] | None = None) -> int:
     parser = build_rework_run_parser()
     args = parser.parse_args(argv)
@@ -647,6 +687,8 @@ def review_run_main(argv: list[str] | None = None) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
+    if args and args[0] == "show-run":
+        return show_run_main(args[1:])
     if args and args[0] == "accept-run":
         return accept_main(args[1:])
     if args and args[0] == "review-run":

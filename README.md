@@ -784,6 +784,42 @@ Safety notes:
 - commit remains manual;
 - `accept-run` remains a separate explicit step.
 
+### Inspecting run lifecycle status
+
+`show-run` is a read-only inspection command. It aggregates status from `state.json` plus existing artifacts such as `final_report.md`, `REVIEW_PACKET.md`, `REVIEW_DECISION.json`, `REWORK_FEEDBACK.md`, and `ACCEPTANCE.md`.
+
+Examples:
+
+```bash
+python -m ai_orchestrator.cli show-run run_20260519_120000_abcd12 --runs-dir .runs
+```
+
+```bash
+python -m ai_orchestrator.cli show-run run_20260519_120000_abcd12 --runs-dir .runs --show-paths
+```
+
+```bash
+python -m ai_orchestrator.cli show-run run_20260519_120000_abcd12 --runs-dir .runs --format json
+```
+
+Behavior:
+
+- `show-run` is read-only;
+- it does not run agents or Codex;
+- it does not re-run validation;
+- it does not call `accept-run`;
+- it does not call `rework-run`;
+- it does not create a commit;
+- it helps decide the next manual action.
+
+`next_action` values:
+
+- `review_run`: validator approved the run, but no human review decision is recorded yet;
+- `rework_run`: human review rejected the run and feedback/rework is the next step;
+- `accept_run`: validator approved the run and human review approved it, but acceptance has not been recorded yet;
+- `done`: the run already has `ACCEPTANCE.md`;
+- `rework_or_inspect_failure`: validator did not approve the run, so inspect `final_report.md` / validation feedback first.
+
 ### Accept gate requires human review approval
 
 Validator approval is only a technical approval. By default, `accept-run` now requires a recorded human review approval before it can apply files back to a target repo and create a commit.
