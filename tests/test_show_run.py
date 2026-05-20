@@ -197,11 +197,12 @@ class ShowRunTests(unittest.TestCase):
             with redirect_stdout(stdout):
                 exit_code = show_run_main([run_dir.name, "--runs-dir", str(run_dir.parent)])
             output = stdout.getvalue()
+            repo_status_after_apply = git(repo, "status", "--short").stdout.strip()
 
         self.assertEqual(exit_code, 0, output)
         self.assertEqual(result.target_status, "dirty")
         self.assertIn("docs/show_run_apply_note.md", result.applied_files)
-        self.assertTrue(git(repo, "status", "--short").stdout.strip())
+        self.assertTrue(repo_status_after_apply)
         self.assertEqual(output_value(output, "application_status"), "applied")
         self.assertEqual(output_value(output, "apply_report_exists"), "true")
         self.assertEqual(output_value(output, "next_action"), "manual_commit")
