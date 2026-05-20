@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+"""Review packet generation and diff preview helpers.
+
+Apply/commit internals live in ``ai_orchestrator.apply``.
+"""
+
 import difflib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -7,11 +12,7 @@ from pathlib import Path
 from ai_orchestrator.apply import (
     ApplyFileEntry as ReviewFileEntry,
     RunApplicationContext,
-    _run_git,
-    accept_run,
-    apply_run,
     build_run_application_context,
-    load_run_state,
 )
 from ai_orchestrator.schemas import RunState, StructuredExecutionReport
 

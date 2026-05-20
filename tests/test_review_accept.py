@@ -298,6 +298,73 @@ class ReviewAcceptTests(unittest.TestCase):
             )
             self.assertEqual(result.review_gate, "bypassed_unreviewed")
 
+    def test_accept_run_dry_run_does_not_modify_target_repo_or_create_artifacts(self) -> None:
+        with temporary_test_dir() as tmp:
+            repo = make_git_seed_repo(tmp)
+            run_dir, _ = make_approved_run(tmp, target_repo=repo)
+            record_review_decision(run_id=run_dir.name, runs_dir=run_dir.parent, decision="approved")
+            before_text = (repo / "src" / "toy_calc.py").read_text(encoding="utf-8")
+            head_before = git(repo, "rev-parse", "HEAD").stdout.strip()
+            commit_count_before = git(repo, "rev-list", "--count", "HEAD").stdout.strip()
+
+            result = accept_run(run_id=run_dir.name, runs_dir=run_dir.parent, commit_message="fix: subtract", dry_run=True)
+
+            self.assertIsNone(result.commit_hash)
+            self.assertFalse(result.acceptance_path.exists())
+            self.assertEqual((repo / "src" / "toy_calc.py").read_text(encoding="utf-8"), before_text)
+            self.assertEqual(git(repo, "status", "--short").stdout.strip(), "")
+            self.assertEqual(git(repo, "diff", "--cached", "--name-only").stdout.strip(), "")
+            self.assertEqual(git(repo, "rev-parse", "HEAD").stdout.strip(), head_before)
+            self.assertEqual(git(repo, "rev-list", "--count", "HEAD").stdout.strip(), commit_count_before)
+
+    def test_accept_run_dry_run_still_enforces_missing_human_review_gate(self) -> None:
+        with temporary_test_dir() as tmp:
+            repo = make_git_seed_repo(tmp)
+            run_dir, _ = make_approved_run(tmp, target_repo=repo)
+
+            with self.assertRaisesRegex(
+                ValueError,
+                r"run has no approved human review decision; run review-run --decision approved first or pass --allow-unreviewed",
+            ):
+                accept_run(run_id=run_dir.name, runs_dir=run_dir.parent, commit_message="fix: subtract", dry_run=True)
+
+            self.assertFalse((run_dir / "ACCEPTANCE.md").exists())
+            self.assertEqual(git(repo, "status", "--short").stdout.strip(), "")
+
+    def test_accept_run_dry_run_still_fails_on_rejected_human_review(self) -> None:
+        with temporary_test_dir() as tmp:
+            repo = make_git_seed_repo(tmp)
+            run_dir, _ = make_approved_run(tmp, target_repo=repo)
+            feedback_path = tmp / "review_feedback.md"
+            feedback_path.write_text("Rejected by reviewer.\n", encoding="utf-8")
+            record_review_decision(
+                run_id=run_dir.name,
+                runs_dir=run_dir.parent,
+                decision="rejected",
+                feedback_path=feedback_path,
+            )
+
+            with self.assertRaisesRegex(
+                ValueError,
+                r"run has rejected human review decision; run rework-run before accept-run",
+            ):
+                accept_run(run_id=run_dir.name, runs_dir=run_dir.parent, commit_message="fix: subtract", dry_run=True)
+
+            self.assertFalse((run_dir / "ACCEPTANCE.md").exists())
+            self.assertEqual(git(repo, "status", "--short").stdout.strip(), "")
+
+    def test_accept_run_dry_run_still_fails_on_dirty_target_repo(self) -> None:
+        with temporary_test_dir() as tmp:
+            repo = make_git_seed_repo(tmp)
+            run_dir, _ = make_approved_run(tmp, target_repo=repo)
+            record_review_decision(run_id=run_dir.name, runs_dir=run_dir.parent, decision="approved")
+            (repo / "untracked.txt").write_text("dirty", encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "dirty"):
+                accept_run(run_id=run_dir.name, runs_dir=run_dir.parent, commit_message="fix: subtract", dry_run=True)
+
+            self.assertFalse((run_dir / "ACCEPTANCE.md").exists())
+
     def test_accept_parser_exposes_allow_unreviewed_flag(self) -> None:
         parser = build_accept_parser()
         help_text = parser.format_help()

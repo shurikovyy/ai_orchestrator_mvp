@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+"""Shared apply/apply+commit mechanics for approved runs.
+
+This module owns the target-repo safety checks and file application workflow
+used by both ``apply-run`` and ``accept-run``.
+"""
+
 import json
 import shutil
 import subprocess
@@ -470,6 +476,10 @@ def write_acceptance_report(
     return acceptance_path
 
 
+def _acceptance_report_path(run_dir: Path) -> Path:
+    return run_dir / "ACCEPTANCE.md"
+
+
 def apply_run(
     *,
     run_id: str,
@@ -583,18 +593,20 @@ def accept_run(
             _run_git(prepared.target_workspace, ["commit", "-m", message], check=True)
             commit_hash = _run_git(prepared.target_workspace, ["rev-parse", "--short", "HEAD"], check=True).stdout.strip()
 
-    acceptance_path = write_acceptance_report(
-        run_dir=prepared.context.run_dir,
-        run_id=run_id,
-        target_workspace=prepared.target_workspace,
-        dry_run=dry_run,
-        commit_hash=commit_hash,
-        no_target_changes=no_target_changes,
-        review_gate=prepared.review_gate,
-        applied_files=applied,
-        deleted_files=deleted,
-        skipped_files=skipped,
-    )
+    acceptance_path = _acceptance_report_path(prepared.context.run_dir)
+    if not dry_run:
+        acceptance_path = write_acceptance_report(
+            run_dir=prepared.context.run_dir,
+            run_id=run_id,
+            target_workspace=prepared.target_workspace,
+            dry_run=dry_run,
+            commit_hash=commit_hash,
+            no_target_changes=no_target_changes,
+            review_gate=prepared.review_gate,
+            applied_files=applied,
+            deleted_files=deleted,
+            skipped_files=skipped,
+        )
     return AcceptRunResult(
         run_id=run_id,
         target_workspace=prepared.target_workspace,

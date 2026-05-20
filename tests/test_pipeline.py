@@ -388,7 +388,7 @@ class PipelineTests(unittest.TestCase):
 
             stdout = StringIO()
             with patch("ai_orchestrator.cli.accept_run", side_effect=AssertionError("accept_run must not be called")) as accept_mock:
-                with patch("ai_orchestrator.review._run_git", side_effect=AssertionError("_run_git must not be called")) as git_mock:
+                with patch("ai_orchestrator.apply._run_git", side_effect=AssertionError("_run_git must not be called")) as git_mock:
                     with redirect_stdout(stdout):
                         exit_code = run_pipeline_main(
                             ["--tasks-file", str(tasks_file), "--runs-dir", str(runs_dir)]

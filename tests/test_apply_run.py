@@ -233,6 +233,54 @@ class ApplyRunTests(unittest.TestCase):
             self.assertFalse((run_dir / "APPLY_REPORT.md").exists())
             self.assertFalse((run_dir / "APPLY_REPORT.json").exists())
 
+    def test_apply_run_dry_run_still_enforces_missing_human_review_gate(self) -> None:
+        with temporary_test_dir() as tmp:
+            repo = make_git_seed_repo(tmp)
+            run_dir, _ = make_approved_run(tmp, target_repo=repo)
+
+            with self.assertRaisesRegex(
+                ValueError,
+                r"run has no approved human review decision; run review-run --decision approved first or pass --allow-unreviewed",
+            ):
+                apply_run(run_id=run_dir.name, runs_dir=run_dir.parent, dry_run=True)
+
+            self.assertFalse((run_dir / "APPLY_REPORT.md").exists())
+            self.assertFalse((run_dir / "APPLY_REPORT.json").exists())
+            self.assertEqual(git(repo, "status", "--short").stdout.strip(), "")
+
+    def test_apply_run_dry_run_still_fails_on_rejected_human_review(self) -> None:
+        with temporary_test_dir() as tmp:
+            repo = make_git_seed_repo(tmp)
+            run_dir, _ = make_approved_run(tmp, target_repo=repo)
+            feedback_path = tmp / "review_feedback.md"
+            feedback_path.write_text("Rejected by reviewer.\n", encoding="utf-8")
+            record_review_decision(
+                run_id=run_dir.name,
+                runs_dir=run_dir.parent,
+                decision="rejected",
+                feedback_path=feedback_path,
+            )
+
+            with self.assertRaisesRegex(ValueError, r"run has rejected human review decision; run rework-run before apply-run"):
+                apply_run(run_id=run_dir.name, runs_dir=run_dir.parent, dry_run=True)
+
+            self.assertFalse((run_dir / "APPLY_REPORT.md").exists())
+            self.assertFalse((run_dir / "APPLY_REPORT.json").exists())
+            self.assertEqual(git(repo, "status", "--short").stdout.strip(), "")
+
+    def test_apply_run_dry_run_still_fails_on_dirty_target_repo(self) -> None:
+        with temporary_test_dir() as tmp:
+            repo = make_git_seed_repo(tmp)
+            run_dir, _ = make_approved_run(tmp, target_repo=repo)
+            record_review_decision(run_id=run_dir.name, runs_dir=run_dir.parent, decision="approved")
+            (repo / "untracked.txt").write_text("dirty", encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, r"target git repository is dirty; commit/stash changes before apply-run"):
+                apply_run(run_id=run_dir.name, runs_dir=run_dir.parent, dry_run=True)
+
+            self.assertFalse((run_dir / "APPLY_REPORT.md").exists())
+            self.assertFalse((run_dir / "APPLY_REPORT.json").exists())
+
     def test_apply_main_prints_dry_run_summary(self) -> None:
         with temporary_test_dir() as tmp:
             repo = make_git_seed_repo(tmp)

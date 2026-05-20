@@ -898,6 +898,13 @@ Compare the two commands:
 - `apply-run`: apply files only, no staging, no commit;
 - `accept-run`: apply files and create a git commit.
 
+### apply-run vs accept-run
+
+| Command | Applies files | git add | git commit | Report |
+|---|---:|---:|---:|---|
+| `apply-run` | yes | no | no | `APPLY_REPORT.md` / `APPLY_REPORT.json` |
+| `accept-run` | yes | yes | yes | `ACCEPTANCE.md` |
+
 ### Recommended manual commit workflow
 
 This is the recommended end-to-end flow when you want the orchestrator to prepare changes, but you want to keep the final git commit as a manual human decision.
@@ -990,6 +997,27 @@ Practical guidance:
 - use `accept-run` only when you want the orchestrator to perform the apply + git add + git commit flow for you;
 - `--allow-unreviewed` is an emergency/backward-compatibility flag only;
 - a rejected human review blocks both `apply-run` and `accept-run`.
+
+### Dry-run behavior
+
+`apply-run --dry-run` and `accept-run --dry-run` are validation/planning-only commands.
+
+Dry-run guarantees:
+
+- the target repo stays unchanged;
+- no `git add` is performed;
+- no git commit is created;
+- no `.runs/<run_id>/APPLY_REPORT.md` or `.runs/<run_id>/APPLY_REPORT.json` is written;
+- no `.runs/<run_id>/ACCEPTANCE.md` is written;
+- `state.json` is not updated with applied/accepted state.
+
+Dry-run still enforces the normal safety gates:
+
+- the run must exist;
+- validator approval and `EXECUTION_REPORT.json` must be valid;
+- the human review gate must pass;
+- the target workspace must exist and be a clean git repo;
+- unsafe/generated/runtime files are still rejected from the apply plan.
 
 ### Accept gate requires human review approval
 

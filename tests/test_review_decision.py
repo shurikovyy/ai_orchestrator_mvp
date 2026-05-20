@@ -16,7 +16,7 @@ from ai_orchestrator.backends.mock import MockBackend
 from ai_orchestrator.cli import review_run_main
 from ai_orchestrator.engine import TaskExecutionEngine
 from ai_orchestrator.rework import execute_rework_run
-from ai_orchestrator.review import load_run_state
+from ai_orchestrator.apply import load_run_state
 from ai_orchestrator.review_decision import record_review_decision
 from ai_orchestrator.schemas import RunState, TaskSpec
 
