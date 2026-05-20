@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import json
 from pathlib import Path
 import shutil
 import subprocess
@@ -11,7 +12,7 @@ from uuid import uuid4
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from ai_orchestrator.cli import build_accept_parser
-from ai_orchestrator.apply import accept_run
+from ai_orchestrator.apply import accept_run, load_run_state
 from ai_orchestrator.review import write_review_packet
 from ai_orchestrator.review_decision import record_review_decision
 from ai_orchestrator.schemas import ExecutionResult, RunState, TaskSpec, ValidationResult
@@ -71,8 +72,6 @@ def make_approved_run(root: Path, *, target_repo: Path, status: str = "approved"
         "assumptions": [],
         "validation_notes": [],
     }
-    import json
-
     (workspace / "EXECUTION_REPORT.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     task = TaskSpec(description="Fix subtract", seed_workspace_path=str(target_repo))
     state = RunState(run_id="run_test_accept", task=task, final_status=status)
@@ -97,6 +96,26 @@ def make_approved_run(root: Path, *, target_repo: Path, status: str = "approved"
     )
     state.save_json(run_dir / "state.json")
     return run_dir, state
+
+
+def add_workspace_changed_file(run_dir: Path, relative_path: str, content: str) -> None:
+    workspace = run_dir / "artifacts" / "workspace"
+    file_path = workspace / Path(relative_path)
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    file_path.write_text(content, encoding="utf-8")
+
+    report_path = workspace / "EXECUTION_REPORT.json"
+    report_payload = json.loads(report_path.read_text(encoding="utf-8"))
+    if relative_path not in report_payload["changed_files"]:
+        report_payload["changed_files"].append(relative_path)
+    report_path.write_text(json.dumps(report_payload, indent=2), encoding="utf-8")
+
+    state = load_run_state(run_dir)
+    execution = state.executions[-1]
+    artifact_path = str(file_path)
+    if artifact_path not in execution.artifact_paths:
+        execution.artifact_paths.append(artifact_path)
+    state.save_json(run_dir / "state.json")
 
 
 class ReviewAcceptTests(unittest.TestCase):
@@ -146,21 +165,41 @@ class ReviewAcceptTests(unittest.TestCase):
         with temporary_test_dir() as tmp:
             repo = make_git_seed_repo(tmp)
             run_dir, _ = make_approved_run(tmp, target_repo=repo)
-            (repo / "src" / "toy_calc.py").write_text(
-                "def subtract(a, b):\n    return a + b\n", encoding="utf-8"
-            )
+            add_workspace_changed_file(run_dir, "docs/review_note.md", "# review note\n")
+            state_before = load_run_state(run_dir)
             result = accept_run(
                 run_id=run_dir.name,
                 runs_dir=run_dir.parent,
                 commit_message="fix: subtract",
                 allow_unreviewed=True,
             )
+            self.assertIsNone(state_before.human_review_decision)
             self.assertEqual(result.review_gate, "bypassed_unreviewed")
+            self.assertIsNotNone(result.commit_hash)
+            self.assertIn("docs/review_note.md", result.applied_files)
+            self.assertTrue((repo / "docs" / "review_note.md").exists())
+            self.assertFalse((repo / "EXECUTION_REPORT.json").exists())
             acceptance_text = result.acceptance_path.read_text(encoding="utf-8")
             self.assertIn("## Review gate", acceptance_text)
             self.assertIn("Decision: `missing`", acceptance_text)
             self.assertIn("Bypassed: `true`", acceptance_text)
             self.assertIn("Reason: `--allow-unreviewed`", acceptance_text)
+
+    def test_accept_run_still_fails_when_clean_target_has_no_changes_to_commit(self) -> None:
+        with temporary_test_dir() as tmp:
+            repo = make_git_seed_repo(tmp)
+            run_dir, _ = make_approved_run(tmp, target_repo=repo)
+            (repo / "src" / "toy_calc.py").write_text(
+                "def subtract(a, b):\n    return a - b\n", encoding="utf-8"
+            )
+            git(repo, "add", ".")
+            git(repo, "commit", "-m", "align target with workspace")
+            record_review_decision(run_id=run_dir.name, runs_dir=run_dir.parent, decision="approved")
+
+            with self.assertRaisesRegex(ValueError, "accept-run found no target changes to commit"):
+                accept_run(run_id=run_dir.name, runs_dir=run_dir.parent, commit_message="fix: subtract")
+
+            self.assertFalse((run_dir / "ACCEPTANCE.md").exists())
 
     def test_accept_run_refuses_rejected_human_review(self) -> None:
         with temporary_test_dir() as tmp:
