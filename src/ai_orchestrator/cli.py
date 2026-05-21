@@ -7,6 +7,7 @@ from pathlib import Path
 
 from ai_orchestrator.apply import accept_run, apply_run
 from ai_orchestrator.backends import Backend
+from ai_orchestrator.deterministic_review import run_deterministic_review_checks
 from ai_orchestrator.doctor import format_doctor_json, format_doctor_text, run_doctor
 from ai_orchestrator.pipeline_status import (
     build_pipeline_status_summary,
@@ -456,6 +457,28 @@ def build_record_findings_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def build_run_review_checks_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="ai-orchestrator run-review-checks",
+        description="Run deterministic review checks and record REVIEW_FINDINGS artifacts for an existing run.",
+    )
+    parser.add_argument("run_id", help="Existing run id to review deterministically.")
+    parser.add_argument("--runs-dir", default=".runs", help="Directory containing run state and artifacts.")
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite existing REVIEW_FINDINGS artifacts for this run.",
+    )
+    parser.add_argument(
+        "--profile",
+        action="append",
+        default=None,
+        choices=["default", "docs-only", "code-safety"],
+        help="Deterministic review profile to apply. Repeat to combine multiple profiles.",
+    )
+    return parser
+
+
 def build_doctor_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="ai-orchestrator doctor",
@@ -882,6 +905,32 @@ def record_findings_main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def run_review_checks_main(argv: list[str] | None = None) -> int:
+    parser = build_run_review_checks_parser()
+    args = parser.parse_args(argv)
+    try:
+        result = run_deterministic_review_checks(
+            run_id=args.run_id,
+            runs_dir=args.runs_dir,
+            profiles=args.profile,
+            force=args.force,
+        )
+    except Exception as exc:  # noqa: BLE001 - CLI should print deterministic error text.
+        print(f"run_id={args.run_id}")
+        print("status=failed")
+        print(f"error={exc}")
+        return 1
+    print(f"run_id={result.run_id}")
+    print("status=review_checks_completed")
+    print(f"overall_decision={result.report.overall_decision}")
+    print(f"findings_total={result.report.counts.total}")
+    print(f"blocking_findings={result.report.counts.blocking_open}")
+    print(f"review_findings={result.persisted.review_findings_path}")
+    print(f"review_findings_markdown={result.persisted.review_findings_markdown_path}")
+    print(f"state={result.persisted.state_path}")
+    return 0
+
+
 def doctor_main(argv: list[str] | None = None) -> int:
     parser = build_doctor_parser()
     args = parser.parse_args(argv)
@@ -921,6 +970,8 @@ def doctor_main(argv: list[str] | None = None) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
+    if args and args[0] == "run-review-checks":
+        return run_review_checks_main(args[1:])
     if args and args[0] == "doctor":
         return doctor_main(args[1:])
     if args and args[0] == "record-findings":

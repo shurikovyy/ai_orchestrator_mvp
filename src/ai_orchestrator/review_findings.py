@@ -11,6 +11,7 @@ from ai_orchestrator.schemas import ReviewFinding, ReviewFindingsReport
 @dataclass(frozen=True)
 class RecordFindingsResult:
     run_id: str
+    findings_total: int
     overall_decision: str
     blocking_findings: int
     review_findings_path: Path
@@ -123,11 +124,11 @@ def load_run_findings(run_dir: str | Path) -> ReviewFindingsReport | None:
     return ReviewFindingsReport.model_validate_json(json_path.read_text(encoding="utf-8-sig"))
 
 
-def record_review_findings(
+def persist_review_findings_report(
     *,
     run_id: str,
     runs_dir: str | Path,
-    findings_file: str | Path,
+    report: ReviewFindingsReport,
     force: bool = False,
 ) -> RecordFindingsResult:
     runs_dir_path = Path(runs_dir)
@@ -136,7 +137,6 @@ def record_review_findings(
         raise FileNotFoundError(f"run does not exist: {run_id}")
 
     state = load_run_state(run_dir)
-    report = load_findings_file(findings_file)
     if report.run_id != run_id:
         raise ValueError(f"findings report run_id mismatch: expected {run_id}, got {report.run_id}")
 
@@ -155,9 +155,26 @@ def record_review_findings(
 
     return RecordFindingsResult(
         run_id=run_id,
+        findings_total=report.counts.total,
         overall_decision=report.overall_decision,
         blocking_findings=report.counts.blocking_open,
         review_findings_path=written_json_path.resolve(),
         review_findings_markdown_path=written_markdown_path.resolve(),
         state_path=(run_dir / "state.json").resolve(),
+    )
+
+
+def record_review_findings(
+    *,
+    run_id: str,
+    runs_dir: str | Path,
+    findings_file: str | Path,
+    force: bool = False,
+) -> RecordFindingsResult:
+    report = load_findings_file(findings_file)
+    return persist_review_findings_report(
+        run_id=run_id,
+        runs_dir=runs_dir,
+        report=report,
+        force=force,
     )

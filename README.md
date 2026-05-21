@@ -855,6 +855,53 @@ Future step:
 
 - `rework-run` may eventually consume `REVIEW_FINDINGS` directly as structured rework feedback, but this stage keeps findings recording separate from the existing human feedback flow.
 
+### Deterministic review checks
+
+Deterministic review checks are the first independent review layer on top of validator approval. They generate structured findings without using an LLM, without launching Codex, and without modifying the target repo.
+
+Run them explicitly:
+
+```bash
+python -m ai_orchestrator.cli run-review-checks run_20260521_120000_abcd12 --runs-dir .runs
+```
+
+Then inspect findings status:
+
+```bash
+python -m ai_orchestrator.cli show-run run_20260521_120000_abcd12 --runs-dir .runs
+```
+
+If findings block approval, the normal flow is:
+
+```bash
+python -m ai_orchestrator.cli review-run run_20260521_120000_abcd12 \
+  --runs-dir .runs \
+  --decision rejected \
+  --feedback review_feedback.md
+```
+
+Profiles:
+
+```bash
+python -m ai_orchestrator.cli run-review-checks run_20260521_120000_abcd12 \
+  --runs-dir .runs \
+  --profile code-safety
+```
+
+- `default`: general deterministic checks across changed files, report integrity, tests, and change breadth.
+- `docs-only`: lightweight policy set for documentation-focused work.
+- `code-safety`: emphasizes high-risk orchestration files and source/test discipline.
+
+Behavior:
+
+- deterministic checks generate `REVIEW_FINDINGS.json` and `REVIEW_FINDINGS.md`;
+- they do not use LLM reviewers;
+- they do not run Codex or `codex exec`;
+- they do not re-run the main validator;
+- they do not call `review-run`, `rework-run`, `apply-run`, or `accept-run`;
+- they do not modify the target repo;
+- open `critical` and `major` findings block `review-run --decision approved`.
+
 ### Self-improvement autonomy goal
 
 The long-term direction of `ai_orchestrator` is near-autonomous self-development under hard validation and human governance.
