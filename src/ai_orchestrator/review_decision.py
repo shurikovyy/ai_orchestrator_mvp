@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 from ai_orchestrator.apply import load_run_state
+from ai_orchestrator.review_findings import has_blocking_findings, load_run_findings
 from ai_orchestrator.schemas import RunState
 
 
@@ -140,6 +141,13 @@ def record_review_decision(
     normalized_decision = decision.strip().lower()
     if normalized_decision not in {"approved", "rejected"}:
         raise ValueError("decision must be one of: approved, rejected")
+
+    if normalized_decision == "approved":
+        findings_report = load_run_findings(run_dir)
+        if findings_report is not None and has_blocking_findings(findings_report):
+            raise ValueError(
+                "run has open blocking review findings; resolve findings or record rejected review for rework"
+            )
 
     if normalized_decision == "rejected" and feedback_path is None:
         raise ValueError("Feedback is required for rejected review decisions.")

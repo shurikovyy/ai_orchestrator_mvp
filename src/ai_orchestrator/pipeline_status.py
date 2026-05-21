@@ -16,6 +16,9 @@ class PipelineTaskStatusSummary:
     validator_status: str
     backend: str | None
     human_review_decision: str | None
+    findings_exists: bool
+    review_findings_decision: str
+    blocking_findings: int
     acceptance_status: str
     application_status: str
     is_rework: bool
@@ -59,6 +62,8 @@ def _run_artifact_paths_for_missing(task_result: PipelineTaskResult, runs_dir: P
         "state": task_result.state or str((run_dir / "state.json").resolve()),
         "final_report": task_result.final_report or str((run_dir / "final_report.md").resolve()),
         "review_packet": task_result.review_packet or str((run_dir / "REVIEW_PACKET.md").resolve()),
+        "review_findings": str((run_dir / "REVIEW_FINDINGS.json").resolve()),
+        "review_findings_markdown": str((run_dir / "REVIEW_FINDINGS.md").resolve()),
         "review_decision": str((run_dir / "REVIEW_DECISION.json").resolve()),
         "review_decision_md": str((run_dir / "REVIEW_DECISION.md").resolve()),
         "review_feedback": str((run_dir / "REVIEW_FEEDBACK.md").resolve()),
@@ -73,6 +78,8 @@ def _exists_from_artifacts(artifacts: dict[str, str]) -> dict[str, bool]:
     return {
         "final_report": Path(artifacts["final_report"]).exists(),
         "review_packet": Path(artifacts["review_packet"]).exists(),
+        "review_findings": Path(artifacts["review_findings"]).exists(),
+        "review_findings_markdown": Path(artifacts["review_findings_markdown"]).exists(),
         "review_decision": Path(artifacts["review_decision"]).exists(),
         "review_decision_md": Path(artifacts["review_decision_md"]).exists(),
         "review_feedback": Path(artifacts["review_feedback"]).exists(),
@@ -91,6 +98,9 @@ def _build_task_summary_from_run_summary(task_result: PipelineTaskResult, run_su
         validator_status=run_summary.validator_status,
         backend=run_summary.backend,
         human_review_decision=run_summary.human_review_decision,
+        findings_exists=run_summary.findings_exists,
+        review_findings_decision=run_summary.review_findings_decision,
+        blocking_findings=run_summary.blocking_findings,
         acceptance_status=run_summary.acceptance_status,
         application_status=run_summary.application_status,
         is_rework=run_summary.is_rework,
@@ -112,6 +122,9 @@ def _build_missing_task_summary(task_result: PipelineTaskResult, runs_dir: Path)
         validator_status="missing",
         backend=None,
         human_review_decision=None,
+        findings_exists=False,
+        review_findings_decision="empty",
+        blocking_findings=0,
         acceptance_status="not_accepted",
         application_status="not_applied",
         is_rework=False,
@@ -142,6 +155,8 @@ def _compute_counts(task_summaries: list[PipelineTaskStatusSummary]) -> dict[str
         ),
         "tasks_human_approved": sum(1 for task in task_summaries if task.human_review_decision == "approved"),
         "tasks_human_rejected": sum(1 for task in task_summaries if task.human_review_decision == "rejected"),
+        "tasks_with_findings": sum(1 for task in task_summaries if task.findings_exists),
+        "tasks_with_blocking_findings": sum(1 for task in task_summaries if task.blocking_findings > 0),
         "tasks_accepted": sum(1 for task in task_summaries if task.acceptance_status == "accepted"),
         "tasks_applied": sum(1 for task in task_summaries if task.application_status == "applied"),
         "tasks_waiting_apply": sum(1 for task in task_summaries if task.next_action == "apply_run"),
@@ -162,6 +177,8 @@ def _compute_pipeline_next_action(
         return "rework_or_inspect_failure"
     if any(task.next_action == "rework_run" for task in task_summaries):
         return "rework_run"
+    if any(task.next_action == "review_findings" for task in task_summaries):
+        return "review_findings"
     if any(task.next_action == "review_run" for task in task_summaries):
         return "review_runs"
     if any(task.next_action == "apply_run" for task in task_summaries):
@@ -221,6 +238,8 @@ def format_pipeline_status_text(summary: PipelineStatusSummary, *, show_paths: b
         f"tasks_waiting_review={summary.counts['tasks_waiting_review']}",
         f"tasks_human_approved={summary.counts['tasks_human_approved']}",
         f"tasks_human_rejected={summary.counts['tasks_human_rejected']}",
+        f"tasks_with_findings={summary.counts['tasks_with_findings']}",
+        f"tasks_with_blocking_findings={summary.counts['tasks_with_blocking_findings']}",
         f"tasks_accepted={summary.counts['tasks_accepted']}",
         f"tasks_applied={summary.counts['tasks_applied']}",
         f"tasks_waiting_apply={summary.counts['tasks_waiting_apply']}",
@@ -241,6 +260,8 @@ def format_pipeline_status_text(summary: PipelineStatusSummary, *, show_paths: b
             f"backend={task.backend or ''}",
             f"validator_status={task.validator_status}",
             f"human_review_decision={task.human_review_decision or ''}",
+            f"findings_exists={_bool_text(task.findings_exists)}",
+            f"blocking_findings={task.blocking_findings}",
             f"acceptance_status={task.acceptance_status}",
             f"application_status={task.application_status}",
             f"is_rework={_bool_text(task.is_rework)}",
@@ -271,6 +292,9 @@ def format_pipeline_status_json(summary: PipelineStatusSummary) -> str:
                 "validator_status": task.validator_status,
                 "backend": task.backend,
                 "human_review_decision": task.human_review_decision,
+                "findings_exists": task.findings_exists,
+                "review_findings_decision": task.review_findings_decision,
+                "blocking_findings": task.blocking_findings,
                 "acceptance_status": task.acceptance_status,
                 "application_status": task.application_status,
                 "is_rework": task.is_rework,

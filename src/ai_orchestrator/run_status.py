@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from ai_orchestrator.apply import load_run_state
+from ai_orchestrator.review_findings import load_run_findings
 
 
 @dataclass(frozen=True)
@@ -13,6 +14,9 @@ class RunStatusSummary:
     validator_status: str
     backend: str | None
     human_review_decision: str | None
+    findings_exists: bool
+    review_findings_decision: str
+    blocking_findings: int
     acceptance_status: str
     application_status: str
     is_rework: bool
@@ -37,6 +41,8 @@ def _build_artifact_paths(run_dir: Path) -> dict[str, Path]:
         "state": run_dir / "state.json",
         "final_report": run_dir / "final_report.md",
         "review_packet": run_dir / "REVIEW_PACKET.md",
+        "review_findings": run_dir / "REVIEW_FINDINGS.json",
+        "review_findings_markdown": run_dir / "REVIEW_FINDINGS.md",
         "review_decision": run_dir / "REVIEW_DECISION.json",
         "review_decision_md": run_dir / "REVIEW_DECISION.md",
         "review_feedback": run_dir / "REVIEW_FEEDBACK.md",
@@ -51,15 +57,18 @@ def _compute_next_action(
     *,
     validator_status: str,
     human_review_decision: str | None,
+    blocking_findings: int,
     application_status: str,
     acceptance_exists: bool,
 ) -> str:
     if validator_status != "approved":
         return "rework_or_inspect_failure"
-    if human_review_decision == "rejected":
-        return "rework_run"
     if acceptance_exists:
         return "done"
+    if human_review_decision == "rejected":
+        return "rework_run"
+    if blocking_findings > 0:
+        return "review_findings"
     if application_status == "applied":
         return "manual_commit"
     if human_review_decision == "approved":
@@ -79,6 +88,8 @@ def build_run_status_summary(*, run_id: str, runs_dir: str | Path) -> RunStatusS
     exists = {
         "final_report": artifact_paths["final_report"].exists(),
         "review_packet": artifact_paths["review_packet"].exists(),
+        "review_findings": artifact_paths["review_findings"].exists(),
+        "review_findings_markdown": artifact_paths["review_findings_markdown"].exists(),
         "review_decision": artifact_paths["review_decision"].exists(),
         "review_decision_md": artifact_paths["review_decision_md"].exists(),
         "review_feedback": artifact_paths["review_feedback"].exists(),
@@ -90,9 +101,14 @@ def build_run_status_summary(*, run_id: str, runs_dir: str | Path) -> RunStatusS
     acceptance_exists = exists["acceptance"]
     application_status = "applied" if state.apply_status == "applied" or exists["apply_report"] or exists["apply_report_json"] else "not_applied"
     human_review_decision = state.human_review_decision
+    findings_report = load_run_findings(run_dir)
+    findings_exists = findings_report is not None or exists["review_findings"]
+    review_findings_decision = findings_report.overall_decision if findings_report is not None else (state.review_findings_decision or "empty")
+    blocking_findings = findings_report.counts.blocking_open if findings_report is not None else (state.review_findings_blocking_count or 0)
     next_action = _compute_next_action(
         validator_status=state.final_status,
         human_review_decision=human_review_decision,
+        blocking_findings=blocking_findings,
         application_status=application_status,
         acceptance_exists=acceptance_exists,
     )
@@ -108,6 +124,9 @@ def build_run_status_summary(*, run_id: str, runs_dir: str | Path) -> RunStatusS
         validator_status=state.final_status,
         backend=state.backend_name,
         human_review_decision=human_review_decision,
+        findings_exists=findings_exists,
+        review_findings_decision=review_findings_decision,
+        blocking_findings=blocking_findings,
         acceptance_status="accepted" if acceptance_exists else "not_accepted",
         application_status=application_status,
         is_rework=bool(state.task.rework_of_run_id),
@@ -130,6 +149,9 @@ def format_run_status_text(summary: RunStatusSummary, *, show_paths: bool = Fals
         f"validator_status={summary.validator_status}",
         f"backend={summary.backend or ''}",
         f"human_review_decision={summary.human_review_decision or ''}",
+        f"findings_exists={_bool_text(summary.findings_exists)}",
+        f"review_findings_decision={summary.review_findings_decision}",
+        f"blocking_findings={summary.blocking_findings}",
         f"acceptance_status={summary.acceptance_status}",
         f"application_status={summary.application_status}",
         f"is_rework={_bool_text(summary.is_rework)}",
@@ -147,6 +169,8 @@ def format_run_status_text(summary: RunStatusSummary, *, show_paths: bool = Fals
             [
                 f"final_report={summary.artifacts['final_report']}",
                 f"review_packet={summary.artifacts['review_packet']}",
+                f"review_findings={summary.artifacts['review_findings']}",
+                f"review_findings_markdown={summary.artifacts['review_findings_markdown']}",
                 f"review_decision={summary.artifacts['review_decision']}",
                 f"apply_report={summary.artifacts['apply_report']}",
                 f"apply_report_json={summary.artifacts['apply_report_json']}",
@@ -163,6 +187,9 @@ def format_run_status_json(summary: RunStatusSummary) -> str:
         "validator_status": summary.validator_status,
         "backend": summary.backend,
         "human_review_decision": summary.human_review_decision,
+        "findings_exists": summary.findings_exists,
+        "review_findings_decision": summary.review_findings_decision,
+        "blocking_findings": summary.blocking_findings,
         "acceptance_status": summary.acceptance_status,
         "application_status": summary.application_status,
         "is_rework": summary.is_rework,

@@ -14,6 +14,7 @@ from ai_orchestrator.pipeline_status import (
     format_pipeline_status_text,
 )
 from ai_orchestrator.pipeline import PipelinePlan, PipelineRunResult, run_pipeline
+from ai_orchestrator.review_findings import record_review_findings
 from ai_orchestrator.run_status import build_run_status_summary, format_run_status_json, format_run_status_text
 from ai_orchestrator.rework import execute_rework_run
 from ai_orchestrator.review_decision import record_review_decision
@@ -435,6 +436,26 @@ def build_review_run_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def build_record_findings_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="ai-orchestrator record-findings",
+        description="Record structured review findings for an existing run without modifying target repos.",
+    )
+    parser.add_argument("run_id", help="Existing run id to attach findings to.")
+    parser.add_argument("--runs-dir", default=".runs", help="Directory containing run state and artifacts.")
+    parser.add_argument(
+        "--findings-file",
+        required=True,
+        help="Path to a REVIEW_FINDINGS-like JSON file.",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite an existing REVIEW_FINDINGS.json/REVIEW_FINDINGS.md for this run.",
+    )
+    return parser
+
+
 def build_doctor_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="ai-orchestrator doctor",
@@ -836,6 +857,31 @@ def review_run_main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def record_findings_main(argv: list[str] | None = None) -> int:
+    parser = build_record_findings_parser()
+    args = parser.parse_args(argv)
+    try:
+        result = record_review_findings(
+            run_id=args.run_id,
+            runs_dir=args.runs_dir,
+            findings_file=args.findings_file,
+            force=args.force,
+        )
+    except Exception as exc:  # noqa: BLE001 - CLI should print deterministic error text.
+        print(f"run_id={args.run_id}")
+        print("status=failed")
+        print(f"error={exc}")
+        return 1
+    print(f"run_id={result.run_id}")
+    print("status=findings_recorded")
+    print(f"overall_decision={result.overall_decision}")
+    print(f"blocking_findings={result.blocking_findings}")
+    print(f"review_findings={result.review_findings_path}")
+    print(f"review_findings_markdown={result.review_findings_markdown_path}")
+    print(f"state={result.state_path}")
+    return 0
+
+
 def doctor_main(argv: list[str] | None = None) -> int:
     parser = build_doctor_parser()
     args = parser.parse_args(argv)
@@ -877,6 +923,8 @@ def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if args and args[0] == "doctor":
         return doctor_main(args[1:])
+    if args and args[0] == "record-findings":
+        return record_findings_main(args[1:])
     if args and args[0] == "show-pipeline":
         return show_pipeline_main(args[1:])
     if args and args[0] == "show-run":

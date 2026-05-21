@@ -784,9 +784,92 @@ Safety notes:
 - commit remains manual;
 - `accept-run` remains a separate explicit step.
 
+### Structured review findings
+
+Deterministic validator approval is not always enough for safe self-improvement. Independent reviewers can record structured findings in machine-readable form, and open blocking findings prevent `review-run --decision approved`.
+
+Findings severity levels:
+
+- `critical`
+- `major`
+- `minor`
+- `nit`
+
+Blocking policy:
+
+- open `critical` findings are blocking;
+- open `major` findings are blocking;
+- `minor` and `nit` findings are non-blocking;
+- `accepted_risk` and `resolved` findings are non-blocking for this MVP, but they are still tracked explicitly.
+
+Findings are stored in run artifacts as:
+
+- `REVIEW_FINDINGS.json`
+- `REVIEW_FINDINGS.md`
+
+Example findings JSON:
+
+```json
+{
+  "schema_version": "1.0",
+  "run_id": "run_20260521_120000_abcd12",
+  "summary": "QA review found missing regression coverage.",
+  "overall_decision": "needs_rework",
+  "findings": [
+    {
+      "id": "F001",
+      "reviewer": "qa",
+      "category": "qa",
+      "severity": "major",
+      "title": "Missing regression test",
+      "evidence": "The diff changes apply logic but no negative test covers dirty target repo.",
+      "required_action": "Add regression test for dirty target repo protection.",
+      "file": "src/ai_orchestrator/apply.py",
+      "line": null,
+      "status": "open"
+    }
+  ]
+}
+```
+
+Record findings:
+
+```bash
+python -m ai_orchestrator.cli record-findings run_20260521_120000_abcd12 \
+  --runs-dir .runs \
+  --findings-file review_findings.json
+```
+
+Then inspect the run:
+
+```bash
+python -m ai_orchestrator.cli show-run run_20260521_120000_abcd12 --runs-dir .runs
+```
+
+If blocking findings exist:
+
+- `review-run --decision approved` fails;
+- the normal flow is `review-run --decision rejected --feedback ...` and then `rework-run`.
+
+Future step:
+
+- `rework-run` may eventually consume `REVIEW_FINDINGS` directly as structured rework feedback, but this stage keeps findings recording separate from the existing human feedback flow.
+
+### Self-improvement autonomy goal
+
+The long-term direction of `ai_orchestrator` is near-autonomous self-development under hard validation and human governance.
+
+Practical meaning:
+
+- the system may eventually implement improvements to itself;
+- independent validators/reviewers can record structured findings that demand rework;
+- critical and major open findings block approval;
+- final apply/commit remains human-governed unless a task class is explicitly safe enough to automate;
+- critical lifecycle files such as validation, review, apply, and acceptance gates should always receive stricter scrutiny.
+
 ### Inspecting run lifecycle status
 
-`show-run` is a read-only inspection command. It aggregates status from `state.json` plus existing artifacts such as `final_report.md`, `REVIEW_PACKET.md`, `REVIEW_DECISION.json`, `REWORK_FEEDBACK.md`, `APPLY_REPORT.md`, and `ACCEPTANCE.md`.
+`show-run` is a read-only inspection command. It aggregates status from `state.json` plus existing artifacts such as `final_report.md`, `REVIEW_PACKET.md`, `REVIEW_FINDINGS.json`, `REVIEW_DECISION.json`, `REWORK_FEEDBACK.md`, `APPLY_REPORT.md`, and `ACCEPTANCE.md`.
 
 Examples:
 
@@ -814,6 +897,7 @@ Behavior:
 
 `next_action` values:
 
+- `review_findings`: blocking structured findings exist and should be reviewed before approval;
 - `review_run`: validator approved the run, but no human review decision is recorded yet;
 - `rework_run`: human review rejected the run and feedback/rework is the next step;
 - `apply_run`: validator approved the run and human review approved it, but files have not been applied back to the target repo yet;
@@ -850,6 +934,7 @@ Behavior:
 
 `next_action` values:
 
+- `review_findings`: at least one run has blocking structured review findings;
 - `review_runs`: at least one validator-approved run still needs human review;
 - `rework_run`: at least one run has a rejected human review decision;
 - `apply_runs`: at least one run is human-approved and waiting for explicit `apply-run`;
