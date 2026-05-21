@@ -319,7 +319,7 @@ class ReviewAcceptTests(unittest.TestCase):
             repo = make_git_seed_repo(tmp)
             run_dir, _ = make_approved_run(tmp, target_repo=repo)
             state_path = run_dir / "state.json"
-            import json
+            add_workspace_changed_file(run_dir, "docs/old_state_accept_note.md", "# old state accept note\n")
 
             payload = json.loads(state_path.read_text(encoding="utf-8"))
             payload.pop("human_review_decision", None)
@@ -335,7 +335,17 @@ class ReviewAcceptTests(unittest.TestCase):
                 commit_message="fix: subtract",
                 allow_unreviewed=True,
             )
+            state_payload_after = json.loads(state_path.read_text(encoding="utf-8"))
             self.assertEqual(result.review_gate, "bypassed_unreviewed")
+            self.assertIsNotNone(result.commit_hash)
+            self.assertNotIn("human_review_decision", payload)
+            self.assertIn("docs/old_state_accept_note.md", result.applied_files)
+            self.assertTrue((repo / "docs" / "old_state_accept_note.md").exists())
+            self.assertFalse((repo / "EXECUTION_REPORT.json").exists())
+            self.assertEqual(state_payload_after.get("human_review_decision"), None)
+            acceptance_text = result.acceptance_path.read_text(encoding="utf-8")
+            self.assertIn("Bypassed: `true`", acceptance_text)
+            self.assertIn("Reason: `--allow-unreviewed`", acceptance_text)
 
     def test_accept_run_dry_run_does_not_modify_target_repo_or_create_artifacts(self) -> None:
         with temporary_test_dir() as tmp:
