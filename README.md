@@ -998,6 +998,49 @@ Practical guidance:
 - `--allow-unreviewed` is an emergency/backward-compatibility flag only;
 - a rejected human review blocks both `apply-run` and `accept-run`.
 
+### Preflight doctor
+
+`doctor` is a read-only preflight command for checking whether the repository and local environment are ready for a real `run-pipeline` / dogfooding execution.
+
+Examples:
+
+```bash
+python -m ai_orchestrator.cli doctor
+```
+
+```bash
+python -m ai_orchestrator.cli doctor \
+  --tasks-file tasks.yaml \
+  --task-id 0.1.21-dogfood-manual-workflow-doc \
+  --codex-cmd "$CODEX_CMD"
+```
+
+```bash
+python -m ai_orchestrator.cli doctor \
+  --tasks-file tasks.yaml \
+  --task-id 0.1.21-dogfood-manual-workflow-doc \
+  --skip-tests
+```
+
+Behavior:
+
+- `doctor` is read-only;
+- it checks git repository detection and tracked working tree cleanliness;
+- it can run `python -m unittest discover -s tests`, or skip that check with `--skip-tests`;
+- it can validate `tasks.yaml`, a specific `task_id`, and that the resolved `seed_workspace` exists;
+- it can verify the Codex CLI command only via `<codex-cmd> --version`;
+- it does not run agents or `codex exec`;
+- it does not run `run-pipeline`, `run-task`, `apply-run`, `accept-run`, `review-run`, or `rework-run`;
+- it does not create files, modify artifacts, or create commits.
+
+Use `doctor` before a real `run-pipeline` when you want a quick deterministic answer about whether the repo is clean, tests are green, the selected task is valid, and the Codex command is available.
+
+Important notes:
+
+- launch `codex_cli` pipelines from a normal terminal, not from inside a Codex VS Code agent session;
+- `doctor` cannot reliably detect every nested Codex session, so it prints only a cautionary warning;
+- `doctor` runs `codex --version` only; it never runs `codex exec`.
+
 ### Dry-run behavior
 
 `apply-run --dry-run` and `accept-run --dry-run` are validation/planning-only commands.

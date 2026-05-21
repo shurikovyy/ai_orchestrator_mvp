@@ -7,6 +7,7 @@ from pathlib import Path
 
 from ai_orchestrator.apply import accept_run, apply_run
 from ai_orchestrator.backends import Backend
+from ai_orchestrator.doctor import format_doctor_json, format_doctor_text, run_doctor
 from ai_orchestrator.pipeline_status import (
     build_pipeline_status_summary,
     format_pipeline_status_json,
@@ -434,6 +435,45 @@ def build_review_run_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def build_doctor_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="ai-orchestrator doctor",
+        description="Run read-only preflight checks for repository and environment readiness.",
+    )
+    parser.add_argument(
+        "--tasks-file",
+        default=None,
+        help="Optional tasks.yaml/tasks.yaml.example path to validate.",
+    )
+    parser.add_argument(
+        "--task-id",
+        default=None,
+        help="Optional task id to validate within --tasks-file.",
+    )
+    parser.add_argument(
+        "--codex-cmd",
+        default=None,
+        help="Optional Codex CLI command to verify via `<command> --version`.",
+    )
+    parser.add_argument(
+        "--skip-tests",
+        action="store_true",
+        help="Skip `python -m unittest discover -s tests` during doctor checks.",
+    )
+    parser.add_argument(
+        "--format",
+        choices=["text", "json"],
+        default="text",
+        help="Output format. Defaults to text.",
+    )
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Treat warnings as nonzero exit status.",
+    )
+    return parser
+
+
 def _print_run_summary(
     *,
     task_id: str | None,
@@ -796,8 +836,47 @@ def review_run_main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def doctor_main(argv: list[str] | None = None) -> int:
+    parser = build_doctor_parser()
+    args = parser.parse_args(argv)
+    try:
+        result = run_doctor(
+            tasks_file=args.tasks_file,
+            task_id=args.task_id,
+            codex_cmd=args.codex_cmd,
+            skip_tests=args.skip_tests,
+            strict=args.strict,
+        )
+    except Exception as exc:  # noqa: BLE001 - CLI should print deterministic error text.
+        if args.format == "json":
+            print(
+                json.dumps(
+                    {
+                        "doctor_status": "failed",
+                        "next_action": "fix_errors",
+                        "checks": [],
+                        "error": str(exc),
+                    },
+                    indent=2,
+                    ensure_ascii=False,
+                )
+            )
+        else:
+            print("doctor_status=failed")
+            print(f"error={exc}")
+        return 1
+
+    if args.format == "json":
+        print(format_doctor_json(result))
+    else:
+        print(format_doctor_text(result))
+    return result.exit_code
+
+
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
+    if args and args[0] == "doctor":
+        return doctor_main(args[1:])
     if args and args[0] == "show-pipeline":
         return show_pipeline_main(args[1:])
     if args and args[0] == "show-run":
