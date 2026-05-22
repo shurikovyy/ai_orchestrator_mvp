@@ -19,6 +19,8 @@ class RunStatusSummary:
     blocking_findings: int
     findings_feedback_exists: bool
     findings_feedback_count: int
+    reviewer_prompts_exists: bool
+    reviewer_prompts_count: int
     acceptance_status: str
     application_status: str
     is_rework: bool
@@ -46,6 +48,8 @@ def _build_artifact_paths(run_dir: Path) -> dict[str, Path]:
         "review_findings": run_dir / "REVIEW_FINDINGS.json",
         "review_findings_markdown": run_dir / "REVIEW_FINDINGS.md",
         "findings_feedback": run_dir / "REVIEW_FEEDBACK_FROM_FINDINGS.md",
+        "reviewer_prompts_dir": run_dir / "reviewer_prompts",
+        "reviewer_prompts_manifest": run_dir / "reviewer_prompts" / "MANIFEST.json",
         "review_decision": run_dir / "REVIEW_DECISION.json",
         "review_decision_md": run_dir / "REVIEW_DECISION.md",
         "review_feedback": run_dir / "REVIEW_FEEDBACK.md",
@@ -80,6 +84,12 @@ def _compute_next_action(
     return "review_run"
 
 
+def _count_reviewer_prompts(prompts_dir: Path) -> int:
+    if not prompts_dir.exists() or not prompts_dir.is_dir():
+        return 0
+    return sum(1 for path in prompts_dir.glob("*_review_prompt.md") if path.is_file())
+
+
 def build_run_status_summary(*, run_id: str, runs_dir: str | Path) -> RunStatusSummary:
     runs_dir_path = Path(runs_dir)
     run_dir = runs_dir_path / run_id
@@ -97,6 +107,7 @@ def build_run_status_summary(*, run_id: str, runs_dir: str | Path) -> RunStatusS
         "review_findings": artifact_paths["review_findings"].exists(),
         "review_findings_markdown": artifact_paths["review_findings_markdown"].exists(),
         "findings_feedback": artifact_paths["findings_feedback"].exists(),
+        "reviewer_prompts_manifest": artifact_paths["reviewer_prompts_manifest"].exists(),
         "review_decision": artifact_paths["review_decision"].exists(),
         "review_decision_md": artifact_paths["review_decision_md"].exists(),
         "review_feedback": artifact_paths["review_feedback"].exists(),
@@ -112,6 +123,7 @@ def build_run_status_summary(*, run_id: str, runs_dir: str | Path) -> RunStatusS
     findings_exists = findings_report is not None or exists["review_findings"]
     review_findings_decision = findings_report.overall_decision if findings_report is not None else (state.review_findings_decision or "empty")
     blocking_findings = findings_report.counts.blocking_open if findings_report is not None else (state.review_findings_blocking_count or 0)
+    reviewer_prompts_count = _count_reviewer_prompts(artifact_paths["reviewer_prompts_dir"])
     next_action = _compute_next_action(
         validator_status=state.final_status,
         human_review_decision=human_review_decision,
@@ -137,6 +149,8 @@ def build_run_status_summary(*, run_id: str, runs_dir: str | Path) -> RunStatusS
         blocking_findings=blocking_findings,
         findings_feedback_exists=exists["findings_feedback"],
         findings_feedback_count=state.findings_feedback_count,
+        reviewer_prompts_exists=reviewer_prompts_count > 0 or exists["reviewer_prompts_manifest"],
+        reviewer_prompts_count=reviewer_prompts_count,
         acceptance_status="accepted" if acceptance_exists else "not_accepted",
         application_status=application_status,
         is_rework=bool(state.task.rework_of_run_id),
@@ -164,6 +178,8 @@ def format_run_status_text(summary: RunStatusSummary, *, show_paths: bool = Fals
         f"blocking_findings={summary.blocking_findings}",
         f"findings_feedback_exists={_bool_text(summary.findings_feedback_exists)}",
         f"findings_feedback_count={summary.findings_feedback_count}",
+        f"reviewer_prompts_exists={_bool_text(summary.reviewer_prompts_exists)}",
+        f"reviewer_prompts_count={summary.reviewer_prompts_count}",
         f"acceptance_status={summary.acceptance_status}",
         f"application_status={summary.application_status}",
         f"is_rework={_bool_text(summary.is_rework)}",
@@ -184,6 +200,8 @@ def format_run_status_text(summary: RunStatusSummary, *, show_paths: bool = Fals
                 f"review_findings={summary.artifacts['review_findings']}",
                 f"review_findings_markdown={summary.artifacts['review_findings_markdown']}",
                 f"findings_feedback={summary.artifacts['findings_feedback']}",
+                f"reviewer_prompts_dir={summary.artifacts['reviewer_prompts_dir']}",
+                f"reviewer_prompts_manifest={summary.artifacts['reviewer_prompts_manifest']}",
                 f"review_decision={summary.artifacts['review_decision']}",
                 f"apply_report={summary.artifacts['apply_report']}",
                 f"apply_report_json={summary.artifacts['apply_report_json']}",
@@ -205,6 +223,8 @@ def format_run_status_json(summary: RunStatusSummary) -> str:
         "blocking_findings": summary.blocking_findings,
         "findings_feedback_exists": summary.findings_feedback_exists,
         "findings_feedback_count": summary.findings_feedback_count,
+        "reviewer_prompts_exists": summary.reviewer_prompts_exists,
+        "reviewer_prompts_count": summary.reviewer_prompts_count,
         "acceptance_status": summary.acceptance_status,
         "application_status": summary.application_status,
         "is_rework": summary.is_rework,

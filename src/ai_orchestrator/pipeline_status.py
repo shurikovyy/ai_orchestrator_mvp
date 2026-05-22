@@ -21,6 +21,8 @@ class PipelineTaskStatusSummary:
     blocking_findings: int
     findings_feedback_exists: bool
     findings_feedback_count: int
+    reviewer_prompts_exists: bool
+    reviewer_prompts_count: int
     acceptance_status: str
     application_status: str
     is_rework: bool
@@ -67,6 +69,8 @@ def _run_artifact_paths_for_missing(task_result: PipelineTaskResult, runs_dir: P
         "review_findings": str((run_dir / "REVIEW_FINDINGS.json").resolve()),
         "review_findings_markdown": str((run_dir / "REVIEW_FINDINGS.md").resolve()),
         "findings_feedback": str((run_dir / "REVIEW_FEEDBACK_FROM_FINDINGS.md").resolve()),
+        "reviewer_prompts_dir": str((run_dir / "reviewer_prompts").resolve()),
+        "reviewer_prompts_manifest": str((run_dir / "reviewer_prompts" / "MANIFEST.json").resolve()),
         "review_decision": str((run_dir / "REVIEW_DECISION.json").resolve()),
         "review_decision_md": str((run_dir / "REVIEW_DECISION.md").resolve()),
         "review_feedback": str((run_dir / "REVIEW_FEEDBACK.md").resolve()),
@@ -84,6 +88,7 @@ def _exists_from_artifacts(artifacts: dict[str, str]) -> dict[str, bool]:
         "review_findings": Path(artifacts["review_findings"]).exists(),
         "review_findings_markdown": Path(artifacts["review_findings_markdown"]).exists(),
         "findings_feedback": Path(artifacts["findings_feedback"]).exists(),
+        "reviewer_prompts_manifest": Path(artifacts["reviewer_prompts_manifest"]).exists(),
         "review_decision": Path(artifacts["review_decision"]).exists(),
         "review_decision_md": Path(artifacts["review_decision_md"]).exists(),
         "review_feedback": Path(artifacts["review_feedback"]).exists(),
@@ -107,6 +112,8 @@ def _build_task_summary_from_run_summary(task_result: PipelineTaskResult, run_su
         blocking_findings=run_summary.blocking_findings,
         findings_feedback_exists=run_summary.findings_feedback_exists,
         findings_feedback_count=run_summary.findings_feedback_count,
+        reviewer_prompts_exists=run_summary.reviewer_prompts_exists,
+        reviewer_prompts_count=run_summary.reviewer_prompts_count,
         acceptance_status=run_summary.acceptance_status,
         application_status=run_summary.application_status,
         is_rework=run_summary.is_rework,
@@ -133,6 +140,8 @@ def _build_missing_task_summary(task_result: PipelineTaskResult, runs_dir: Path)
         blocking_findings=0,
         findings_feedback_exists=False,
         findings_feedback_count=0,
+        reviewer_prompts_exists=False,
+        reviewer_prompts_count=0,
         acceptance_status="not_accepted",
         application_status="not_applied",
         is_rework=False,
@@ -167,6 +176,7 @@ def _compute_counts(task_summaries: list[PipelineTaskStatusSummary]) -> dict[str
         "tasks_with_blocking_findings": sum(1 for task in task_summaries if task.blocking_findings > 0),
         "tasks_waiting_findings_feedback": sum(1 for task in task_summaries if task.next_action == "findings_feedback"),
         "tasks_waiting_rejected_review": sum(1 for task in task_summaries if task.next_action == "review_rejected"),
+        "tasks_with_reviewer_prompts": sum(1 for task in task_summaries if task.reviewer_prompts_exists),
         "tasks_accepted": sum(1 for task in task_summaries if task.acceptance_status == "accepted"),
         "tasks_applied": sum(1 for task in task_summaries if task.application_status == "applied"),
         "tasks_waiting_apply": sum(1 for task in task_summaries if task.next_action == "apply_run"),
@@ -256,6 +266,7 @@ def format_pipeline_status_text(summary: PipelineStatusSummary, *, show_paths: b
         f"tasks_with_blocking_findings={summary.counts['tasks_with_blocking_findings']}",
         f"tasks_waiting_findings_feedback={summary.counts['tasks_waiting_findings_feedback']}",
         f"tasks_waiting_rejected_review={summary.counts['tasks_waiting_rejected_review']}",
+        f"tasks_with_reviewer_prompts={summary.counts['tasks_with_reviewer_prompts']}",
         f"tasks_accepted={summary.counts['tasks_accepted']}",
         f"tasks_applied={summary.counts['tasks_applied']}",
         f"tasks_waiting_apply={summary.counts['tasks_waiting_apply']}",
@@ -280,6 +291,8 @@ def format_pipeline_status_text(summary: PipelineStatusSummary, *, show_paths: b
             f"blocking_findings={task.blocking_findings}",
             f"findings_feedback_exists={_bool_text(task.findings_feedback_exists)}",
             f"findings_feedback_count={task.findings_feedback_count}",
+            f"reviewer_prompts_exists={_bool_text(task.reviewer_prompts_exists)}",
+            f"reviewer_prompts_count={task.reviewer_prompts_count}",
             f"acceptance_status={task.acceptance_status}",
             f"application_status={task.application_status}",
             f"is_rework={_bool_text(task.is_rework)}",
@@ -315,6 +328,8 @@ def format_pipeline_status_json(summary: PipelineStatusSummary) -> str:
                 "blocking_findings": task.blocking_findings,
                 "findings_feedback_exists": task.findings_feedback_exists,
                 "findings_feedback_count": task.findings_feedback_count,
+                "reviewer_prompts_exists": task.reviewer_prompts_exists,
+                "reviewer_prompts_count": task.reviewer_prompts_count,
                 "acceptance_status": task.acceptance_status,
                 "application_status": task.application_status,
                 "is_rework": task.is_rework,

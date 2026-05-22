@@ -25,6 +25,7 @@ from ai_orchestrator.review_profiles import (
     get_review_profile,
     list_review_profiles,
 )
+from ai_orchestrator.reviewer_prompts import prepare_review_prompts
 from ai_orchestrator.run_status import build_run_status_summary, format_run_status_json, format_run_status_text
 from ai_orchestrator.rework import execute_rework_run
 from ai_orchestrator.review_decision import load_review_target_run, record_review_decision
@@ -564,6 +565,44 @@ def build_doctor_parser() -> argparse.ArgumentParser:
         "--strict",
         action="store_true",
         help="Treat warnings as nonzero exit status.",
+    )
+    return parser
+
+
+def build_prepare_review_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="ai-orchestrator prepare-review",
+        description="Prepare reviewer prompt packets for one run without running any reviewer agents.",
+    )
+    parser.add_argument("run_id", help="Existing run id to prepare reviewer prompt packets for.")
+    parser.add_argument("--runs-dir", default=".runs", help="Directory containing run state and artifacts.")
+    profile_group = parser.add_mutually_exclusive_group(required=True)
+    profile_group.add_argument(
+        "--profile",
+        action="append",
+        default=None,
+        help="Reviewer profile id to prepare. Repeat to generate multiple prompt packets.",
+    )
+    profile_group.add_argument(
+        "--all-profiles",
+        action="store_true",
+        help="Prepare prompt packets for all built-in profiles except deterministic.",
+    )
+    parser.add_argument(
+        "--output-dir",
+        default=None,
+        help="Optional output directory. Defaults to .runs/<run_id>/reviewer_prompts.",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite selected prompt files if they already exist.",
+    )
+    parser.add_argument(
+        "--format",
+        choices=["text", "json"],
+        default="text",
+        help="Output format. Defaults to text.",
     )
     return parser
 
@@ -1135,6 +1174,63 @@ def doctor_main(argv: list[str] | None = None) -> int:
     return result.exit_code
 
 
+def prepare_review_main(argv: list[str] | None = None) -> int:
+    parser = build_prepare_review_parser()
+    args = parser.parse_args(argv)
+    try:
+        result = prepare_review_prompts(
+            run_id=args.run_id,
+            runs_dir=args.runs_dir,
+            profile_ids=args.profile,
+            all_profiles=args.all_profiles,
+            output_dir=args.output_dir,
+            force=args.force,
+        )
+    except Exception as exc:  # noqa: BLE001 - CLI should print deterministic error text.
+        if args.format == "json":
+            print(
+                json.dumps(
+                    {
+                        "run_id": args.run_id,
+                        "status": "failed",
+                        "error": str(exc),
+                    },
+                    indent=2,
+                    ensure_ascii=False,
+                )
+            )
+        else:
+            print(f"run_id={args.run_id}")
+            print("status=failed")
+            print(f"error={exc}")
+        return 1
+
+    payload = {
+        "run_id": result.run_id,
+        "status": "review_prompts_prepared",
+        "profiles": list(result.profiles),
+        "prompts_dir": str(result.prompts_dir),
+        "prompts": [
+            {"profile": prepared.profile, "path": str(prepared.path)}
+            for prepared in result.prompts
+        ],
+        "manifest": str(result.manifest_path),
+        "next_action": "run_external_reviewer_or_record_findings",
+    }
+    if args.format == "json":
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+    else:
+        print(f"run_id={payload['run_id']}")
+        print(f"status={payload['status']}")
+        print("profiles=" + ",".join(payload["profiles"]))
+        print(f"prompts_dir={payload['prompts_dir']}")
+        for prompt in payload["prompts"]:
+            print(f"prompt={prompt['profile']}:{prompt['path']}")
+        print(f"manifest={payload['manifest']}")
+        print(f"next_action={payload['next_action']}")
+    return 0
+
+
 def list_review_profiles_main(argv: list[str] | None = None) -> int:
     parser = build_list_review_profiles_parser()
     args = parser.parse_args(argv)
@@ -1167,6 +1263,8 @@ def show_review_profile_main(argv: list[str] | None = None) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
+    if args and args[0] == "prepare-review":
+        return prepare_review_main(args[1:])
     if args and args[0] == "show-review-profile":
         return show_review_profile_main(args[1:])
     if args and args[0] == "list-review-profiles":

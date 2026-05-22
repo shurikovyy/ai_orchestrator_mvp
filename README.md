@@ -941,6 +941,56 @@ python -m ai_orchestrator.cli show-review-profile qa
 python -m ai_orchestrator.cli show-review-profile security --format json
 ```
 
+### Preparing reviewer prompt packets
+
+`prepare-review` creates reviewer prompt packets for future external, human, or LLM reviewers, but it does not run those reviewers. It only assembles role contract information plus run artifacts into a markdown prompt packet.
+
+Examples:
+
+```bash
+python -m ai_orchestrator.cli prepare-review run_20260522_120000_abcd12 \
+  --runs-dir .runs \
+  --profile qa
+```
+
+```bash
+python -m ai_orchestrator.cli prepare-review run_20260522_120000_abcd12 \
+  --runs-dir .runs \
+  --profile qa \
+  --profile architecture \
+  --profile security
+```
+
+```bash
+python -m ai_orchestrator.cli prepare-review run_20260522_120000_abcd12 \
+  --runs-dir .runs \
+  --all-profiles
+```
+
+Behavior:
+
+- `prepare-review` writes reviewer prompt artifacts under `.runs/<run_id>/reviewer_prompts/`;
+- it creates prompt packets only;
+- it does not run any reviewer agent;
+- it does not create `REVIEW_FINDINGS.json`;
+- it does not approve or reject the run;
+- it does not modify the target repo.
+
+Workflow:
+
+1. `prepare-review` creates the prompt packet.
+2. An external reviewer or future reviewer agent reads that prompt.
+3. The reviewer produces findings JSON compatible with `ReviewFindingsReport`.
+4. The user records the findings:
+
+```bash
+python -m ai_orchestrator.cli record-findings run_20260522_120000_abcd12 \
+  --runs-dir .runs \
+  --findings-file reviewer_findings.json
+```
+
+Reviewers produce findings only. Human review and apply/commit gates remain separate.
+
 ### Findings to rework feedback
 
 `run-review-checks` and `record-findings` create structured findings, but they do not reject a run by themselves. `findings-feedback` turns open findings into concrete markdown feedback that can be reused for a rejected human review and then by `rework-run`.
