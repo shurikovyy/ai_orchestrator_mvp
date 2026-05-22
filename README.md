@@ -1895,3 +1895,80 @@ next task
 ## accept-run idempotent disposable note
 
 For disposable toy workspaces using `--init-target-git`, `accept-run` can return `accept_status=accepted_noop` when the target already matches the accepted workspace contents. Normal existing git repositories still reject empty accepts with `accept-run found no target changes to commit`.
+
+## Task Draft Intake
+
+Task intake now starts with a deterministic scaffold instead of writing directly to `tasks.yaml`.
+
+Flow:
+
+```text
+raw_request.md
+-> draft-task-scaffold
+-> .task_drafts/<draft_id>/
+-> task_draft.yaml
+-> codex_prompt.md
+-> task_review.md
+-> later validation / human review / promotion
+```
+
+`draft-task-scaffold` is intentionally safe:
+
+- it does not run Codex
+- it does not modify `tasks.yaml`
+- it does not create pipeline artifacts
+- it does not apply or commit changes
+- generated `target_task.enabled` stays `false`
+
+Local task draft workspaces live under:
+
+```text
+.task_drafts/
+```
+
+This directory is ignored by git and is meant for local draft authoring only.
+
+Create a deterministic scaffold from a raw request:
+
+```bash
+python -m ai_orchestrator.cli draft-task-scaffold \
+  --request raw_request.md
+```
+
+Optional controls:
+
+```bash
+python -m ai_orchestrator.cli draft-task-scaffold \
+  --request raw_request.md \
+  --title "Document operator quickstart task" \
+  --task-id operator-quickstart-draft \
+  --risk-level medium \
+  --prompt-language ru \
+  --format json
+```
+
+Generated artifacts:
+
+```text
+.task_drafts/<draft_id>/
+├── raw_request.md
+├── task_draft.yaml
+├── codex_prompt.md
+├── task_review.md
+└── MANIFEST.json
+```
+
+Notes:
+
+- `raw_request.md` is copied as-is into the draft directory.
+- `task_draft.yaml` contains a safe placeholder contract with non-empty guardrails.
+- `codex_prompt.md` is a future draft-improvement prompt, not an execution prompt.
+- `task_review.md` is a human checklist before any later validation or promotion step.
+- `MANIFEST.json` records the generated artifact paths.
+
+The scaffold preserves these constraints by default:
+
+- findings only come later; this stage does not create review findings
+- no promotion to `tasks.yaml`
+- no weakening of validation, review, apply, or safety gates
+- no automatic apply/accept/commit behavior

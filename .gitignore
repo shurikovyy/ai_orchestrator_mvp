@@ -5,6 +5,7 @@ __pycache__/
 src/*.egg-info/
 *.egg-info/
 .tmp_tests/
+.task_drafts/
 
 # Runtime artifacts
 .runs/

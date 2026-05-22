@@ -28,6 +28,7 @@ from ai_orchestrator.review_profiles import (
 from ai_orchestrator.risk_classification import classify_run_risk
 from ai_orchestrator.reviewer_prompts import prepare_review_prompts
 from ai_orchestrator.run_status import build_run_status_summary, format_run_status_json, format_run_status_text
+from ai_orchestrator.task_drafts import create_task_draft_scaffold
 from ai_orchestrator.rework import execute_rework_run
 from ai_orchestrator.review_decision import load_review_target_run, record_review_decision
 from ai_orchestrator.schemas import RunState, TaskSpec
@@ -659,6 +660,51 @@ def build_show_review_profile_parser() -> argparse.ArgumentParser:
         description="Show one built-in reviewer profile contract without executing any review logic.",
     )
     parser.add_argument("profile_id", help="Review profile id to inspect, for example qa or security.")
+    parser.add_argument(
+        "--format",
+        choices=["text", "json"],
+        default="text",
+        help="Output format. Defaults to text.",
+    )
+    return parser
+
+
+def build_draft_task_scaffold_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="ai-orchestrator draft-task-scaffold",
+        description="Create a deterministic task draft scaffold from a raw natural-language request without modifying tasks.yaml.",
+    )
+    parser.add_argument(
+        "--request",
+        required=True,
+        help="Path to a markdown/text file containing the raw task request.",
+    )
+    parser.add_argument(
+        "--output-dir",
+        default=".task_drafts",
+        help="Directory where draft folders will be created. Defaults to .task_drafts.",
+    )
+    parser.add_argument(
+        "--task-id",
+        default=None,
+        help="Optional explicit target task id for the draft. If omitted, derive a safe id from the title or draft_id.",
+    )
+    parser.add_argument(
+        "--title",
+        default=None,
+        help="Optional explicit draft title. If omitted, derive it from the first non-empty request line.",
+    )
+    parser.add_argument(
+        "--risk-level",
+        choices=["low", "medium", "high", "critical", "unknown"],
+        default="unknown",
+        help="Initial deterministic risk level placeholder. Defaults to unknown.",
+    )
+    parser.add_argument(
+        "--prompt-language",
+        default="ru",
+        help="Language marker for generated prompt artifacts. Defaults to ru.",
+    )
     parser.add_argument(
         "--format",
         choices=["text", "json"],
@@ -1356,8 +1402,63 @@ def show_review_profile_main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def draft_task_scaffold_main(argv: list[str] | None = None) -> int:
+    parser = build_draft_task_scaffold_parser()
+    args = parser.parse_args(argv)
+    try:
+        result = create_task_draft_scaffold(
+            request_path=args.request,
+            output_dir=args.output_dir,
+            task_id=args.task_id,
+            title=args.title,
+            risk_level=args.risk_level,
+            prompt_language=args.prompt_language,
+        )
+    except Exception as exc:  # noqa: BLE001 - CLI should print deterministic error text.
+        if args.format == "json":
+            print(
+                json.dumps(
+                    {
+                        "status": "failed",
+                        "error": str(exc),
+                    },
+                    indent=2,
+                    ensure_ascii=False,
+                )
+            )
+        else:
+            print("status=failed")
+            print(f"error={exc}")
+        return 1
+
+    payload = {
+        "draft_id": result.draft.draft_id,
+        "status": "draft_created",
+        "draft_dir": str(result.draft_dir),
+        "task_draft": str(result.task_draft_path),
+        "codex_prompt": str(result.codex_prompt_path),
+        "task_review": str(result.task_review_path),
+        "manifest": str(result.manifest_path),
+        "next_action": "validate_task_draft",
+    }
+    if args.format == "json":
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+    else:
+        print(f"draft_id={payload['draft_id']}")
+        print(f"status={payload['status']}")
+        print(f"draft_dir={payload['draft_dir']}")
+        print(f"task_draft={payload['task_draft']}")
+        print(f"codex_prompt={payload['codex_prompt']}")
+        print(f"task_review={payload['task_review']}")
+        print(f"manifest={payload['manifest']}")
+        print(f"next_action={payload['next_action']}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
+    if args and args[0] == "draft-task-scaffold":
+        return draft_task_scaffold_main(args[1:])
     if args and args[0] == "prepare-review":
         return prepare_review_main(args[1:])
     if args and args[0] == "show-review-profile":
