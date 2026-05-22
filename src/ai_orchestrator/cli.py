@@ -28,7 +28,7 @@ from ai_orchestrator.review_profiles import (
 from ai_orchestrator.risk_classification import classify_run_risk
 from ai_orchestrator.reviewer_prompts import prepare_review_prompts
 from ai_orchestrator.run_status import build_run_status_summary, format_run_status_json, format_run_status_text
-from ai_orchestrator.task_drafts import create_task_draft_scaffold
+from ai_orchestrator.task_drafts import create_task_draft_scaffold, revise_task_draft
 from ai_orchestrator.task_draft_validation import validate_task_draft
 from ai_orchestrator.rework import execute_rework_run
 from ai_orchestrator.review_decision import load_review_target_run, record_review_decision
@@ -736,6 +736,127 @@ def build_validate_task_draft_parser() -> argparse.ArgumentParser:
         "--force",
         action="store_true",
         help="Overwrite existing task_draft_validator_report artifacts if they already exist.",
+    )
+    return parser
+
+
+def build_revise_task_draft_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="ai-orchestrator revise-task-draft",
+        description="Revise an existing task draft deterministically without calling Codex, modifying tasks.yaml, or creating .runs.",
+    )
+    parser.add_argument("draft_id", help="Existing draft id to revise.")
+    parser.add_argument(
+        "--drafts-dir",
+        default=".task_drafts",
+        help="Directory containing draft folders. Defaults to .task_drafts.",
+    )
+    parser.add_argument("--title", default=None, help="Optional replacement title. Also updates target_task.title.")
+    parser.add_argument("--objective", default=None, help="Optional replacement objective.")
+    parser.add_argument("--context", default=None, help="Optional replacement context.")
+    parser.add_argument(
+        "--risk-level",
+        choices=["low", "medium", "high", "critical", "unknown"],
+        default=None,
+        help="Optional replacement risk level.",
+    )
+    parser.add_argument("--task-id", default=None, help="Optional replacement target_task.id.")
+    parser.add_argument("--commit-message", default=None, help="Optional replacement target_task.commit_message.")
+    parser.add_argument("--allow-file", action="append", default=[], help="Add one path to files_allowed. Repeatable.")
+    parser.add_argument(
+        "--clear-files-allowed",
+        action="store_true",
+        help="Clear files_allowed before any --allow-file additions are applied.",
+    )
+    parser.add_argument("--forbid-file", action="append", default=[], help="Add one path to files_forbidden. Repeatable.")
+    parser.add_argument(
+        "--remove-forbidden-file",
+        action="append",
+        default=[],
+        help="Remove one exact path from files_forbidden. Repeatable.",
+    )
+    parser.add_argument("--add-non-goal", action="append", default=[], help="Add one non-goal. Repeatable.")
+    parser.add_argument(
+        "--remove-non-goal",
+        action="append",
+        default=[],
+        help="Remove one exact non-goal string. Repeatable.",
+    )
+    parser.add_argument("--add-invariant", action="append", default=[], help="Add one invariant. Repeatable.")
+    parser.add_argument("--add-assumption", action="append", default=[], help="Add one assumption. Repeatable.")
+    parser.add_argument(
+        "--clear-assumptions",
+        action="store_true",
+        help="Clear assumptions before any --add-assumption additions are applied.",
+    )
+    parser.add_argument("--add-open-question", action="append", default=[], help="Add one open question. Repeatable.")
+    parser.add_argument(
+        "--resolve-open-question",
+        action="append",
+        default=[],
+        help="Remove one exact open question string. Repeatable.",
+    )
+    parser.add_argument(
+        "--clear-open-questions",
+        action="store_true",
+        help="Clear open_questions before any --add-open-question additions are applied.",
+    )
+    parser.add_argument("--add-test-required", action="append", default=[], help="Add one tests_required item. Repeatable.")
+    parser.add_argument("--add-command", action="append", default=[], help="Add one commands_to_run entry. Repeatable.")
+    parser.add_argument(
+        "--remove-command",
+        action="append",
+        default=[],
+        help="Remove one exact commands_to_run entry. Repeatable.",
+    )
+    parser.add_argument(
+        "--add-acceptance",
+        action="append",
+        default=[],
+        help="Add one acceptance_criteria item. Repeatable.",
+    )
+    parser.add_argument(
+        "--add-validation-requirement",
+        action="append",
+        default=[],
+        help="Add one validation_requirements item. Repeatable.",
+    )
+    parser.add_argument(
+        "--add-rollback-note",
+        action="append",
+        default=[],
+        help="Add one rollback_notes item. Repeatable.",
+    )
+    parser.add_argument(
+        "--require-profile",
+        action="append",
+        default=[],
+        help="Add one required review profile id. Repeatable.",
+    )
+    parser.add_argument(
+        "--remove-required-profile",
+        action="append",
+        default=[],
+        help="Remove one exact required review profile id. Repeatable.",
+    )
+    parser.add_argument(
+        "--optional-profile",
+        action="append",
+        default=[],
+        help="Add one optional review profile id. Repeatable.",
+    )
+    parser.add_argument(
+        "--remove-optional-profile",
+        action="append",
+        default=[],
+        help="Remove one exact optional review profile id. Repeatable.",
+    )
+    parser.add_argument("--prompt-language", default=None, help="Optional replacement prompt language marker.")
+    parser.add_argument(
+        "--format",
+        choices=["text", "json"],
+        default="text",
+        help="Output format. Defaults to text.",
     )
     return parser
 
@@ -1537,8 +1658,93 @@ def validate_task_draft_main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def revise_task_draft_main(argv: list[str] | None = None) -> int:
+    parser = build_revise_task_draft_parser()
+    args = parser.parse_args(argv)
+    try:
+        result = revise_task_draft(
+            draft_id=args.draft_id,
+            drafts_dir=args.drafts_dir,
+            title=args.title,
+            objective=args.objective,
+            context=args.context,
+            risk_level=args.risk_level,
+            task_id=args.task_id,
+            commit_message=args.commit_message,
+            allow_files=args.allow_file,
+            clear_files_allowed=args.clear_files_allowed,
+            forbid_files=args.forbid_file,
+            remove_forbidden_files=args.remove_forbidden_file,
+            add_non_goals=args.add_non_goal,
+            remove_non_goals=args.remove_non_goal,
+            add_invariants=args.add_invariant,
+            add_assumptions=args.add_assumption,
+            clear_assumptions=args.clear_assumptions,
+            add_open_questions=args.add_open_question,
+            resolve_open_questions=args.resolve_open_question,
+            clear_open_questions=args.clear_open_questions,
+            add_tests_required=args.add_test_required,
+            add_commands=args.add_command,
+            remove_commands=args.remove_command,
+            add_acceptance_criteria=args.add_acceptance,
+            add_validation_requirements=args.add_validation_requirement,
+            add_rollback_notes=args.add_rollback_note,
+            require_profiles=args.require_profile,
+            remove_required_profiles=args.remove_required_profile,
+            optional_profiles=args.optional_profile,
+            remove_optional_profiles=args.remove_optional_profile,
+            prompt_language=args.prompt_language,
+        )
+    except Exception as exc:  # noqa: BLE001 - CLI should print deterministic error text.
+        if args.format == "json":
+            print(
+                json.dumps(
+                    {
+                        "draft_id": args.draft_id,
+                        "status": "failed",
+                        "error": str(exc),
+                    },
+                    indent=2,
+                    ensure_ascii=False,
+                )
+            )
+        else:
+            print(f"draft_id={args.draft_id}")
+            print("status=failed")
+            print(f"error={exc}")
+        return 1
+
+    payload = {
+        "draft_id": result.draft.draft_id,
+        "status": "draft_revised",
+        "task_draft": str(result.task_draft_path),
+        "codex_prompt": str(result.codex_prompt_path),
+        "task_review": str(result.task_review_path),
+        "manifest": str(result.manifest_path),
+        "revision_count": result.revision_count,
+        "validation_status": result.validation_status,
+        "last_revision_summary": result.revision_summary,
+        "next_action": "validate_task_draft",
+    }
+    if args.format == "json":
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+    else:
+        print(f"draft_id={payload['draft_id']}")
+        print(f"status={payload['status']}")
+        print(f"task_draft={payload['task_draft']}")
+        print(f"codex_prompt={payload['codex_prompt']}")
+        print(f"task_review={payload['task_review']}")
+        print(f"manifest={payload['manifest']}")
+        print(f"revision_count={payload['revision_count']}")
+        print(f"validation_status={payload['validation_status']}")
+        print(f"next_action={payload['next_action']}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
+    if args and args[0] == "revise-task-draft":
+        return revise_task_draft_main(args[1:])
     if args and args[0] == "validate-task-draft":
         return validate_task_draft_main(args[1:])
     if args and args[0] == "draft-task-scaffold":

@@ -2048,3 +2048,60 @@ Important rules for promotion readiness:
 - `files_allowed` should be narrowed before promotion
 - dangerous commands are rejected
 - `task_draft_validator_report.json` must show `valid_for_promotion=true` before any future promotion step
+
+### Revising task drafts
+
+`revise-task-draft` is the deterministic edit step between scaffold generation and later validation/promotion.
+
+What it does:
+
+- updates `task_draft.yaml` using only explicit CLI changes
+- regenerates derived artifacts:
+  - `codex_prompt.md`
+  - `task_review.md`
+- updates `MANIFEST.json` with revision metadata
+- marks any previous validation as stale
+
+What it does not do:
+
+- does not run Codex
+- does not validate automatically
+- does not promote the draft to `tasks.yaml`
+- does not create `.runs`
+- does not apply or commit changes
+
+Example:
+
+```bash
+python -m ai_orchestrator.cli revise-task-draft <draft_id> \
+  --risk-level medium \
+  --clear-files-allowed \
+  --allow-file src/ai_orchestrator/cli.py \
+  --allow-file tests/test_example.py \
+  --resolve-open-question "Confirm exact files_allowed before promotion." \
+  --require-profile qa \
+  --require-profile architecture
+```
+
+Then rerun deterministic validation:
+
+```bash
+python -m ai_orchestrator.cli validate-task-draft <draft_id>
+```
+
+Revision notes:
+
+- `revise-task-draft` changes only the draft workspace under `.task_drafts/<draft_id>/`
+- `raw_request.md` is preserved as-is
+- if the draft was validated earlier, the manifest is updated to:
+  - `validation_status=stale`
+  - `valid_for_promotion=false`
+- warnings and errors from `validate-task-draft` remain authoritative
+
+Use revision to close scope gaps such as:
+
+- narrowing `files_allowed`
+- replacing `risk_level=unknown`
+- resolving `open_questions`
+- setting `required_review_profiles`
+- refining commands, acceptance criteria, and rollback notes

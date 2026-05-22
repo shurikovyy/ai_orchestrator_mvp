@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -236,6 +237,10 @@ class TaskDraftManifest(BaseModel):
     validation_status: str | None = None
     valid_for_promotion: bool | None = None
     validated_at: datetime | None = None
+    revised_at: datetime | None = None
+    revision_count: int = 0
+    last_revision_summary: str | None = None
+    validation_stale_reason: str | None = None
 
     @field_validator("request_source", "draft_dir", "raw_request", "task_draft", "codex_prompt", "task_review")
     @classmethod
@@ -245,13 +250,26 @@ class TaskDraftManifest(BaseModel):
             raise ValueError("manifest required field must not be empty")
         return value
 
-    @field_validator("validator_report", "validator_report_md", "validation_status")
+    @field_validator(
+        "validator_report",
+        "validator_report_md",
+        "validation_status",
+        "last_revision_summary",
+        "validation_stale_reason",
+    )
     @classmethod
     def optional_manifest_strings_blank_to_none(cls, value: str | None) -> str | None:
         if value is None:
             return None
         value = value.strip()
         return value or None
+
+    @field_validator("revision_count")
+    @classmethod
+    def revision_count_non_negative(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("revision_count must be non-negative")
+        return value
 
 
 @dataclass(frozen=True)
@@ -263,6 +281,19 @@ class TaskDraftScaffoldResult:
     codex_prompt_path: Path
     task_review_path: Path
     manifest_path: Path
+
+
+@dataclass(frozen=True)
+class TaskDraftRevisionResult:
+    draft: TaskDraft
+    draft_dir: Path
+    task_draft_path: Path
+    codex_prompt_path: Path
+    task_review_path: Path
+    manifest_path: Path
+    revision_count: int
+    validation_status: str
+    revision_summary: str
 
 
 def _build_draft_id() -> str:
@@ -445,6 +476,10 @@ def render_codex_prompt_markdown(draft: TaskDraft, raw_request_text: str) -> str
             "",
             *[f"- {item}" for item in draft.non_goals],
             "",
+            "## Files allowed",
+            "",
+            *([f"- `{item}`" for item in draft.files_allowed] if draft.files_allowed else ["- (not confirmed yet)"]),
+            "",
             "## Files forbidden",
             "",
             *[f"- `{item}`" for item in draft.files_forbidden],
@@ -460,6 +495,18 @@ def render_codex_prompt_markdown(draft: TaskDraft, raw_request_text: str) -> str
             "## Acceptance criteria",
             "",
             *[f"- `{item}`" for item in draft.acceptance_criteria],
+            "",
+            "## Validation requirements",
+            "",
+            *[f"- {item}" for item in draft.validation_requirements],
+            "",
+            "## Rollback notes",
+            "",
+            *[f"- {item}" for item in draft.rollback_notes],
+            "",
+            "## Open questions",
+            "",
+            *([f"- {item}" for item in draft.open_questions] if draft.open_questions else ["- (none)"]),
             "",
             "## Raw request",
             "",
@@ -504,8 +551,10 @@ def render_task_review_markdown(draft: TaskDraft) -> str:
             f"- [ ] Risk level is appropriate: `{draft.risk_level}`",
             f"- [ ] Required reviewer profiles are appropriate: `{required_profiles}`",
             f"- [ ] Optional reviewer profiles are appropriate: `{optional_profiles}`",
+            "- [ ] non_goals still reflect the intended boundaries.",
             "- [ ] tests_required and commands_to_run are sufficient.",
             "- [ ] acceptance_criteria are specific enough for validation.",
+            "- [ ] rollback_notes are sufficient if the task must be reverted.",
             "- [ ] target_task.enabled remains false until explicit promotion.",
             "",
             "## Notes",
@@ -513,8 +562,18 @@ def render_task_review_markdown(draft: TaskDraft) -> str:
             f"- Files allowed: `{allowed}`",
             f"- Files forbidden: `{forbidden}`",
             f"- Risk level: `{draft.risk_level}`",
+            "- Non-goals:",
+            *([f"  - {item}" for item in draft.non_goals] if draft.non_goals else ["  - (none)"]),
+            "- Tests required:",
+            *([f"  - {item}" for item in draft.tests_required] if draft.tests_required else ["  - (none)"]),
+            "- Commands to run:",
+            *([f"  - `{item}`" for item in draft.commands_to_run] if draft.commands_to_run else ["  - (none)"]),
+            "- Acceptance criteria:",
+            *([f"  - `{item}`" for item in draft.acceptance_criteria] if draft.acceptance_criteria else ["  - (none)"]),
             "- Open questions:",
             *([f"  - {item}" for item in draft.open_questions] if draft.open_questions else ["  - (none)"]),
+            "- Rollback notes:",
+            *([f"  - {item}" for item in draft.rollback_notes] if draft.rollback_notes else ["  - (none)"]),
             "- This scaffold is deterministic and intentionally conservative.",
             "- Promotion to tasks.yaml is a later step and is out of scope for this stage.",
             "- If files_allowed or risk assumptions change, update task_draft.yaml before any validation/promotion step.",
@@ -541,6 +600,269 @@ def _manifest_payload(
         task_draft=str(task_draft_path.resolve()),
         codex_prompt=str(codex_prompt_path.resolve()),
         task_review=str(task_review_path.resolve()),
+    )
+
+
+def _write_task_draft_yaml(path: Path, draft: TaskDraft) -> None:
+    yaml = _load_yaml_module()
+    with path.open("w", encoding="utf-8") as handle:
+        yaml.safe_dump(
+            draft.model_dump(mode="python"),
+            handle,
+            allow_unicode=True,
+            sort_keys=False,
+            default_flow_style=False,
+        )
+
+
+def _write_derived_draft_artifacts(
+    *,
+    draft: TaskDraft,
+    raw_request_text: str,
+    task_draft_path: Path,
+    codex_prompt_path: Path,
+    task_review_path: Path,
+) -> None:
+    _write_task_draft_yaml(task_draft_path, draft)
+    codex_prompt_path.write_text(render_codex_prompt_markdown(draft, raw_request_text), encoding="utf-8")
+    task_review_path.write_text(render_task_review_markdown(draft), encoding="utf-8")
+
+
+def _append_unique(values: list[str], additions: list[str]) -> list[str]:
+    combined = list(values)
+    for candidate in additions:
+        if candidate not in combined:
+            combined.append(candidate)
+    return combined
+
+
+def _remove_exact(values: list[str], removals: list[str]) -> list[str]:
+    if not removals:
+        return list(values)
+    removal_set = {item for item in removals}
+    return [item for item in values if item not in removal_set]
+
+
+def _build_revision_summary(updated_fields: list[str]) -> str:
+    if not updated_fields:
+        return "No explicit fields changed."
+    return "Updated fields: " + ", ".join(updated_fields)
+
+
+def revise_task_draft(
+    *,
+    draft_id: str,
+    drafts_dir: str | Path = ".task_drafts",
+    title: str | None = None,
+    objective: str | None = None,
+    context: str | None = None,
+    risk_level: str | None = None,
+    task_id: str | None = None,
+    commit_message: str | None = None,
+    allow_files: list[str] | None = None,
+    clear_files_allowed: bool = False,
+    forbid_files: list[str] | None = None,
+    remove_forbidden_files: list[str] | None = None,
+    add_non_goals: list[str] | None = None,
+    remove_non_goals: list[str] | None = None,
+    add_invariants: list[str] | None = None,
+    add_assumptions: list[str] | None = None,
+    clear_assumptions: bool = False,
+    add_open_questions: list[str] | None = None,
+    resolve_open_questions: list[str] | None = None,
+    clear_open_questions: bool = False,
+    add_tests_required: list[str] | None = None,
+    add_commands: list[str] | None = None,
+    remove_commands: list[str] | None = None,
+    add_acceptance_criteria: list[str] | None = None,
+    add_validation_requirements: list[str] | None = None,
+    add_rollback_notes: list[str] | None = None,
+    require_profiles: list[str] | None = None,
+    remove_required_profiles: list[str] | None = None,
+    optional_profiles: list[str] | None = None,
+    remove_optional_profiles: list[str] | None = None,
+    prompt_language: str | None = None,
+) -> TaskDraftRevisionResult:
+    draft_dir = Path(drafts_dir) / draft_id
+    if not draft_dir.exists():
+        raise FileNotFoundError(f"task draft not found: {draft_id}")
+
+    manifest_path = draft_dir / "MANIFEST.json"
+    if not manifest_path.exists():
+        raise FileNotFoundError("required draft artifact missing: MANIFEST.json")
+    manifest = load_task_draft_manifest(manifest_path)
+
+    raw_request_path = draft_dir / "raw_request.md"
+    if not raw_request_path.exists():
+        raise FileNotFoundError("required draft artifact missing: raw_request.md")
+    task_draft_path = draft_dir / "task_draft.yaml"
+    if not task_draft_path.exists():
+        raise FileNotFoundError("required draft artifact missing: task_draft.yaml")
+
+    codex_prompt_path = draft_dir / "codex_prompt.md"
+    task_review_path = draft_dir / "task_review.md"
+    raw_request_text = raw_request_path.read_text(encoding="utf-8")
+    draft = load_task_draft(task_draft_path)
+    payload = deepcopy(draft.model_dump(mode="python"))
+    updated_fields: list[str] = []
+
+    if title is not None:
+        payload["title"] = title
+        payload["target_task"]["title"] = title
+        updated_fields.append("title")
+    if objective is not None:
+        payload["objective"] = objective
+        updated_fields.append("objective")
+    if context is not None:
+        payload["context"] = context
+        updated_fields.append("context")
+    if risk_level is not None:
+        payload["risk_level"] = risk_level
+        updated_fields.append("risk_level")
+    if task_id is not None:
+        payload["target_task"]["id"] = task_id
+        updated_fields.append("target_task.id")
+    if commit_message is not None:
+        payload["target_task"]["commit_message"] = commit_message
+        updated_fields.append("target_task.commit_message")
+    if prompt_language is not None:
+        payload["prompt_language"] = prompt_language
+        updated_fields.append("prompt_language")
+
+    files_allowed = [] if clear_files_allowed else list(payload["files_allowed"])
+    if clear_files_allowed or allow_files:
+        files_allowed = _append_unique(files_allowed, allow_files or [])
+        payload["files_allowed"] = files_allowed
+        updated_fields.append("files_allowed")
+
+    files_forbidden = list(payload["files_forbidden"])
+    if remove_forbidden_files:
+        files_forbidden = _remove_exact(files_forbidden, remove_forbidden_files)
+    if forbid_files:
+        files_forbidden = _append_unique(files_forbidden, forbid_files)
+    if remove_forbidden_files or forbid_files:
+        payload["files_forbidden"] = files_forbidden
+        updated_fields.append("files_forbidden")
+
+    non_goals = list(payload["non_goals"])
+    if remove_non_goals:
+        non_goals = _remove_exact(non_goals, remove_non_goals)
+    if add_non_goals:
+        non_goals = _append_unique(non_goals, add_non_goals)
+    if remove_non_goals or add_non_goals:
+        payload["non_goals"] = non_goals
+        updated_fields.append("non_goals")
+
+    if add_invariants:
+        payload["invariants"] = _append_unique(list(payload["invariants"]), add_invariants)
+        updated_fields.append("invariants")
+
+    assumptions = [] if clear_assumptions else list(payload["assumptions"])
+    if clear_assumptions or add_assumptions:
+        assumptions = _append_unique(assumptions, add_assumptions or [])
+        payload["assumptions"] = assumptions
+        updated_fields.append("assumptions")
+
+    open_questions = [] if clear_open_questions else list(payload["open_questions"])
+    if resolve_open_questions:
+        open_questions = _remove_exact(open_questions, resolve_open_questions)
+    if add_open_questions:
+        open_questions = _append_unique(open_questions, add_open_questions)
+    if clear_open_questions or resolve_open_questions or add_open_questions:
+        payload["open_questions"] = open_questions
+        updated_fields.append("open_questions")
+
+    if add_tests_required:
+        payload["tests_required"] = _append_unique(list(payload["tests_required"]), add_tests_required)
+        updated_fields.append("tests_required")
+
+    commands_to_run = list(payload["commands_to_run"])
+    if remove_commands:
+        commands_to_run = _remove_exact(commands_to_run, remove_commands)
+    if add_commands:
+        commands_to_run = _append_unique(commands_to_run, add_commands)
+    if remove_commands or add_commands:
+        payload["commands_to_run"] = commands_to_run
+        updated_fields.append("commands_to_run")
+
+    if add_acceptance_criteria:
+        payload["acceptance_criteria"] = _append_unique(list(payload["acceptance_criteria"]), add_acceptance_criteria)
+        updated_fields.append("acceptance_criteria")
+
+    if add_validation_requirements:
+        payload["validation_requirements"] = _append_unique(
+            list(payload["validation_requirements"]),
+            add_validation_requirements,
+        )
+        updated_fields.append("validation_requirements")
+
+    if add_rollback_notes:
+        payload["rollback_notes"] = _append_unique(list(payload["rollback_notes"]), add_rollback_notes)
+        updated_fields.append("rollback_notes")
+
+    required_review_profiles = list(payload["required_review_profiles"])
+    if remove_required_profiles:
+        required_review_profiles = _remove_exact(required_review_profiles, remove_required_profiles)
+    if require_profiles:
+        required_review_profiles = _append_unique(required_review_profiles, require_profiles)
+    if remove_required_profiles or require_profiles:
+        payload["required_review_profiles"] = required_review_profiles
+        updated_fields.append("required_review_profiles")
+
+    optional_review_profiles = list(payload["optional_review_profiles"])
+    if remove_optional_profiles:
+        optional_review_profiles = _remove_exact(optional_review_profiles, remove_optional_profiles)
+    if optional_profiles:
+        optional_review_profiles = _append_unique(optional_review_profiles, optional_profiles)
+    if remove_optional_profiles or optional_profiles:
+        payload["optional_review_profiles"] = optional_review_profiles
+        updated_fields.append("optional_review_profiles")
+
+    revised_draft = TaskDraft.model_validate(payload)
+    _write_derived_draft_artifacts(
+        draft=revised_draft,
+        raw_request_text=raw_request_text,
+        task_draft_path=task_draft_path,
+        codex_prompt_path=codex_prompt_path,
+        task_review_path=task_review_path,
+    )
+
+    had_validation = any(
+        value is not None
+        for value in (
+            manifest.validator_report,
+            manifest.validator_report_md,
+            manifest.validation_status,
+            manifest.validated_at,
+        )
+    )
+    new_validation_status = "stale" if had_validation else "not_validated"
+    revision_summary = _build_revision_summary(updated_fields)
+    updated_manifest = manifest.model_copy(
+        update={
+            "task_draft": str(task_draft_path.resolve()),
+            "codex_prompt": str(codex_prompt_path.resolve()),
+            "task_review": str(task_review_path.resolve()),
+            "revised_at": datetime.now(),
+            "revision_count": manifest.revision_count + 1,
+            "last_revision_summary": revision_summary,
+            "validation_status": new_validation_status,
+            "valid_for_promotion": False,
+            "validation_stale_reason": "task draft revised after last validation" if had_validation else None,
+        }
+    )
+    save_task_draft_manifest(manifest_path, updated_manifest)
+
+    return TaskDraftRevisionResult(
+        draft=revised_draft,
+        draft_dir=draft_dir.resolve(),
+        task_draft_path=task_draft_path.resolve(),
+        codex_prompt_path=codex_prompt_path.resolve(),
+        task_review_path=task_review_path.resolve(),
+        manifest_path=manifest_path.resolve(),
+        revision_count=updated_manifest.revision_count,
+        validation_status=new_validation_status,
+        revision_summary=revision_summary,
     )
 
 
@@ -591,17 +913,13 @@ def create_task_draft_scaffold(
 
     raw_request_copy_path.write_text(raw_request_text, encoding="utf-8")
 
-    yaml = _load_yaml_module()
-    with task_draft_path.open("w", encoding="utf-8") as handle:
-        yaml.safe_dump(
-            draft.model_dump(mode="python"),
-            handle,
-            allow_unicode=True,
-            sort_keys=False,
-            default_flow_style=False,
-        )
-    codex_prompt_path.write_text(render_codex_prompt_markdown(draft, raw_request_text), encoding="utf-8")
-    task_review_path.write_text(render_task_review_markdown(draft), encoding="utf-8")
+    _write_derived_draft_artifacts(
+        draft=draft,
+        raw_request_text=raw_request_text,
+        task_draft_path=task_draft_path,
+        codex_prompt_path=codex_prompt_path,
+        task_review_path=task_review_path,
+    )
     manifest = _manifest_payload(
         draft_id=draft.draft_id,
         request_source=request_source,
