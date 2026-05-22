@@ -162,6 +162,7 @@ class ReviewerPromptsTests(unittest.TestCase):
         self.assertIn("## Focus areas", prompt_text)
         self.assertIn("## Finding categories", prompt_text)
         self.assertIn("## Non-goals", prompt_text)
+        self.assertIn("# QA Reviewer Prompt Template", prompt_text)
 
     def test_prompt_contains_task_description(self) -> None:
         with temporary_test_dir() as tmp:
@@ -201,6 +202,16 @@ class ReviewerPromptsTests(unittest.TestCase):
         self.assertIn('"schema_version": "1.0"', prompt_text)
         self.assertIn('"overall_decision": "pass | needs_rework | blocked"', prompt_text)
         self.assertIn('"reviewer": "qa"', prompt_text)
+
+    def test_prepare_review_prompt_contains_template_text_from_markdown_file(self) -> None:
+        with temporary_test_dir() as tmp:
+            run_dir, runs_dir = make_prompt_run_fixture(tmp)
+            with redirect_stdout(StringIO()):
+                self.assertEqual(prepare_review_main([run_dir.name, "--runs-dir", str(runs_dir), "--profile", "security"]), 0)
+            prompt_text = (run_dir / "reviewer_prompts" / "security_review_prompt.md").read_text(encoding="utf-8")
+
+        self.assertIn("# Security Reviewer Prompt Template", prompt_text)
+        self.assertIn("Do not approve or reject the run.", prompt_text)
 
     def test_manifest_is_written(self) -> None:
         with temporary_test_dir() as tmp:

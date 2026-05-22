@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from importlib.resources import files
 import json
 from typing import Literal, get_args
 
@@ -9,6 +10,7 @@ from ai_orchestrator.schemas import ReviewFinding
 
 _CATEGORY_FIELD = ReviewFinding.model_fields["category"]
 VALID_REVIEW_FINDING_CATEGORIES = tuple(get_args(_CATEGORY_FIELD.annotation))
+_REVIEWER_TEMPLATES_ROOT = files("ai_orchestrator").joinpath("prompts", "reviewers")
 
 
 class ReviewProfile(BaseModel):
@@ -60,6 +62,16 @@ def _profile(**kwargs: object) -> ReviewProfile:
     return ReviewProfile.model_validate(kwargs)
 
 
+def _load_prompt_template(profile_id: str) -> str:
+    path = _REVIEWER_TEMPLATES_ROOT.joinpath(f"{profile_id}.md")
+    if not path.is_file():
+        raise FileNotFoundError(f"reviewer prompt template file is missing: {path}")
+    text = path.read_text(encoding="utf-8")
+    if not text.strip():
+        raise ValueError(f"reviewer prompt template file is empty: {path}")
+    return text
+
+
 def _build_builtin_registry() -> tuple[ReviewProfile, ...]:
     profiles = (
         _profile(
@@ -95,10 +107,7 @@ def _build_builtin_registry() -> tuple[ReviewProfile, ...]:
                 "Produce ReviewFinding-compatible findings only. The reviewer must emit evidence-backed findings that can be "
                 "serialized into REVIEW_FINDINGS.json and REVIEW_FINDINGS.md."
             ),
-            prompt_template=(
-                "Inspect run artifacts and output ReviewFinding-compatible JSON findings only. Use evidence from changed_files, "
-                "EXECUTION_REPORT.json, and deterministic policy rules."
-            ),
+            prompt_template=_load_prompt_template("deterministic"),
         ),
         _profile(
             id="qa",
@@ -132,10 +141,7 @@ def _build_builtin_registry() -> tuple[ReviewProfile, ...]:
                 "Produce ReviewFinding-compatible findings with concrete QA evidence and required_action guidance suitable for "
                 "REVIEW_FINDINGS.json."
             ),
-            prompt_template=(
-                "Review the run for QA adequacy only and emit ReviewFinding-compatible JSON. Focus on regression coverage, edge "
-                "cases, flaky fixtures, and proof of behavior."
-            ),
+            prompt_template=_load_prompt_template("qa"),
         ),
         _profile(
             id="architecture",
@@ -170,10 +176,7 @@ def _build_builtin_registry() -> tuple[ReviewProfile, ...]:
                 "Produce ReviewFinding-compatible findings that explain the architecture concern, the evidence, and the required "
                 "rework direction."
             ),
-            prompt_template=(
-                "Review architecture and maintainability concerns only. Output ReviewFinding-compatible JSON with evidence for "
-                "module boundaries, coupling, compatibility, and duplicated logic."
-            ),
+            prompt_template=_load_prompt_template("architecture"),
         ),
         _profile(
             id="ops",
@@ -207,10 +210,7 @@ def _build_builtin_registry() -> tuple[ReviewProfile, ...]:
             output_contract=(
                 "Produce ReviewFinding-compatible findings for operational safety and reproducibility issues only."
             ),
-            prompt_template=(
-                "Inspect operational safety, reproducibility, and filesystem handling. Emit ReviewFinding-compatible JSON findings "
-                "with evidence tied to commands, paths, or platform constraints."
-            ),
+            prompt_template=_load_prompt_template("ops"),
         ),
         _profile(
             id="security",
@@ -245,10 +245,7 @@ def _build_builtin_registry() -> tuple[ReviewProfile, ...]:
                 "Produce ReviewFinding-compatible findings focused on security and gate integrity, with explicit evidence and "
                 "required mitigations."
             ),
-            prompt_template=(
-                "Review the run for security and gate-integrity risks only. Output ReviewFinding-compatible JSON findings with "
-                "evidence about approval gates, path safety, secrets, and command execution."
-            ),
+            prompt_template=_load_prompt_template("security"),
         ),
         _profile(
             id="business",
@@ -282,10 +279,7 @@ def _build_builtin_registry() -> tuple[ReviewProfile, ...]:
             output_contract=(
                 "Produce ReviewFinding-compatible findings that tie product or operator problems to concrete evidence from the run."
             ),
-            prompt_template=(
-                "Review the run for operator and business fit only. Output ReviewFinding-compatible JSON findings with evidence "
-                "about problem fit, workflow clarity, and missing user value."
-            ),
+            prompt_template=_load_prompt_template("business"),
         ),
         _profile(
             id="data",
@@ -320,10 +314,7 @@ def _build_builtin_registry() -> tuple[ReviewProfile, ...]:
                 "Produce ReviewFinding-compatible findings for data correctness and invariants, with explicit evidence and "
                 "required actions."
             ),
-            prompt_template=(
-                "Review data correctness, idempotency, timestamps, keys, and invariants only. Output ReviewFinding-compatible "
-                "JSON findings with evidence and required fixes."
-            ),
+            prompt_template=_load_prompt_template("data"),
         ),
     )
 

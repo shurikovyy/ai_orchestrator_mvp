@@ -21,6 +21,8 @@ from ai_orchestrator.review_profiles import (
 )
 from ai_orchestrator.schemas import ReviewFinding
 
+REVIEWER_TEMPLATES_DIR = Path(__file__).resolve().parents[1] / "src" / "ai_orchestrator" / "prompts" / "reviewers"
+
 
 def output_value(output: str, key: str) -> str:
     prefix = f"{key}="
@@ -60,6 +62,31 @@ class ReviewProfilesTests(unittest.TestCase):
             if profile.id == "deterministic":
                 continue
             self.assertIn(profile.reviewer_type, {"llm_future", "human"})
+
+    def test_all_builtin_profiles_have_non_empty_prompt_template(self) -> None:
+        for profile in BUILTIN_REVIEW_PROFILES:
+            self.assertTrue(profile.prompt_template.strip())
+
+    def test_qa_prompt_template_contains_recognizable_marker(self) -> None:
+        qa_profile = next(profile for profile in BUILTIN_REVIEW_PROFILES if profile.id == "qa")
+        self.assertIn("QA Reviewer", qa_profile.prompt_template)
+
+    def test_security_prompt_template_contains_recognizable_marker(self) -> None:
+        security_profile = next(profile for profile in BUILTIN_REVIEW_PROFILES if profile.id == "security")
+        self.assertIn("Security", security_profile.prompt_template)
+
+    def test_reviewer_prompt_template_files_exist_on_disk(self) -> None:
+        expected = {
+            "deterministic.md",
+            "qa.md",
+            "architecture.md",
+            "ops.md",
+            "security.md",
+            "business.md",
+            "data.md",
+        }
+        actual = {path.name for path in REVIEWER_TEMPLATES_DIR.glob("*.md")}
+        self.assertTrue(expected.issubset(actual))
 
     def test_list_review_profiles_text_output_includes_profiles_total_and_known_ids(self) -> None:
         stdout = StringIO()
@@ -105,6 +132,7 @@ class ReviewProfilesTests(unittest.TestCase):
         self.assertIn("focus_areas", payload)
         self.assertIn("output_contract", payload)
         self.assertIn("prompt_template", payload)
+        self.assertIn("Security Reviewer Prompt Template", payload["prompt_template"])
 
     def test_show_review_profile_missing_id_returns_nonzero_and_clear_error(self) -> None:
         stdout = StringIO()
@@ -131,4 +159,3 @@ class ReviewProfilesTests(unittest.TestCase):
         output = format_review_profiles_text(list_review_profiles())
         self.assertTrue(output.startswith("profiles_total=7"))
         self.assertIn('title="QA Reviewer"', output)
-

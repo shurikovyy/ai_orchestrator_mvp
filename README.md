@@ -914,6 +914,14 @@ Behavior:
 
 Reviewer profiles are contracts, not active reviewer agents. They define expected focus areas, severity guidance, evidence requirements, and output discipline for future independent reviewers that will produce `REVIEW_FINDINGS.json` / `REVIEW_FINDINGS.md`.
 
+Profile contracts live in Python code plus markdown prompt templates under:
+
+```text
+src/ai_orchestrator/prompts/reviewers/
+```
+
+Changing those markdown templates changes future reviewer prompt packets, but does not execute any reviewer by itself.
+
 Built-in profiles:
 
 - `deterministic`
@@ -929,6 +937,11 @@ Important rules:
 - profiles do not approve or reject runs;
 - profiles do not apply or commit changes;
 - profiles describe reviewer responsibilities only;
+- reviewer prompt templates must preserve these constraints:
+  - findings only
+  - no approve/reject
+  - no apply/commit
+  - evidence-based findings
 - future LLM reviewer agents must emit `ReviewFinding`-compatible JSON, not free-form prose;
 - the `deterministic` profile is already active today through `run-review-checks`;
 - the other built-in profiles are future reviewer contracts and are not executed automatically in this stage.
