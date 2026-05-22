@@ -135,13 +135,15 @@ class ReviewAcceptTests(unittest.TestCase):
         with temporary_test_dir() as tmp:
             repo = make_git_seed_repo(tmp)
             run_dir, _ = make_approved_run(tmp, target_repo=repo)
+            add_workspace_changed_file(run_dir, "docs/accept_run_note.md", "# accept run note\n")
             record_review_decision(run_id=run_dir.name, runs_dir=run_dir.parent, decision="approved")
             result = accept_run(run_id=run_dir.name, runs_dir=run_dir.parent, commit_message="fix: subtract")
-            self.assertIn("src/toy_calc.py", result.applied_files)
+            self.assertIn("docs/accept_run_note.md", result.applied_files)
             self.assertIn("EXECUTION_REPORT.json", result.skipped_files)
             self.assertIsNotNone(result.commit_hash)
             self.assertEqual(result.review_gate, "human_approved")
-            self.assertIn("return a - b", (repo / "src" / "toy_calc.py").read_text(encoding="utf-8"))
+            self.assertTrue((repo / "docs" / "accept_run_note.md").exists())
+            self.assertIn("# accept run note", (repo / "docs" / "accept_run_note.md").read_text(encoding="utf-8"))
             self.assertFalse((repo / "EXECUTION_REPORT.json").exists())
             self.assertIn("fix: subtract", git(repo, "log", "-1", "--pretty=%s").stdout)
             self.assertTrue(result.acceptance_path.exists())
@@ -149,6 +151,7 @@ class ReviewAcceptTests(unittest.TestCase):
             self.assertIn("## Review gate", acceptance_text)
             self.assertIn("Decision: `approved`", acceptance_text)
             self.assertIn("Bypassed: `false`", acceptance_text)
+            self.assertEqual(git(repo, "status", "--short").stdout.strip(), "")
 
     def test_accept_run_refuses_missing_human_review_by_default(self) -> None:
         with temporary_test_dir() as tmp:
