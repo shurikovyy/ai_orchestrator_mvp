@@ -616,10 +616,48 @@ class ReviewRunFindingsGateTests(unittest.TestCase):
                     ],
                 ),
             )
-            self.assertEqual(
-                record_findings_main([run_id, "--runs-dir", str(runs_dir), "--findings-file", str(findings_file)]),
-                0,
+            with redirect_stdout(StringIO()):
+                self.assertEqual(
+                    record_findings_main([run_id, "--runs-dir", str(runs_dir), "--findings-file", str(findings_file)]),
+                    0,
+                )
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                exit_code = review_run_main([run_id, "--runs-dir", str(runs_dir), "--decision", "approved"])
+            output = stdout.getvalue()
+
+        self.assertEqual(exit_code, 0, output)
+        self.assertEqual(output_value(output, "status"), "review_recorded")
+        self.assertEqual(output_value(output, "decision"), "approved")
+
+    def test_review_run_approved_succeeds_when_only_accepted_risk_findings_exist(self) -> None:
+        with temporary_test_dir() as tmp:
+            runs_dir = tmp / ".runs"
+            _run_dir, run_id = make_approved_source_run(runs_dir)
+            findings_file = write_findings_file(
+                tmp / "review_findings.json",
+                make_findings_payload(
+                    run_id=run_id,
+                    overall_decision="pass",
+                    findings=[
+                        {
+                            "id": "F001",
+                            "reviewer": "security",
+                            "category": "security",
+                            "severity": "major",
+                            "title": "Accepted risk decision",
+                            "evidence": "The risk was reviewed and explicitly accepted.",
+                            "required_action": "Monitor the accepted risk.",
+                            "status": "accepted_risk",
+                        }
+                    ],
+                ),
             )
+            with redirect_stdout(StringIO()):
+                self.assertEqual(
+                    record_findings_main([run_id, "--runs-dir", str(runs_dir), "--findings-file", str(findings_file)]),
+                    0,
+                )
             stdout = StringIO()
             with redirect_stdout(stdout):
                 exit_code = review_run_main([run_id, "--runs-dir", str(runs_dir), "--decision", "approved"])
@@ -666,10 +704,11 @@ class ShowStatusFindingsTests(unittest.TestCase):
                     ],
                 ),
             )
-            self.assertEqual(
-                record_findings_main([run_id, "--runs-dir", str(runs_dir), "--findings-file", str(findings_file)]),
-                0,
-            )
+            with redirect_stdout(StringIO()):
+                self.assertEqual(
+                    record_findings_main([run_id, "--runs-dir", str(runs_dir), "--findings-file", str(findings_file)]),
+                    0,
+                )
             stdout = StringIO()
             with redirect_stdout(stdout):
                 exit_code = show_run_main([run_id, "--runs-dir", str(runs_dir), "--show-paths"])

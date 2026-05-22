@@ -802,6 +802,14 @@ Blocking policy:
 - `minor` and `nit` findings are non-blocking;
 - `accepted_risk` and `resolved` findings are non-blocking for this MVP, but they are still tracked explicitly.
 
+Accepted-risk policy:
+
+- `accepted_risk` means a human or another explicitly governed process has decided to carry the risk;
+- `accepted_risk` does not count as `blocking_open`;
+- `accepted_risk` findings do not enter generated rework feedback;
+- `accepted_risk` must not be treated as a way to bypass human governance or silently auto-approve risky work;
+- `critical` and `major` accepted-risk findings still require special caution in future stages.
+
 Findings are stored in run artifacts as:
 
 - `REVIEW_FINDINGS.json`
@@ -917,7 +925,7 @@ Default behavior:
 - `findings-feedback` includes open blocking findings only;
 - `--include-non-blocking` also includes open `minor` / `nit` findings as secondary suggestions;
 - resolved findings are excluded;
-- `accepted_risk` findings are excluded for this MVP.
+- `accepted_risk` findings are excluded for this MVP, even with `--include-non-blocking`.
 
 Example flow:
 
@@ -944,6 +952,10 @@ Important notes:
 - `findings-feedback` does not approve or reject a run by itself;
 - `review-run` still records the explicit human decision;
 - `review-run --decision rejected --from-findings` generates or reuses `REVIEW_FEEDBACK_FROM_FINDINGS.md` and stores the rejected review using that feedback;
+- generated findings feedback is deterministic and is not silently regenerated unless explicitly requested;
+- `review-run --force` overwrites an existing human review decision only;
+- `review-run --force-feedback` regenerates `REVIEW_FEEDBACK_FROM_FINDINGS.md` only when `--from-findings` is used;
+- `review-run --force --force-feedback` overwrites both the human review decision and the generated findings feedback;
 - `rework-run` creates a new run and can consume the stored rejected-review feedback automatically;
 - no LLM is involved in this findings-to-feedback path;
 - no target repo changes or commits occur in this flow;
@@ -1028,7 +1040,9 @@ Behavior:
 
 `next_action` values:
 
-- `review_findings`: at least one run has blocking structured review findings;
+- `findings_feedback`: at least one run has blocking structured review findings but no generated feedback yet;
+- `review_rejected`: at least one run already has generated findings feedback and is waiting for an explicit rejected human review;
+- `review_findings`: legacy/fallback findings inspection state;
 - `review_runs`: at least one validator-approved run still needs human review;
 - `rework_run`: at least one run has a rejected human review decision;
 - `apply_runs`: at least one run is human-approved and waiting for explicit `apply-run`;

@@ -317,7 +317,7 @@ class FindingsFeedbackTests(unittest.TestCase):
         self.assertEqual(exit_code, 1, output)
         self.assertEqual(output_value(output, "error"), "no open findings available for feedback")
 
-    def test_accepted_risk_findings_are_excluded(self) -> None:
+    def test_accepted_risk_major_findings_are_excluded_by_default(self) -> None:
         with temporary_test_dir() as tmp:
             runs_dir = tmp / ".runs"
             _run_dir, run_id = make_approved_source_run(runs_dir)
@@ -332,12 +332,118 @@ class FindingsFeedbackTests(unittest.TestCase):
                             "id": "F001",
                             "reviewer": "ops",
                             "category": "ops",
+                            "severity": "major",
+                            "title": "Accepted risk major",
+                            "evidence": "Tracked as accepted risk.",
+                            "required_action": "Monitor it carefully.",
+                            "status": "accepted_risk",
+                        }
+                    ],
+                ),
+            )
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                exit_code = findings_feedback_main([run_id, "--runs-dir", str(runs_dir)])
+            output = stdout.getvalue()
+
+        self.assertEqual(exit_code, 1, output)
+        self.assertEqual(output_value(output, "error"), "no open findings available for feedback")
+
+    def test_accepted_risk_major_findings_are_excluded_even_with_include_non_blocking(self) -> None:
+        with temporary_test_dir() as tmp:
+            runs_dir = tmp / ".runs"
+            _run_dir, run_id = make_approved_source_run(runs_dir)
+            record_findings_for_run(
+                runs_dir,
+                run_id,
+                make_findings_payload(
+                    run_id=run_id,
+                    overall_decision="pass",
+                    findings=[
+                        {
+                            "id": "F001",
+                            "reviewer": "ops",
+                            "category": "ops",
+                            "severity": "major",
+                            "title": "Accepted risk major",
+                            "evidence": "Tracked as accepted risk.",
+                            "required_action": "Monitor it carefully.",
+                            "status": "accepted_risk",
+                        }
+                    ],
+                ),
+            )
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                exit_code = findings_feedback_main([run_id, "--runs-dir", str(runs_dir), "--include-non-blocking"])
+            output = stdout.getvalue()
+
+        self.assertEqual(exit_code, 1, output)
+        self.assertEqual(output_value(output, "error"), "no open findings available for feedback")
+
+    def test_accepted_risk_minor_findings_are_excluded_even_with_include_non_blocking(self) -> None:
+        with temporary_test_dir() as tmp:
+            runs_dir = tmp / ".runs"
+            _run_dir, run_id = make_approved_source_run(runs_dir)
+            record_findings_for_run(
+                runs_dir,
+                run_id,
+                make_findings_payload(
+                    run_id=run_id,
+                    overall_decision="pass",
+                    findings=[
+                        {
+                            "id": "F001",
+                            "reviewer": "docs",
+                            "category": "documentation",
                             "severity": "minor",
-                            "title": "Accepted risk",
+                            "title": "Accepted risk minor",
                             "evidence": "Tracked as accepted risk.",
                             "required_action": "Monitor it.",
                             "status": "accepted_risk",
                         }
+                    ],
+                ),
+            )
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                exit_code = findings_feedback_main([run_id, "--runs-dir", str(runs_dir), "--include-non-blocking"])
+            output = stdout.getvalue()
+
+        self.assertEqual(exit_code, 1, output)
+        self.assertEqual(output_value(output, "error"), "no open findings available for feedback")
+
+    def test_command_fails_if_all_findings_are_accepted_risk_or_resolved(self) -> None:
+        with temporary_test_dir() as tmp:
+            runs_dir = tmp / ".runs"
+            _run_dir, run_id = make_approved_source_run(runs_dir)
+            record_findings_for_run(
+                runs_dir,
+                run_id,
+                make_findings_payload(
+                    run_id=run_id,
+                    overall_decision="pass",
+                    findings=[
+                        {
+                            "id": "F001",
+                            "reviewer": "ops",
+                            "category": "ops",
+                            "severity": "major",
+                            "title": "Accepted risk major",
+                            "evidence": "Tracked as accepted risk.",
+                            "required_action": "Monitor it carefully.",
+                            "status": "accepted_risk",
+                        },
+                        {
+                            "id": "F002",
+                            "reviewer": "qa",
+                            "category": "qa",
+                            "severity": "major",
+                            "title": "Resolved issue",
+                            "evidence": "Already fixed.",
+                            "required_action": "Keep it fixed.",
+                            "status": "resolved",
+                        },
                     ],
                 ),
             )
@@ -537,6 +643,184 @@ class ReviewRunFromFindingsTests(unittest.TestCase):
         self.assertIn("F001", review_feedback)
         self.assertIn("Fix it.", review_feedback)
 
+    def test_review_run_from_findings_reuses_existing_generated_feedback_by_default(self) -> None:
+        with temporary_test_dir() as tmp:
+            runs_dir = tmp / ".runs"
+            run_dir, run_id = make_approved_source_run(runs_dir)
+            record_findings_for_run(
+                runs_dir,
+                run_id,
+                make_findings_payload(
+                    run_id=run_id,
+                    overall_decision="needs_rework",
+                    findings=[{
+                        "id": "F001", "reviewer": "qa", "category": "qa", "severity": "major",
+                        "title": "Blocking issue", "evidence": "Major issue.", "required_action": "Fix it.", "status": "open"
+                    }],
+                ),
+            )
+            with redirect_stdout(StringIO()):
+                self.assertEqual(findings_feedback_main([run_id, "--runs-dir", str(runs_dir)]), 0)
+            generated_feedback_path = run_dir / "REVIEW_FEEDBACK_FROM_FINDINGS.md"
+            generated_feedback_path.write_text("# marker reuse\n", encoding="utf-8")
+
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                exit_code = review_run_main([run_id, "--runs-dir", str(runs_dir), "--decision", "rejected", "--from-findings"])
+            output = stdout.getvalue()
+            review_feedback_text = (run_dir / "REVIEW_FEEDBACK.md").read_text(encoding="utf-8")
+            generated_feedback_text = generated_feedback_path.read_text(encoding="utf-8")
+
+        self.assertEqual(exit_code, 0, output)
+        self.assertEqual(generated_feedback_text, "# marker reuse\n")
+        self.assertEqual(review_feedback_text, "# marker reuse\n")
+
+    def test_review_run_from_findings_force_feedback_regenerates_feedback(self) -> None:
+        with temporary_test_dir() as tmp:
+            runs_dir = tmp / ".runs"
+            run_dir, run_id = make_approved_source_run(runs_dir)
+            record_findings_for_run(
+                runs_dir,
+                run_id,
+                make_findings_payload(
+                    run_id=run_id,
+                    overall_decision="needs_rework",
+                    findings=[{
+                        "id": "F001", "reviewer": "qa", "category": "qa", "severity": "major",
+                        "title": "Blocking issue", "evidence": "Major issue.", "required_action": "Fix it.", "status": "open"
+                    }],
+                ),
+            )
+            with redirect_stdout(StringIO()):
+                self.assertEqual(findings_feedback_main([run_id, "--runs-dir", str(runs_dir)]), 0)
+            generated_feedback_path = run_dir / "REVIEW_FEEDBACK_FROM_FINDINGS.md"
+            generated_feedback_path.write_text("# stale marker\n", encoding="utf-8")
+
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                exit_code = review_run_main(
+                    [run_id, "--runs-dir", str(runs_dir), "--decision", "rejected", "--from-findings", "--force-feedback"]
+                )
+            output = stdout.getvalue()
+            review_feedback_text = (run_dir / "REVIEW_FEEDBACK.md").read_text(encoding="utf-8")
+            generated_feedback_text = generated_feedback_path.read_text(encoding="utf-8")
+
+        self.assertEqual(exit_code, 0, output)
+        self.assertNotIn("# stale marker", generated_feedback_text)
+        self.assertIn("Blocking issue", generated_feedback_text)
+        self.assertIn("Blocking issue", review_feedback_text)
+
+    def test_review_run_from_findings_force_does_not_regenerate_feedback(self) -> None:
+        with temporary_test_dir() as tmp:
+            runs_dir = tmp / ".runs"
+            run_dir, run_id = make_approved_source_run(runs_dir)
+            record_findings_for_run(
+                runs_dir,
+                run_id,
+                make_findings_payload(
+                    run_id=run_id,
+                    overall_decision="needs_rework",
+                    findings=[{
+                        "id": "F001", "reviewer": "qa", "category": "qa", "severity": "major",
+                        "title": "Blocking issue", "evidence": "Major issue.", "required_action": "Fix it.", "status": "open"
+                    }],
+                ),
+            )
+            with redirect_stdout(StringIO()):
+                self.assertEqual(review_run_main([run_id, "--runs-dir", str(runs_dir), "--decision", "rejected", "--from-findings"]), 0)
+            generated_feedback_path = run_dir / "REVIEW_FEEDBACK_FROM_FINDINGS.md"
+            generated_feedback_path.write_text("# force marker\n", encoding="utf-8")
+
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                exit_code = review_run_main(
+                    [run_id, "--runs-dir", str(runs_dir), "--decision", "rejected", "--from-findings", "--force"]
+                )
+            output = stdout.getvalue()
+            review_feedback_text = (run_dir / "REVIEW_FEEDBACK.md").read_text(encoding="utf-8")
+            generated_feedback_text = generated_feedback_path.read_text(encoding="utf-8")
+
+        self.assertEqual(exit_code, 0, output)
+        self.assertEqual(generated_feedback_text, "# force marker\n")
+        self.assertEqual(review_feedback_text, "# force marker\n")
+
+    def test_review_run_from_findings_force_feedback_does_not_overwrite_existing_review_decision(self) -> None:
+        with temporary_test_dir() as tmp:
+            runs_dir = tmp / ".runs"
+            run_dir, run_id = make_approved_source_run(runs_dir)
+            record_findings_for_run(
+                runs_dir,
+                run_id,
+                make_findings_payload(
+                    run_id=run_id,
+                    overall_decision="needs_rework",
+                    findings=[{
+                        "id": "F001", "reviewer": "qa", "category": "qa", "severity": "major",
+                        "title": "Blocking issue", "evidence": "Major issue.", "required_action": "Fix it.", "status": "open"
+                    }],
+                ),
+            )
+            with redirect_stdout(StringIO()):
+                self.assertEqual(review_run_main([run_id, "--runs-dir", str(runs_dir), "--decision", "rejected", "--from-findings"]), 0)
+            generated_feedback_path = run_dir / "REVIEW_FEEDBACK_FROM_FINDINGS.md"
+            generated_feedback_path.write_text("# keep marker\n", encoding="utf-8")
+
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                exit_code = review_run_main(
+                    [run_id, "--runs-dir", str(runs_dir), "--decision", "rejected", "--from-findings", "--force-feedback"]
+                )
+            output = stdout.getvalue()
+            generated_feedback_text = generated_feedback_path.read_text(encoding="utf-8")
+
+        self.assertEqual(exit_code, 1, output)
+        self.assertEqual(output_value(output, "error"), "Human review decision already recorded. Pass --force to overwrite it.")
+        self.assertEqual(generated_feedback_text, "# keep marker\n")
+
+    def test_review_run_from_findings_force_and_force_feedback_overwrite_both(self) -> None:
+        with temporary_test_dir() as tmp:
+            runs_dir = tmp / ".runs"
+            run_dir, run_id = make_approved_source_run(runs_dir)
+            record_findings_for_run(
+                runs_dir,
+                run_id,
+                make_findings_payload(
+                    run_id=run_id,
+                    overall_decision="needs_rework",
+                    findings=[{
+                        "id": "F001", "reviewer": "qa", "category": "qa", "severity": "major",
+                        "title": "Blocking issue", "evidence": "Major issue.", "required_action": "Fix it.", "status": "open"
+                    }],
+                ),
+            )
+            with redirect_stdout(StringIO()):
+                self.assertEqual(review_run_main([run_id, "--runs-dir", str(runs_dir), "--decision", "rejected", "--from-findings"]), 0)
+            generated_feedback_path = run_dir / "REVIEW_FEEDBACK_FROM_FINDINGS.md"
+            generated_feedback_path.write_text("# stale both marker\n", encoding="utf-8")
+
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                exit_code = review_run_main(
+                    [
+                        run_id,
+                        "--runs-dir",
+                        str(runs_dir),
+                        "--decision",
+                        "rejected",
+                        "--from-findings",
+                        "--force",
+                        "--force-feedback",
+                    ]
+                )
+            output = stdout.getvalue()
+            generated_feedback_text = generated_feedback_path.read_text(encoding="utf-8")
+            review_feedback_text = (run_dir / "REVIEW_FEEDBACK.md").read_text(encoding="utf-8")
+
+        self.assertEqual(exit_code, 0, output)
+        self.assertNotIn("# stale both marker", generated_feedback_text)
+        self.assertIn("Blocking issue", generated_feedback_text)
+        self.assertIn("Blocking issue", review_feedback_text)
+
     def test_review_run_approved_from_findings_fails(self) -> None:
         with temporary_test_dir() as tmp:
             runs_dir = tmp / ".runs"
@@ -562,6 +846,17 @@ class ReviewRunFromFindingsTests(unittest.TestCase):
             output = stdout.getvalue()
         self.assertEqual(exit_code, 1, output)
         self.assertEqual(output_value(output, "error"), "--from-findings and --feedback are mutually exclusive")
+
+    def test_review_run_force_feedback_without_from_findings_fails(self) -> None:
+        with temporary_test_dir() as tmp:
+            runs_dir = tmp / ".runs"
+            _run_dir, run_id = make_approved_source_run(runs_dir)
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                exit_code = review_run_main([run_id, "--runs-dir", str(runs_dir), "--decision", "rejected", "--force-feedback"])
+            output = stdout.getvalue()
+        self.assertEqual(exit_code, 1, output)
+        self.assertEqual(output_value(output, "error"), "--force-feedback is allowed only with --from-findings")
 
     def test_review_run_from_findings_fails_if_no_blocking_findings(self) -> None:
         with temporary_test_dir() as tmp:

@@ -33,9 +33,12 @@ def _select_feedback_findings(
 ) -> list:
     selected = []
     for finding in report.findings:
-        if finding.status != "open":
-            continue
+        # accepted_risk is intentionally excluded from rework feedback even when
+        # non-blocking findings are requested. It represents an explicitly
+        # governed risk acceptance decision, not a rework instruction.
         if finding.status == "accepted_risk":
+            continue
+        if finding.status != "open":
             continue
         if not include_non_blocking and not finding.blocking:
             continue

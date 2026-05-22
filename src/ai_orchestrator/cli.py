@@ -19,7 +19,7 @@ from ai_orchestrator.pipeline import PipelinePlan, PipelineRunResult, run_pipeli
 from ai_orchestrator.review_findings import record_review_findings
 from ai_orchestrator.run_status import build_run_status_summary, format_run_status_json, format_run_status_text
 from ai_orchestrator.rework import execute_rework_run
-from ai_orchestrator.review_decision import record_review_decision
+from ai_orchestrator.review_decision import load_review_target_run, record_review_decision
 from ai_orchestrator.schemas import RunState, TaskSpec
 from ai_orchestrator.task_queue import TaskSummaryList, list_task_summaries, load_task_queue_config, resolve_task_definition
 from ai_orchestrator.task_runner import (
@@ -433,7 +433,12 @@ def build_review_run_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--from-findings",
         action="store_true",
-        help="Generate rejected-review feedback from REVIEW_FINDINGS.json and use it as the feedback source.",
+        help="Generate or reuse rejected-review feedback from REVIEW_FINDINGS.json and use it as the feedback source.",
+    )
+    parser.add_argument(
+        "--force-feedback",
+        action="store_true",
+        help="With --from-findings, regenerate REVIEW_FEEDBACK_FROM_FINDINGS.md if it already exists.",
     )
     parser.add_argument(
         "--force",
@@ -896,6 +901,11 @@ def review_run_main(argv: list[str] | None = None) -> int:
     parser = build_review_run_parser()
     args = parser.parse_args(argv)
     feedback_path = args.feedback
+    if args.force_feedback and not args.from_findings:
+        print(f"run_id={args.run_id}")
+        print("status=failed")
+        print("error=--force-feedback is allowed only with --from-findings")
+        return 1
     if args.from_findings:
         if args.decision != "rejected":
             print(f"run_id={args.run_id}")
@@ -908,12 +918,15 @@ def review_run_main(argv: list[str] | None = None) -> int:
             print("error=--from-findings and --feedback are mutually exclusive")
             return 1
         try:
+            _run_dir, state = load_review_target_run(Path(args.runs_dir), args.run_id)
+            if state.human_review_decision and not args.force:
+                raise ValueError("Human review decision already recorded. Pass --force to overwrite it.")
             feedback_result = create_findings_feedback_for_run(
                 run_id=args.run_id,
                 runs_dir=args.runs_dir,
-                force=args.force,
+                force=args.force_feedback,
                 include_non_blocking=False,
-                reuse_existing=not args.force,
+                reuse_existing=not args.force_feedback,
             )
         except Exception as exc:  # noqa: BLE001 - CLI should print deterministic error text.
             print(f"run_id={args.run_id}")
