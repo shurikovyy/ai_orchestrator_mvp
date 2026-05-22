@@ -337,6 +337,10 @@ class RunState(BaseModel):
     review_findings_decision: str | None = None
     review_findings_blocking_count: int | None = Field(default=None, ge=0)
     review_findings_created_at: datetime | None = None
+    findings_feedback_path: str | None = None
+    findings_feedback_created_at: datetime | None = None
+    findings_feedback_source_path: str | None = None
+    findings_feedback_count: int = Field(default=0, ge=0)
     apply_status: str | None = None
     applied_at: datetime | None = None
     apply_report_path: str | None = None
@@ -358,6 +362,8 @@ class RunState(BaseModel):
         "human_review_decision_path",
         "review_findings_path",
         "review_findings_decision",
+        "findings_feedback_path",
+        "findings_feedback_source_path",
         "apply_status",
         "apply_report_path",
         "apply_target_workspace",

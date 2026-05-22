@@ -643,7 +643,7 @@ class ReviewRunFindingsGateTests(unittest.TestCase):
 
 
 class ShowStatusFindingsTests(unittest.TestCase):
-    def test_show_run_displays_findings_and_review_findings_next_action(self) -> None:
+    def test_show_run_displays_findings_and_findings_feedback_next_action(self) -> None:
         with temporary_test_dir() as tmp:
             runs_dir = tmp / ".runs"
             _run_dir, run_id = make_approved_source_run(runs_dir)
@@ -679,11 +679,13 @@ class ShowStatusFindingsTests(unittest.TestCase):
         self.assertEqual(output_value(output, "findings_exists"), "true")
         self.assertEqual(output_value(output, "review_findings_decision"), "needs_rework")
         self.assertEqual(output_value(output, "blocking_findings"), "1")
-        self.assertEqual(output_value(output, "next_action"), "review_findings")
+        self.assertEqual(output_value(output, "findings_feedback_exists"), "false")
+        self.assertEqual(output_value(output, "findings_feedback_count"), "0")
+        self.assertEqual(output_value(output, "next_action"), "findings_feedback")
         self.assertIn("review_findings=", output)
         self.assertIn("review_findings_markdown=", output)
 
-    def test_show_pipeline_counts_findings_and_prefers_review_findings(self) -> None:
+    def test_show_pipeline_counts_findings_and_prefers_findings_feedback(self) -> None:
         with temporary_test_dir() as tmp:
             runs_dir = tmp / ".runs"
             _run_dir_a, run_id_a = make_approved_source_run(runs_dir)
@@ -728,7 +730,8 @@ class ShowStatusFindingsTests(unittest.TestCase):
         self.assertEqual(exit_code, 0, output)
         self.assertEqual(output_value(output, "tasks_with_findings"), "1")
         self.assertEqual(output_value(output, "tasks_with_blocking_findings"), "1")
-        self.assertEqual(output_value(output, "next_action"), "review_findings")
+        self.assertEqual(output_value(output, "tasks_waiting_findings_feedback"), "1")
+        self.assertEqual(output_value(output, "next_action"), "findings_feedback")
         self.assertIn("findings_exists=true", output)
         self.assertIn("blocking_findings=1", output)
 

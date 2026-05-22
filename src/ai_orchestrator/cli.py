@@ -9,6 +9,7 @@ from ai_orchestrator.apply import accept_run, apply_run
 from ai_orchestrator.backends import Backend
 from ai_orchestrator.deterministic_review import run_deterministic_review_checks
 from ai_orchestrator.doctor import format_doctor_json, format_doctor_text, run_doctor
+from ai_orchestrator.findings_feedback import create_findings_feedback_for_run
 from ai_orchestrator.pipeline_status import (
     build_pipeline_status_summary,
     format_pipeline_status_json,
@@ -430,6 +431,11 @@ def build_review_run_parser() -> argparse.ArgumentParser:
         help="Optional feedback file for approved decisions; required for rejected decisions.",
     )
     parser.add_argument(
+        "--from-findings",
+        action="store_true",
+        help="Generate rejected-review feedback from REVIEW_FINDINGS.json and use it as the feedback source.",
+    )
+    parser.add_argument(
         "--force",
         action="store_true",
         help="Overwrite an existing human review decision for this run.",
@@ -453,6 +459,37 @@ def build_record_findings_parser() -> argparse.ArgumentParser:
         "--force",
         action="store_true",
         help="Overwrite an existing REVIEW_FINDINGS.json/REVIEW_FINDINGS.md for this run.",
+    )
+    return parser
+
+
+def build_findings_feedback_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="ai-orchestrator findings-feedback",
+        description="Generate rework feedback markdown from REVIEW_FINDINGS.json without changing target repos.",
+    )
+    parser.add_argument("run_id", help="Existing run id to generate findings feedback for.")
+    parser.add_argument("--runs-dir", default=".runs", help="Directory containing run state and artifacts.")
+    parser.add_argument(
+        "--output",
+        default=None,
+        help="Optional output path. Defaults to .runs/<run_id>/REVIEW_FEEDBACK_FROM_FINDINGS.md.",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite an existing findings feedback file.",
+    )
+    parser.add_argument(
+        "--include-non-blocking",
+        action="store_true",
+        help="Include open minor/nit findings as secondary suggestions.",
+    )
+    parser.add_argument(
+        "--format",
+        choices=["text", "json"],
+        default="text",
+        help="Output format. Defaults to text.",
     )
     return parser
 
@@ -858,12 +895,38 @@ def rework_run_main(argv: list[str] | None = None) -> int:
 def review_run_main(argv: list[str] | None = None) -> int:
     parser = build_review_run_parser()
     args = parser.parse_args(argv)
+    feedback_path = args.feedback
+    if args.from_findings:
+        if args.decision != "rejected":
+            print(f"run_id={args.run_id}")
+            print("status=failed")
+            print("error=--from-findings is allowed only with --decision rejected")
+            return 1
+        if args.feedback is not None:
+            print(f"run_id={args.run_id}")
+            print("status=failed")
+            print("error=--from-findings and --feedback are mutually exclusive")
+            return 1
+        try:
+            feedback_result = create_findings_feedback_for_run(
+                run_id=args.run_id,
+                runs_dir=args.runs_dir,
+                force=args.force,
+                include_non_blocking=False,
+                reuse_existing=not args.force,
+            )
+        except Exception as exc:  # noqa: BLE001 - CLI should print deterministic error text.
+            print(f"run_id={args.run_id}")
+            print("status=failed")
+            print(f"error={exc}")
+            return 1
+        feedback_path = feedback_result.feedback_path
     try:
         result = record_review_decision(
             run_id=args.run_id,
             runs_dir=args.runs_dir,
             decision=args.decision,
-            feedback_path=args.feedback,
+            feedback_path=feedback_path,
             force=args.force,
         )
     except Exception as exc:  # noqa: BLE001 - CLI should print deterministic error text.
@@ -902,6 +965,60 @@ def record_findings_main(argv: list[str] | None = None) -> int:
     print(f"review_findings={result.review_findings_path}")
     print(f"review_findings_markdown={result.review_findings_markdown_path}")
     print(f"state={result.state_path}")
+    return 0
+
+
+def findings_feedback_main(argv: list[str] | None = None) -> int:
+    parser = build_findings_feedback_parser()
+    args = parser.parse_args(argv)
+    try:
+        result = create_findings_feedback_for_run(
+            run_id=args.run_id,
+            runs_dir=args.runs_dir,
+            output_path=args.output,
+            force=args.force,
+            include_non_blocking=args.include_non_blocking,
+        )
+    except Exception as exc:  # noqa: BLE001 - CLI should print deterministic error text.
+        if args.format == "json":
+            print(
+                json.dumps(
+                    {
+                        "run_id": args.run_id,
+                        "status": "failed",
+                        "error": str(exc),
+                    },
+                    indent=2,
+                    ensure_ascii=False,
+                )
+            )
+        else:
+            print(f"run_id={args.run_id}")
+            print("status=failed")
+            print(f"error={exc}")
+        return 1
+
+    payload = {
+        "run_id": result.run_id,
+        "status": "findings_feedback_created",
+        "feedback": str(result.feedback_path),
+        "source_findings": str(result.source_findings_path),
+        "findings_included": result.findings_included,
+        "blocking_findings_included": result.blocking_findings_included,
+        "state": str(result.state_path),
+        "next_action": "review_rejected_or_rework",
+    }
+    if args.format == "json":
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+    else:
+        print(f"run_id={payload['run_id']}")
+        print(f"status={payload['status']}")
+        print(f"feedback={payload['feedback']}")
+        print(f"source_findings={payload['source_findings']}")
+        print(f"findings_included={payload['findings_included']}")
+        print(f"blocking_findings_included={payload['blocking_findings_included']}")
+        print(f"state={payload['state']}")
+        print(f"next_action={payload['next_action']}")
     return 0
 
 
@@ -970,6 +1087,8 @@ def doctor_main(argv: list[str] | None = None) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
+    if args and args[0] == "findings-feedback":
+        return findings_feedback_main(args[1:])
     if args and args[0] == "run-review-checks":
         return run_review_checks_main(args[1:])
     if args and args[0] == "doctor":

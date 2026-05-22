@@ -902,6 +902,53 @@ Behavior:
 - they do not modify the target repo;
 - open `critical` and `major` findings block `review-run --decision approved`.
 
+### Findings to rework feedback
+
+`run-review-checks` and `record-findings` create structured findings, but they do not reject a run by themselves. `findings-feedback` turns open findings into concrete markdown feedback that can be reused for a rejected human review and then by `rework-run`.
+
+Artifacts:
+
+- `REVIEW_FINDINGS.json`
+- `REVIEW_FINDINGS.md`
+- `REVIEW_FEEDBACK_FROM_FINDINGS.md`
+
+Default behavior:
+
+- `findings-feedback` includes open blocking findings only;
+- `--include-non-blocking` also includes open `minor` / `nit` findings as secondary suggestions;
+- resolved findings are excluded;
+- `accepted_risk` findings are excluded for this MVP.
+
+Example flow:
+
+```bash
+python -m ai_orchestrator.cli run-review-checks run_20260521_120000_abcd12 --runs-dir .runs
+
+python -m ai_orchestrator.cli findings-feedback run_20260521_120000_abcd12 --runs-dir .runs
+
+python -m ai_orchestrator.cli review-run run_20260521_120000_abcd12 \
+  --runs-dir .runs \
+  --decision rejected \
+  --from-findings
+
+python -m ai_orchestrator.cli rework-run run_20260521_120000_abcd12 \
+  --runs-dir .runs \
+  --backend codex_cli \
+  --codex-cmd "$CODEX_CMD" \
+  --verbose \
+  --stream-codex-output
+```
+
+Important notes:
+
+- `findings-feedback` does not approve or reject a run by itself;
+- `review-run` still records the explicit human decision;
+- `review-run --decision rejected --from-findings` generates or reuses `REVIEW_FEEDBACK_FROM_FINDINGS.md` and stores the rejected review using that feedback;
+- `rework-run` creates a new run and can consume the stored rejected-review feedback automatically;
+- no LLM is involved in this findings-to-feedback path;
+- no target repo changes or commits occur in this flow;
+- critical and major findings remain blocking until they are resolved in a later run.
+
 ### Self-improvement autonomy goal
 
 The long-term direction of `ai_orchestrator` is near-autonomous self-development under hard validation and human governance.
