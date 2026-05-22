@@ -910,6 +910,37 @@ Behavior:
 - they do not modify the target repo;
 - open `critical` and `major` findings block `review-run --decision approved`.
 
+### Reviewer profiles
+
+Reviewer profiles are contracts, not active reviewer agents. They define expected focus areas, severity guidance, evidence requirements, and output discipline for future independent reviewers that will produce `REVIEW_FINDINGS.json` / `REVIEW_FINDINGS.md`.
+
+Built-in profiles:
+
+- `deterministic`
+- `qa`
+- `architecture`
+- `ops`
+- `security`
+- `business`
+- `data`
+
+Important rules:
+
+- profiles do not approve or reject runs;
+- profiles do not apply or commit changes;
+- profiles describe reviewer responsibilities only;
+- future LLM reviewer agents must emit `ReviewFinding`-compatible JSON, not free-form prose;
+- the `deterministic` profile is already active today through `run-review-checks`;
+- the other built-in profiles are future reviewer contracts and are not executed automatically in this stage.
+
+Examples:
+
+```bash
+python -m ai_orchestrator.cli list-review-profiles
+python -m ai_orchestrator.cli show-review-profile qa
+python -m ai_orchestrator.cli show-review-profile security --format json
+```
+
 ### Findings to rework feedback
 
 `run-review-checks` and `record-findings` create structured findings, but they do not reject a run by themselves. `findings-feedback` turns open findings into concrete markdown feedback that can be reused for a rejected human review and then by `rework-run`.
@@ -969,6 +1000,8 @@ Practical meaning:
 
 - the system may eventually implement improvements to itself;
 - independent validators/reviewers can record structured findings that demand rework;
+- reviewer profiles define how future independent reviewers must reason, what evidence they must provide, and which categories/severity guidance they should use;
+- reviewer agents, when added in the future, must produce findings only and must not approve, apply, or commit changes;
 - critical and major open findings block approval;
 - final apply/commit remains human-governed unless a task class is explicitly safe enough to automate;
 - critical lifecycle files such as validation, review, apply, and acceptance gates should always receive stricter scrutiny.

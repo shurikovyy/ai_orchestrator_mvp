@@ -17,6 +17,14 @@ from ai_orchestrator.pipeline_status import (
 )
 from ai_orchestrator.pipeline import PipelinePlan, PipelineRunResult, run_pipeline
 from ai_orchestrator.review_findings import record_review_findings
+from ai_orchestrator.review_profiles import (
+    format_review_profile_json,
+    format_review_profile_text,
+    format_review_profiles_json,
+    format_review_profiles_text,
+    get_review_profile,
+    list_review_profiles,
+)
 from ai_orchestrator.run_status import build_run_status_summary, format_run_status_json, format_run_status_text
 from ai_orchestrator.rework import execute_rework_run
 from ai_orchestrator.review_decision import load_review_target_run, record_review_decision
@@ -560,6 +568,35 @@ def build_doctor_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def build_list_review_profiles_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="ai-orchestrator list-review-profiles",
+        description="List built-in reviewer profile contracts without running any reviewer agents.",
+    )
+    parser.add_argument(
+        "--format",
+        choices=["text", "json"],
+        default="text",
+        help="Output format. Defaults to text.",
+    )
+    return parser
+
+
+def build_show_review_profile_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="ai-orchestrator show-review-profile",
+        description="Show one built-in reviewer profile contract without executing any review logic.",
+    )
+    parser.add_argument("profile_id", help="Review profile id to inspect, for example qa or security.")
+    parser.add_argument(
+        "--format",
+        choices=["text", "json"],
+        default="text",
+        help="Output format. Defaults to text.",
+    )
+    return parser
+
+
 def _print_run_summary(
     *,
     task_id: str | None,
@@ -1098,8 +1135,42 @@ def doctor_main(argv: list[str] | None = None) -> int:
     return result.exit_code
 
 
+def list_review_profiles_main(argv: list[str] | None = None) -> int:
+    parser = build_list_review_profiles_parser()
+    args = parser.parse_args(argv)
+    profiles = list_review_profiles()
+    if args.format == "json":
+        print(format_review_profiles_json(profiles))
+    else:
+        print(format_review_profiles_text(profiles))
+    return 0
+
+
+def show_review_profile_main(argv: list[str] | None = None) -> int:
+    parser = build_show_review_profile_parser()
+    args = parser.parse_args(argv)
+    profile = get_review_profile(args.profile_id)
+    if profile is None:
+        error = f"review profile not found: {args.profile_id}"
+        if args.format == "json":
+            print(json.dumps({"status": "failed", "error": error}, indent=2, ensure_ascii=False))
+        else:
+            print("status=failed")
+            print(f"error={error}")
+        return 1
+    if args.format == "json":
+        print(format_review_profile_json(profile))
+    else:
+        print(format_review_profile_text(profile))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
+    if args and args[0] == "show-review-profile":
+        return show_review_profile_main(args[1:])
+    if args and args[0] == "list-review-profiles":
+        return list_review_profiles_main(args[1:])
     if args and args[0] == "findings-feedback":
         return findings_feedback_main(args[1:])
     if args and args[0] == "run-review-checks":
