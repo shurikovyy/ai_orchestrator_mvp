@@ -25,6 +25,7 @@ from ai_orchestrator.review_profiles import (
     get_review_profile,
     list_review_profiles,
 )
+from ai_orchestrator.risk_classification import classify_run_risk
 from ai_orchestrator.reviewer_prompts import prepare_review_prompts
 from ai_orchestrator.run_status import build_run_status_summary, format_run_status_json, format_run_status_text
 from ai_orchestrator.rework import execute_rework_run
@@ -535,6 +536,27 @@ def build_run_review_checks_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def build_classify_run_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="ai-orchestrator classify-run",
+        description="Classify run risk deterministically and record required reviewer profiles without modifying target repos.",
+    )
+    parser.add_argument("run_id", help="Existing run id to classify.")
+    parser.add_argument("--runs-dir", default=".runs", help="Directory containing run state and artifacts.")
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite existing risk classification artifacts for this run.",
+    )
+    parser.add_argument(
+        "--format",
+        choices=["text", "json"],
+        default="text",
+        help="Output format. Defaults to text.",
+    )
+    return parser
+
+
 def build_doctor_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="ai-orchestrator doctor",
@@ -592,6 +614,11 @@ def build_prepare_review_parser() -> argparse.ArgumentParser:
         "--all-profiles",
         action="store_true",
         help="Prepare prompt packets for all built-in profiles except deterministic.",
+    )
+    profile_group.add_argument(
+        "--required-profiles",
+        action="store_true",
+        help="Prepare prompt packets for required_review_profiles from RISK_CLASSIFICATION.json.",
     )
     parser.add_argument(
         "--output-dir",
@@ -1145,6 +1172,62 @@ def run_review_checks_main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def classify_run_main(argv: list[str] | None = None) -> int:
+    parser = build_classify_run_parser()
+    args = parser.parse_args(argv)
+    try:
+        result = classify_run_risk(
+            run_id=args.run_id,
+            runs_dir=args.runs_dir,
+            force=args.force,
+        )
+    except Exception as exc:  # noqa: BLE001 - CLI should print deterministic error text.
+        if args.format == "json":
+            print(
+                json.dumps(
+                    {
+                        "run_id": args.run_id,
+                        "status": "failed",
+                        "error": str(exc),
+                    },
+                    indent=2,
+                    ensure_ascii=False,
+                )
+            )
+        else:
+            print(f"run_id={args.run_id}")
+            print("status=failed")
+            print(f"error={exc}")
+        return 1
+
+    payload = {
+        "run_id": result.run_id,
+        "status": "risk_classified",
+        "risk_level": result.classification.risk_level,
+        "change_type": result.classification.change_type,
+        "required_review_profiles": result.classification.required_review_profiles,
+        "optional_review_profiles": result.classification.optional_review_profiles,
+        "risk_classification": str(result.risk_classification_path),
+        "risk_classification_markdown": str(result.risk_classification_markdown_path),
+        "state": str(result.state_path),
+        "next_action": "prepare_required_reviews",
+    }
+    if args.format == "json":
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+    else:
+        print(f"run_id={payload['run_id']}")
+        print(f"status={payload['status']}")
+        print(f"risk_level={payload['risk_level']}")
+        print(f"change_type={payload['change_type']}")
+        print("required_review_profiles=" + ",".join(payload["required_review_profiles"]))
+        print("optional_review_profiles=" + ",".join(payload["optional_review_profiles"]))
+        print(f"risk_classification={payload['risk_classification']}")
+        print(f"risk_classification_markdown={payload['risk_classification_markdown']}")
+        print(f"state={payload['state']}")
+        print(f"next_action={payload['next_action']}")
+    return 0
+
+
 def doctor_main(argv: list[str] | None = None) -> int:
     parser = build_doctor_parser()
     args = parser.parse_args(argv)
@@ -1191,6 +1274,7 @@ def prepare_review_main(argv: list[str] | None = None) -> int:
             runs_dir=args.runs_dir,
             profile_ids=args.profile,
             all_profiles=args.all_profiles,
+            required_profiles=args.required_profiles,
             output_dir=args.output_dir,
             force=args.force,
         )
@@ -1222,7 +1306,8 @@ def prepare_review_main(argv: list[str] | None = None) -> int:
             {"profile": prepared.profile, "path": str(prepared.path)}
             for prepared in result.prompts
         ],
-        "manifest": str(result.manifest_path),
+        "manifest": str(result.manifest_path) if result.manifest_path is not None else "",
+        "message": result.message or "",
         "next_action": "run_external_reviewer_or_record_findings",
     }
     if args.format == "json":
@@ -1235,6 +1320,8 @@ def prepare_review_main(argv: list[str] | None = None) -> int:
         for prompt in payload["prompts"]:
             print(f"prompt={prompt['profile']}:{prompt['path']}")
         print(f"manifest={payload['manifest']}")
+        if payload["message"]:
+            print(f"message={payload['message']}")
         print(f"next_action={payload['next_action']}")
     return 0
 
@@ -1281,6 +1368,8 @@ def main(argv: list[str] | None = None) -> int:
         return findings_feedback_main(args[1:])
     if args and args[0] == "run-review-checks":
         return run_review_checks_main(args[1:])
+    if args and args[0] == "classify-run":
+        return classify_run_main(args[1:])
     if args and args[0] == "doctor":
         return doctor_main(args[1:])
     if args and args[0] == "record-findings":

@@ -1028,6 +1028,55 @@ python -m ai_orchestrator.cli record-findings run_20260522_120000_abcd12 \
 
 Reviewers produce findings only. Human review and apply/commit gates remain separate.
 
+### Risk classification and required reviewer profiles
+
+`classify-run` is a deterministic pre-review classification step. It reads `EXECUTION_REPORT.json.changed_files`, applies policy rules, writes `RISK_CLASSIFICATION.json` / `RISK_CLASSIFICATION.md`, and chooses required reviewer profiles for the run.
+
+Examples:
+
+```bash
+python -m ai_orchestrator.cli classify-run run_20260522_120000_abcd12 --runs-dir .runs
+```
+
+```bash
+python -m ai_orchestrator.cli show-run run_20260522_120000_abcd12 --runs-dir .runs
+```
+
+```bash
+python -m ai_orchestrator.cli prepare-review run_20260522_120000_abcd12 \
+  --runs-dir .runs \
+  --required-profiles
+```
+
+Behavior:
+
+- `classify-run` is deterministic and read-only with respect to the target repo;
+- it does not run reviewers;
+- it does not create `REVIEW_FINDINGS.json`;
+- it does not approve or reject the run;
+- it does not apply or commit changes.
+
+Risk policy examples:
+
+- low-risk docs-only changes may require no mandatory reviewer profiles;
+- tests-only changes require `qa`;
+- source code changes typically require `qa` and `architecture`;
+- safety-critical orchestration files require `security`, `architecture`, `qa`, and `ops`;
+- data logic changes require `data` and `qa`.
+
+`prepare-review --required-profiles` reads `RISK_CLASSIFICATION.json` and prepares prompt packets only for `required_review_profiles`. This supports a stricter lifecycle:
+
+```text
+approved run
+-> classify-run
+-> prepare-review --required-profiles
+-> external reviewer(s)
+-> record-findings --profile ...
+-> human review
+```
+
+This risk layer supports near-autonomous self-improvement under human governance by making reviewer requirements deterministic before any future reviewer agent is involved.
+
 ### Findings to rework feedback
 
 `run-review-checks` and `record-findings` create structured findings, but they do not reject a run by themselves. `findings-feedback` turns open findings into concrete markdown feedback that can be reused for a rejected human review and then by `rework-run`.

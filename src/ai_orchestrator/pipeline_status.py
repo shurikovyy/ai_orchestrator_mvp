@@ -25,6 +25,11 @@ class PipelineTaskStatusSummary:
     findings_feedback_count: int
     reviewer_prompts_exists: bool
     reviewer_prompts_count: int
+    risk_classification_exists: bool
+    risk_level: str | None
+    change_type: str | None
+    required_review_profiles: list[str]
+    optional_review_profiles: list[str]
     acceptance_status: str
     application_status: str
     is_rework: bool
@@ -71,6 +76,8 @@ def _run_artifact_paths_for_missing(task_result: PipelineTaskResult, runs_dir: P
         "review_findings": str((run_dir / "REVIEW_FINDINGS.json").resolve()),
         "review_findings_markdown": str((run_dir / "REVIEW_FINDINGS.md").resolve()),
         "findings_feedback": str((run_dir / "REVIEW_FEEDBACK_FROM_FINDINGS.md").resolve()),
+        "risk_classification": str((run_dir / "RISK_CLASSIFICATION.json").resolve()),
+        "risk_classification_markdown": str((run_dir / "RISK_CLASSIFICATION.md").resolve()),
         "reviewer_prompts_dir": str((run_dir / "reviewer_prompts").resolve()),
         "reviewer_prompts_manifest": str((run_dir / "reviewer_prompts" / "MANIFEST.json").resolve()),
         "review_decision": str((run_dir / "REVIEW_DECISION.json").resolve()),
@@ -90,6 +97,8 @@ def _exists_from_artifacts(artifacts: dict[str, str]) -> dict[str, bool]:
         "review_findings": Path(artifacts["review_findings"]).exists(),
         "review_findings_markdown": Path(artifacts["review_findings_markdown"]).exists(),
         "findings_feedback": Path(artifacts["findings_feedback"]).exists(),
+        "risk_classification": Path(artifacts["risk_classification"]).exists(),
+        "risk_classification_markdown": Path(artifacts["risk_classification_markdown"]).exists(),
         "reviewer_prompts_manifest": Path(artifacts["reviewer_prompts_manifest"]).exists(),
         "review_decision": Path(artifacts["review_decision"]).exists(),
         "review_decision_md": Path(artifacts["review_decision_md"]).exists(),
@@ -118,6 +127,11 @@ def _build_task_summary_from_run_summary(task_result: PipelineTaskResult, run_su
         findings_feedback_count=run_summary.findings_feedback_count,
         reviewer_prompts_exists=run_summary.reviewer_prompts_exists,
         reviewer_prompts_count=run_summary.reviewer_prompts_count,
+        risk_classification_exists=run_summary.risk_classification_exists,
+        risk_level=run_summary.risk_level,
+        change_type=run_summary.change_type,
+        required_review_profiles=list(run_summary.required_review_profiles),
+        optional_review_profiles=list(run_summary.optional_review_profiles),
         acceptance_status=run_summary.acceptance_status,
         application_status=run_summary.application_status,
         is_rework=run_summary.is_rework,
@@ -148,6 +162,11 @@ def _build_missing_task_summary(task_result: PipelineTaskResult, runs_dir: Path)
         findings_feedback_count=0,
         reviewer_prompts_exists=False,
         reviewer_prompts_count=0,
+        risk_classification_exists=False,
+        risk_level=None,
+        change_type=None,
+        required_review_profiles=[],
+        optional_review_profiles=[],
         acceptance_status="not_accepted",
         application_status="not_applied",
         is_rework=False,
@@ -183,6 +202,14 @@ def _compute_counts(task_summaries: list[PipelineTaskStatusSummary]) -> dict[str
         "tasks_waiting_findings_feedback": sum(1 for task in task_summaries if task.next_action == "findings_feedback"),
         "tasks_waiting_rejected_review": sum(1 for task in task_summaries if task.next_action == "review_rejected"),
         "tasks_with_reviewer_prompts": sum(1 for task in task_summaries if task.reviewer_prompts_exists),
+        "tasks_risk_unclassified": sum(1 for task in task_summaries if task.risk_classification_exists is False),
+        "tasks_low_risk": sum(1 for task in task_summaries if task.risk_level == "low"),
+        "tasks_medium_risk": sum(1 for task in task_summaries if task.risk_level == "medium"),
+        "tasks_high_risk": sum(1 for task in task_summaries if task.risk_level == "high"),
+        "tasks_critical_risk": sum(1 for task in task_summaries if task.risk_level == "critical"),
+        "tasks_waiting_required_review_prompts": sum(
+            1 for task in task_summaries if task.next_action == "prepare_required_reviews"
+        ),
         "tasks_accepted": sum(1 for task in task_summaries if task.acceptance_status == "accepted"),
         "tasks_applied": sum(1 for task in task_summaries if task.application_status == "applied"),
         "tasks_waiting_apply": sum(1 for task in task_summaries if task.next_action == "apply_run"),
@@ -209,6 +236,10 @@ def _compute_pipeline_next_action(
         return "review_rejected"
     if any(task.next_action == "review_findings" for task in task_summaries):
         return "review_findings"
+    if any(task.next_action == "classify_run" for task in task_summaries):
+        return "classify_runs"
+    if any(task.next_action == "prepare_required_reviews" for task in task_summaries):
+        return "prepare_required_reviews"
     if any(task.next_action == "review_run" for task in task_summaries):
         return "review_runs"
     if any(task.next_action == "apply_run" for task in task_summaries):
@@ -273,6 +304,12 @@ def format_pipeline_status_text(summary: PipelineStatusSummary, *, show_paths: b
         f"tasks_waiting_findings_feedback={summary.counts['tasks_waiting_findings_feedback']}",
         f"tasks_waiting_rejected_review={summary.counts['tasks_waiting_rejected_review']}",
         f"tasks_with_reviewer_prompts={summary.counts['tasks_with_reviewer_prompts']}",
+        f"tasks_risk_unclassified={summary.counts['tasks_risk_unclassified']}",
+        f"tasks_low_risk={summary.counts['tasks_low_risk']}",
+        f"tasks_medium_risk={summary.counts['tasks_medium_risk']}",
+        f"tasks_high_risk={summary.counts['tasks_high_risk']}",
+        f"tasks_critical_risk={summary.counts['tasks_critical_risk']}",
+        f"tasks_waiting_required_review_prompts={summary.counts['tasks_waiting_required_review_prompts']}",
         f"tasks_accepted={summary.counts['tasks_accepted']}",
         f"tasks_applied={summary.counts['tasks_applied']}",
         f"tasks_waiting_apply={summary.counts['tasks_waiting_apply']}",
@@ -301,6 +338,10 @@ def format_pipeline_status_text(summary: PipelineStatusSummary, *, show_paths: b
             f"findings_feedback_count={task.findings_feedback_count}",
             f"reviewer_prompts_exists={_bool_text(task.reviewer_prompts_exists)}",
             f"reviewer_prompts_count={task.reviewer_prompts_count}",
+            f"risk_classification_exists={_bool_text(task.risk_classification_exists)}",
+            f"risk_level={task.risk_level or ''}",
+            f"change_type={task.change_type or ''}",
+            f"required_review_profiles={','.join(task.required_review_profiles)}",
             f"acceptance_status={task.acceptance_status}",
             f"application_status={task.application_status}",
             f"is_rework={_bool_text(task.is_rework)}",
@@ -340,6 +381,11 @@ def format_pipeline_status_json(summary: PipelineStatusSummary) -> str:
                 "findings_feedback_count": task.findings_feedback_count,
                 "reviewer_prompts_exists": task.reviewer_prompts_exists,
                 "reviewer_prompts_count": task.reviewer_prompts_count,
+                "risk_classification_exists": task.risk_classification_exists,
+                "risk_level": task.risk_level,
+                "change_type": task.change_type,
+                "required_review_profiles": task.required_review_profiles,
+                "optional_review_profiles": task.optional_review_profiles,
                 "acceptance_status": task.acceptance_status,
                 "application_status": task.application_status,
                 "is_rework": task.is_rework,

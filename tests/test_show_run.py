@@ -164,7 +164,7 @@ class ShowRunTests(unittest.TestCase):
         self.assertEqual(exit_code, 0, output)
         self.assertEqual(output_value(output, "validator_status"), "approved")
         self.assertEqual(output_value(output, "acceptance_status"), "not_accepted")
-        self.assertEqual(output_value(output, "next_action"), "review_run")
+        self.assertEqual(output_value(output, "next_action"), "classify_run")
 
     def test_show_run_for_human_approved_run_without_acceptance(self) -> None:
         with temporary_test_dir() as tmp:

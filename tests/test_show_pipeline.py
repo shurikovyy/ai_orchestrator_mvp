@@ -215,7 +215,7 @@ class ShowPipelineTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 0, output)
         self.assertEqual(output_value(output, "tasks_waiting_review"), "1")
-        self.assertEqual(output_value(output, "next_action"), "review_runs")
+        self.assertEqual(output_value(output, "next_action"), "classify_runs")
 
     def test_show_pipeline_with_human_approved_run(self) -> None:
         with temporary_test_dir() as tmp:

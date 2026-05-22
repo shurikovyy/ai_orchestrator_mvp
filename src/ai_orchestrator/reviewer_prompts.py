@@ -11,6 +11,7 @@ from ai_orchestrator.apply import build_run_application_context, load_run_state
 from ai_orchestrator.review import build_review_packet_data
 from ai_orchestrator.review_findings import load_run_findings
 from ai_orchestrator.review_profiles import get_review_profile, list_review_profiles
+from ai_orchestrator.risk_classification import load_run_risk_classification
 from ai_orchestrator.schemas import ReviewFindingsReport, ReviewFinding, RunState, StructuredExecutionReport
 from ai_orchestrator.validation import load_structured_report
 
@@ -75,7 +76,8 @@ class PrepareReviewResult:
     profiles: tuple[str, ...]
     prompts_dir: Path
     prompts: tuple[PreparedReviewerPrompt, ...]
-    manifest_path: Path
+    manifest_path: Path | None
+    message: str | None = None
 
 
 def _clip_text(text: str, *, limit: int) -> tuple[str, bool]:
@@ -102,6 +104,14 @@ def _resolve_profiles(*, profile_ids: list[str] | tuple[str, ...] | None, all_pr
         if get_review_profile(profile_id) is None:
             raise ValueError(f"review profile not found: {profile_id}")
     return selected
+
+
+def _resolve_required_profiles(*, run_id: str, runs_dir: str | Path) -> tuple[str, ...]:
+    run_dir = Path(runs_dir) / run_id
+    classification = load_run_risk_classification(run_dir)
+    if classification is None:
+        raise ValueError("risk classification not found; run classify-run first")
+    return tuple(classification.required_review_profiles)
 
 
 def _expected_output_template(*, run_id: str, profile_id: str) -> str:
@@ -317,6 +327,13 @@ def _load_manifest(path: Path, *, run_id: str) -> ReviewerPromptManifest:
     return manifest
 
 
+def load_reviewer_prompt_manifest(run_dir: str | Path) -> ReviewerPromptManifest | None:
+    manifest_path = Path(run_dir) / "reviewer_prompts" / "MANIFEST.json"
+    if not manifest_path.exists():
+        return None
+    return ReviewerPromptManifest.model_validate_json(manifest_path.read_text(encoding="utf-8-sig"))
+
+
 def write_reviewer_prompt_manifest(
     *,
     run_id: str,
@@ -345,16 +362,29 @@ def prepare_review_prompts(
     runs_dir: str | Path,
     profile_ids: list[str] | tuple[str, ...] | None = None,
     all_profiles: bool = False,
+    required_profiles: bool = False,
     output_dir: str | Path | None = None,
     force: bool = False,
 ) -> PrepareReviewResult:
-    profiles = _resolve_profiles(profile_ids=profile_ids, all_profiles=all_profiles)
     runs_dir_path = Path(runs_dir)
     run_dir = runs_dir_path / run_id
     if not run_dir.exists():
         raise FileNotFoundError(f"run does not exist: {run_id}")
+    if required_profiles:
+        profiles = _resolve_required_profiles(run_id=run_id, runs_dir=runs_dir_path)
+    else:
+        profiles = _resolve_profiles(profile_ids=profile_ids, all_profiles=all_profiles)
 
     prompts_dir = Path(output_dir).expanduser().resolve() if output_dir is not None else (run_dir / "reviewer_prompts").resolve()
+    if required_profiles and not profiles:
+        return PrepareReviewResult(
+            run_id=run_id,
+            profiles=tuple(),
+            prompts_dir=prompts_dir,
+            prompts=tuple(),
+            manifest_path=None,
+            message="no required review profiles for this run",
+        )
     prompt_targets = {
         profile_id: prompts_dir / f"{profile_id}_review_prompt.md"
         for profile_id in profiles
@@ -384,4 +414,5 @@ def prepare_review_prompts(
         prompts_dir=prompts_dir,
         prompts=tuple(prepared),
         manifest_path=manifest_path,
+        message=None,
     )

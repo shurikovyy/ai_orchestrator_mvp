@@ -6,6 +6,8 @@ from pathlib import Path
 
 from ai_orchestrator.apply import load_run_state
 from ai_orchestrator.review_findings import load_run_findings
+from ai_orchestrator.reviewer_prompts import load_reviewer_prompt_manifest
+from ai_orchestrator.risk_classification import load_run_risk_classification
 
 
 @dataclass(frozen=True)
@@ -23,6 +25,11 @@ class RunStatusSummary:
     findings_feedback_count: int
     reviewer_prompts_exists: bool
     reviewer_prompts_count: int
+    risk_classification_exists: bool
+    risk_level: str | None
+    change_type: str | None
+    required_review_profiles: list[str]
+    optional_review_profiles: list[str]
     acceptance_status: str
     application_status: str
     is_rework: bool
@@ -50,6 +57,8 @@ def _build_artifact_paths(run_dir: Path) -> dict[str, Path]:
         "review_findings": run_dir / "REVIEW_FINDINGS.json",
         "review_findings_markdown": run_dir / "REVIEW_FINDINGS.md",
         "findings_feedback": run_dir / "REVIEW_FEEDBACK_FROM_FINDINGS.md",
+        "risk_classification": run_dir / "RISK_CLASSIFICATION.json",
+        "risk_classification_markdown": run_dir / "RISK_CLASSIFICATION.md",
         "reviewer_prompts_dir": run_dir / "reviewer_prompts",
         "reviewer_prompts_manifest": run_dir / "reviewer_prompts" / "MANIFEST.json",
         "review_decision": run_dir / "REVIEW_DECISION.json",
@@ -68,6 +77,9 @@ def _compute_next_action(
     human_review_decision: str | None,
     blocking_findings: int,
     findings_feedback_exists: bool,
+    risk_classification_exists: bool,
+    required_review_profiles: list[str],
+    prepared_review_profiles: list[str],
     application_status: str,
     acceptance_exists: bool,
 ) -> str:
@@ -83,6 +95,12 @@ def _compute_next_action(
         return "manual_commit"
     if human_review_decision == "approved":
         return "apply_run"
+    if not risk_classification_exists:
+        return "classify_run"
+    if required_review_profiles:
+        missing_required = [profile for profile in required_review_profiles if profile not in set(prepared_review_profiles)]
+        if missing_required:
+            return "prepare_required_reviews"
     return "review_run"
 
 
@@ -109,6 +127,8 @@ def build_run_status_summary(*, run_id: str, runs_dir: str | Path) -> RunStatusS
         "review_findings": artifact_paths["review_findings"].exists(),
         "review_findings_markdown": artifact_paths["review_findings_markdown"].exists(),
         "findings_feedback": artifact_paths["findings_feedback"].exists(),
+        "risk_classification": artifact_paths["risk_classification"].exists(),
+        "risk_classification_markdown": artifact_paths["risk_classification_markdown"].exists(),
         "reviewer_prompts_manifest": artifact_paths["reviewer_prompts_manifest"].exists(),
         "review_decision": artifact_paths["review_decision"].exists(),
         "review_decision_md": artifact_paths["review_decision_md"].exists(),
@@ -131,12 +151,31 @@ def build_run_status_summary(*, run_id: str, runs_dir: str | Path) -> RunStatusS
     review_findings_source_kind = (
         findings_report.source_kind if findings_report is not None else state.review_findings_source_kind
     )
+    risk_classification = load_run_risk_classification(run_dir)
+    risk_classification_exists = risk_classification is not None or exists["risk_classification"]
+    risk_level = risk_classification.risk_level if risk_classification is not None else state.risk_level
+    change_type = risk_classification.change_type if risk_classification is not None else state.change_type
+    required_review_profiles = (
+        list(risk_classification.required_review_profiles)
+        if risk_classification is not None
+        else list(state.required_review_profiles)
+    )
+    optional_review_profiles = (
+        list(risk_classification.optional_review_profiles)
+        if risk_classification is not None
+        else list(state.optional_review_profiles)
+    )
+    prompt_manifest = load_reviewer_prompt_manifest(run_dir)
+    prepared_review_profiles = prompt_manifest.profiles if prompt_manifest is not None else []
     reviewer_prompts_count = _count_reviewer_prompts(artifact_paths["reviewer_prompts_dir"])
     next_action = _compute_next_action(
         validator_status=state.final_status,
         human_review_decision=human_review_decision,
         blocking_findings=blocking_findings,
         findings_feedback_exists=exists["findings_feedback"],
+        risk_classification_exists=risk_classification_exists,
+        required_review_profiles=required_review_profiles,
+        prepared_review_profiles=prepared_review_profiles,
         application_status=application_status,
         acceptance_exists=acceptance_exists,
     )
@@ -159,8 +198,13 @@ def build_run_status_summary(*, run_id: str, runs_dir: str | Path) -> RunStatusS
         review_findings_source_kind=review_findings_source_kind,
         findings_feedback_exists=exists["findings_feedback"],
         findings_feedback_count=state.findings_feedback_count,
-        reviewer_prompts_exists=reviewer_prompts_count > 0 or exists["reviewer_prompts_manifest"],
+        reviewer_prompts_exists=reviewer_prompts_count > 0,
         reviewer_prompts_count=reviewer_prompts_count,
+        risk_classification_exists=risk_classification_exists,
+        risk_level=risk_level,
+        change_type=change_type,
+        required_review_profiles=required_review_profiles,
+        optional_review_profiles=optional_review_profiles,
         acceptance_status="accepted" if acceptance_exists else "not_accepted",
         application_status=application_status,
         is_rework=bool(state.task.rework_of_run_id),
@@ -192,6 +236,11 @@ def format_run_status_text(summary: RunStatusSummary, *, show_paths: bool = Fals
         f"findings_feedback_count={summary.findings_feedback_count}",
         f"reviewer_prompts_exists={_bool_text(summary.reviewer_prompts_exists)}",
         f"reviewer_prompts_count={summary.reviewer_prompts_count}",
+        f"risk_classification_exists={_bool_text(summary.risk_classification_exists)}",
+        f"risk_level={summary.risk_level or ''}",
+        f"change_type={summary.change_type or ''}",
+        "required_review_profiles=" + ",".join(summary.required_review_profiles),
+        "optional_review_profiles=" + ",".join(summary.optional_review_profiles),
         f"acceptance_status={summary.acceptance_status}",
         f"application_status={summary.application_status}",
         f"is_rework={_bool_text(summary.is_rework)}",
@@ -212,6 +261,8 @@ def format_run_status_text(summary: RunStatusSummary, *, show_paths: bool = Fals
                 f"review_findings={summary.artifacts['review_findings']}",
                 f"review_findings_markdown={summary.artifacts['review_findings_markdown']}",
                 f"findings_feedback={summary.artifacts['findings_feedback']}",
+                f"risk_classification={summary.artifacts['risk_classification']}",
+                f"risk_classification_markdown={summary.artifacts['risk_classification_markdown']}",
                 f"reviewer_prompts_dir={summary.artifacts['reviewer_prompts_dir']}",
                 f"reviewer_prompts_manifest={summary.artifacts['reviewer_prompts_manifest']}",
                 f"review_decision={summary.artifacts['review_decision']}",
@@ -239,6 +290,11 @@ def format_run_status_json(summary: RunStatusSummary) -> str:
         "findings_feedback_count": summary.findings_feedback_count,
         "reviewer_prompts_exists": summary.reviewer_prompts_exists,
         "reviewer_prompts_count": summary.reviewer_prompts_count,
+        "risk_classification_exists": summary.risk_classification_exists,
+        "risk_level": summary.risk_level,
+        "change_type": summary.change_type,
+        "required_review_profiles": summary.required_review_profiles,
+        "optional_review_profiles": summary.optional_review_profiles,
         "acceptance_status": summary.acceptance_status,
         "application_status": summary.application_status,
         "is_rework": summary.is_rework,
