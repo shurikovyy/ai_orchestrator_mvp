@@ -56,8 +56,10 @@ def make_findings_payload(
     overall_decision: str = "pass",
     summary: str = "Review summary.",
     findings: list[dict] | None = None,
+    source_profile: str | None = None,
+    source_kind: str | None = None,
 ) -> dict:
-    return {
+    payload = {
         "schema_version": "1.0",
         "run_id": run_id,
         "created_at": "2026-05-21T10:00:00+00:00",
@@ -65,6 +67,11 @@ def make_findings_payload(
         "overall_decision": overall_decision,
         "findings": findings or [],
     }
+    if source_profile is not None:
+        payload["source_profile"] = source_profile
+    if source_kind is not None:
+        payload["source_kind"] = source_kind
+    return payload
 
 
 def make_approved_source_run(runs_dir: Path, *, task: TaskSpec | None = None) -> tuple[Path, str]:
@@ -331,6 +338,67 @@ class ReviewFindingsSchemaTests(unittest.TestCase):
                 )
             )
 
+    def test_duplicate_finding_ids_fail(self) -> None:
+        with self.assertRaisesRegex(ValueError, "duplicate finding id: F001"):
+            ReviewFindingsReport.model_validate(
+                make_findings_payload(
+                    run_id="run_123",
+                    overall_decision="pass",
+                    findings=[
+                        {
+                            "id": "F001",
+                            "reviewer": "qa",
+                            "category": "qa",
+                            "severity": "minor",
+                            "title": "First finding",
+                            "evidence": "Observed first issue.",
+                            "required_action": "Fix the first issue.",
+                            "status": "open",
+                        },
+                        {
+                            "id": "F001",
+                            "reviewer": "qa",
+                            "category": "correctness",
+                            "severity": "nit",
+                            "title": "Duplicate id",
+                            "evidence": "Observed second issue.",
+                            "required_action": "Use a different id.",
+                            "status": "open",
+                        },
+                    ],
+                )
+            )
+
+    def test_invalid_finding_file_paths_fail(self) -> None:
+        invalid_paths = [
+            "../src/apply.py",
+            "/etc/passwd",
+            r"C:\Users\x\file.py",
+            "src/../secrets.txt",
+            "   ",
+        ]
+        for invalid_path in invalid_paths:
+            with self.subTest(file=invalid_path):
+                with self.assertRaisesRegex(ValueError, "file"):
+                    ReviewFindingsReport.model_validate(
+                        make_findings_payload(
+                            run_id="run_123",
+                            findings=[
+                                {
+                                    "id": "F001",
+                                    "reviewer": "qa",
+                                    "category": "qa",
+                                    "severity": "minor",
+                                    "title": "Unsafe location",
+                                    "evidence": "The file path is unsafe.",
+                                    "required_action": "Use a safe relative path.",
+                                    "file": invalid_path,
+                                    "status": "open",
+                                }
+                            ],
+                        )
+                    )
+
     def test_overall_decision_cannot_be_pass_when_blocking_open_exists(self) -> None:
         with self.assertRaisesRegex(ValueError, "overall_decision cannot be pass"):
             ReviewFindingsReport.model_validate(
@@ -403,7 +471,154 @@ class RecordFindingsCommandTests(unittest.TestCase):
         self.assertEqual(state.review_findings_decision, "needs_rework")
         self.assertEqual(state.review_findings_blocking_count, 1)
         self.assertIsNotNone(state.review_findings_created_at)
+        self.assertEqual(state.review_findings_source_kind, "manual")
+        self.assertIsNone(state.review_findings_source_profile)
         self.assertIn("Missing regression test", findings_md_text)
+        self.assertIn("Source profile: `(none)`", findings_md_text)
+        self.assertIn("Source kind: `manual`", findings_md_text)
+
+    def test_record_findings_with_profile_enforces_reviewer_category_and_source_metadata(self) -> None:
+        with temporary_test_dir() as tmp:
+            runs_dir = tmp / ".runs"
+            run_dir, run_id = make_approved_source_run(runs_dir)
+            findings_file = write_findings_file(
+                tmp / "review_findings.json",
+                make_findings_payload(
+                    run_id=run_id,
+                    overall_decision="needs_rework",
+                    findings=[
+                        {
+                            "id": "F001",
+                            "reviewer": "qa",
+                            "category": "qa",
+                            "severity": "major",
+                            "title": "Missing regression test",
+                            "evidence": "The change has no regression test.",
+                            "required_action": "Add a regression test.",
+                            "file": "src\\ai_orchestrator\\apply.py",
+                            "status": "open",
+                        }
+                    ],
+                ),
+            )
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                exit_code = record_findings_main(
+                    [
+                        run_id,
+                        "--runs-dir",
+                        str(runs_dir),
+                        "--findings-file",
+                        str(findings_file),
+                        "--profile",
+                        "qa",
+                    ]
+                )
+            output = stdout.getvalue()
+            state = RunState.model_validate_json((run_dir / "state.json").read_text(encoding="utf-8"))
+            report = ReviewFindingsReport.model_validate_json((run_dir / "REVIEW_FINDINGS.json").read_text(encoding="utf-8"))
+            markdown = (run_dir / "REVIEW_FINDINGS.md").read_text(encoding="utf-8")
+
+        self.assertEqual(exit_code, 0, output)
+        self.assertEqual(output_value(output, "review_findings_source_profile"), "qa")
+        self.assertEqual(output_value(output, "review_findings_source_kind"), "reviewer_profile")
+        self.assertEqual(report.source_profile, "qa")
+        self.assertEqual(report.source_kind, "reviewer_profile")
+        self.assertEqual(report.findings[0].file, "src/ai_orchestrator/apply.py")
+        self.assertEqual(state.review_findings_source_profile, "qa")
+        self.assertEqual(state.review_findings_source_kind, "reviewer_profile")
+        self.assertIn("Source profile: `qa`", markdown)
+        self.assertIn("Source kind: `reviewer_profile`", markdown)
+
+    def test_record_findings_with_profile_fails_on_wrong_reviewer(self) -> None:
+        with temporary_test_dir() as tmp:
+            runs_dir = tmp / ".runs"
+            _run_dir, run_id = make_approved_source_run(runs_dir)
+            findings_file = write_findings_file(
+                tmp / "review_findings.json",
+                make_findings_payload(
+                    run_id=run_id,
+                    overall_decision="needs_rework",
+                    findings=[
+                        {
+                            "id": "F001",
+                            "reviewer": "security",
+                            "category": "qa",
+                            "severity": "major",
+                            "title": "Reviewer mismatch",
+                            "evidence": "The reviewer id does not match the selected profile.",
+                            "required_action": "Return findings for the selected profile only.",
+                            "status": "open",
+                        }
+                    ],
+                ),
+            )
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                exit_code = record_findings_main(
+                    [
+                        run_id,
+                        "--runs-dir",
+                        str(runs_dir),
+                        "--findings-file",
+                        str(findings_file),
+                        "--profile",
+                        "qa",
+                    ]
+                )
+            output = stdout.getvalue()
+
+        self.assertEqual(exit_code, 1, output)
+        self.assertEqual(output_value(output, "status"), "failed")
+        self.assertEqual(
+            output_value(output, "error"),
+            "finding reviewer does not match selected profile: expected qa, got security",
+        )
+
+    def test_record_findings_with_profile_fails_on_disallowed_category(self) -> None:
+        with temporary_test_dir() as tmp:
+            runs_dir = tmp / ".runs"
+            _run_dir, run_id = make_approved_source_run(runs_dir)
+            findings_file = write_findings_file(
+                tmp / "review_findings.json",
+                make_findings_payload(
+                    run_id=run_id,
+                    overall_decision="needs_rework",
+                    findings=[
+                        {
+                            "id": "F001",
+                            "reviewer": "qa",
+                            "category": "security",
+                            "severity": "major",
+                            "title": "Category mismatch",
+                            "evidence": "The category is outside the QA contract.",
+                            "required_action": "Use a QA-compatible category.",
+                            "status": "open",
+                        }
+                    ],
+                ),
+            )
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                exit_code = record_findings_main(
+                    [
+                        run_id,
+                        "--runs-dir",
+                        str(runs_dir),
+                        "--findings-file",
+                        str(findings_file),
+                        "--profile",
+                        "qa",
+                    ]
+                )
+            output = stdout.getvalue()
+
+        self.assertEqual(exit_code, 1, output)
+        self.assertEqual(output_value(output, "status"), "failed")
+        self.assertEqual(
+            output_value(output, "error"),
+            "finding category is not allowed for profile qa: security",
+        )
 
     def test_record_findings_fails_if_run_missing(self) -> None:
         with temporary_test_dir() as tmp:
@@ -718,6 +933,8 @@ class ShowStatusFindingsTests(unittest.TestCase):
         self.assertEqual(output_value(output, "findings_exists"), "true")
         self.assertEqual(output_value(output, "review_findings_decision"), "needs_rework")
         self.assertEqual(output_value(output, "blocking_findings"), "1")
+        self.assertEqual(output_value(output, "review_findings_source_profile"), "")
+        self.assertEqual(output_value(output, "review_findings_source_kind"), "manual")
         self.assertEqual(output_value(output, "findings_feedback_exists"), "false")
         self.assertEqual(output_value(output, "findings_feedback_count"), "0")
         self.assertEqual(output_value(output, "next_action"), "findings_feedback")

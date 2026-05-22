@@ -17,6 +17,8 @@ class RunStatusSummary:
     findings_exists: bool
     review_findings_decision: str
     blocking_findings: int
+    review_findings_source_profile: str | None
+    review_findings_source_kind: str | None
     findings_feedback_exists: bool
     findings_feedback_count: int
     reviewer_prompts_exists: bool
@@ -123,6 +125,12 @@ def build_run_status_summary(*, run_id: str, runs_dir: str | Path) -> RunStatusS
     findings_exists = findings_report is not None or exists["review_findings"]
     review_findings_decision = findings_report.overall_decision if findings_report is not None else (state.review_findings_decision or "empty")
     blocking_findings = findings_report.counts.blocking_open if findings_report is not None else (state.review_findings_blocking_count or 0)
+    review_findings_source_profile = (
+        findings_report.source_profile if findings_report is not None else state.review_findings_source_profile
+    )
+    review_findings_source_kind = (
+        findings_report.source_kind if findings_report is not None else state.review_findings_source_kind
+    )
     reviewer_prompts_count = _count_reviewer_prompts(artifact_paths["reviewer_prompts_dir"])
     next_action = _compute_next_action(
         validator_status=state.final_status,
@@ -147,6 +155,8 @@ def build_run_status_summary(*, run_id: str, runs_dir: str | Path) -> RunStatusS
         findings_exists=findings_exists,
         review_findings_decision=review_findings_decision,
         blocking_findings=blocking_findings,
+        review_findings_source_profile=review_findings_source_profile,
+        review_findings_source_kind=review_findings_source_kind,
         findings_feedback_exists=exists["findings_feedback"],
         findings_feedback_count=state.findings_feedback_count,
         reviewer_prompts_exists=reviewer_prompts_count > 0 or exists["reviewer_prompts_manifest"],
@@ -176,6 +186,8 @@ def format_run_status_text(summary: RunStatusSummary, *, show_paths: bool = Fals
         f"findings_exists={_bool_text(summary.findings_exists)}",
         f"review_findings_decision={summary.review_findings_decision}",
         f"blocking_findings={summary.blocking_findings}",
+        f"review_findings_source_profile={summary.review_findings_source_profile or ''}",
+        f"review_findings_source_kind={summary.review_findings_source_kind or ''}",
         f"findings_feedback_exists={_bool_text(summary.findings_feedback_exists)}",
         f"findings_feedback_count={summary.findings_feedback_count}",
         f"reviewer_prompts_exists={_bool_text(summary.reviewer_prompts_exists)}",
@@ -221,6 +233,8 @@ def format_run_status_json(summary: RunStatusSummary) -> str:
         "findings_exists": summary.findings_exists,
         "review_findings_decision": summary.review_findings_decision,
         "blocking_findings": summary.blocking_findings,
+        "review_findings_source_profile": summary.review_findings_source_profile,
+        "review_findings_source_kind": summary.review_findings_source_kind,
         "findings_feedback_exists": summary.findings_feedback_exists,
         "findings_feedback_count": summary.findings_feedback_count,
         "reviewer_prompts_exists": summary.reviewer_prompts_exists,

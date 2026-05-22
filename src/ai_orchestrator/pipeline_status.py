@@ -19,6 +19,8 @@ class PipelineTaskStatusSummary:
     findings_exists: bool
     review_findings_decision: str
     blocking_findings: int
+    review_findings_source_profile: str | None
+    review_findings_source_kind: str | None
     findings_feedback_exists: bool
     findings_feedback_count: int
     reviewer_prompts_exists: bool
@@ -110,6 +112,8 @@ def _build_task_summary_from_run_summary(task_result: PipelineTaskResult, run_su
         findings_exists=run_summary.findings_exists,
         review_findings_decision=run_summary.review_findings_decision,
         blocking_findings=run_summary.blocking_findings,
+        review_findings_source_profile=run_summary.review_findings_source_profile,
+        review_findings_source_kind=run_summary.review_findings_source_kind,
         findings_feedback_exists=run_summary.findings_feedback_exists,
         findings_feedback_count=run_summary.findings_feedback_count,
         reviewer_prompts_exists=run_summary.reviewer_prompts_exists,
@@ -138,6 +142,8 @@ def _build_missing_task_summary(task_result: PipelineTaskResult, runs_dir: Path)
         findings_exists=False,
         review_findings_decision="empty",
         blocking_findings=0,
+        review_findings_source_profile=None,
+        review_findings_source_kind=None,
         findings_feedback_exists=False,
         findings_feedback_count=0,
         reviewer_prompts_exists=False,
@@ -289,6 +295,8 @@ def format_pipeline_status_text(summary: PipelineStatusSummary, *, show_paths: b
             f"human_review_decision={task.human_review_decision or ''}",
             f"findings_exists={_bool_text(task.findings_exists)}",
             f"blocking_findings={task.blocking_findings}",
+            f"review_findings_source_profile={task.review_findings_source_profile or ''}",
+            f"review_findings_source_kind={task.review_findings_source_kind or ''}",
             f"findings_feedback_exists={_bool_text(task.findings_feedback_exists)}",
             f"findings_feedback_count={task.findings_feedback_count}",
             f"reviewer_prompts_exists={_bool_text(task.reviewer_prompts_exists)}",
@@ -326,6 +334,8 @@ def format_pipeline_status_json(summary: PipelineStatusSummary) -> str:
                 "findings_exists": task.findings_exists,
                 "review_findings_decision": task.review_findings_decision,
                 "blocking_findings": task.blocking_findings,
+                "review_findings_source_profile": task.review_findings_source_profile,
+                "review_findings_source_kind": task.review_findings_source_kind,
                 "findings_feedback_exists": task.findings_feedback_exists,
                 "findings_feedback_count": task.findings_feedback_count,
                 "reviewer_prompts_exists": task.reviewer_prompts_exists,

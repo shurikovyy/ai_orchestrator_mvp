@@ -332,7 +332,6 @@ def _check_unsafe_paths(context: DeterministicReviewContext) -> list[Determinist
                 title="Unsafe changed file path",
                 evidence=f"`{item.raw_path}` is unsafe because {item.reason}.",
                 required_action="Normalize changed_files to workspace-relative safe paths only.",
-                file=item.raw_path,
             )
         )
     return findings
@@ -405,6 +404,8 @@ def build_findings_report_from_checks(
         summary=summary,
         findings=findings,
         overall_decision=overall_decision,
+        source_profile="deterministic",
+        source_kind="deterministic",
     )
 
 

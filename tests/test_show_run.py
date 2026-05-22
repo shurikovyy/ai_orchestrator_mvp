@@ -326,6 +326,8 @@ class ShowRunTests(unittest.TestCase):
         self.assertEqual(payload["human_review_decision"], "approved")
         self.assertEqual(payload["application_status"], "not_applied")
         self.assertEqual(payload["next_action"], "apply_run")
+        self.assertIn("review_findings_source_profile", payload)
+        self.assertIn("review_findings_source_kind", payload)
         self.assertIn("artifacts", payload)
         self.assertIn("exists", payload)
         self.assertIn("final_report", payload["artifacts"])

@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+import re
 from typing import Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, Field, field_validator, model_validator
+
+_WINDOWS_DRIVE_PATH_RE = re.compile(r"^[a-zA-Z]:[\\/]")
+_REVIEW_FINDINGS_SOURCE_KINDS = {"manual", "deterministic", "reviewer_profile", "external"}
 
 
 class TaskPlanStepSpec(BaseModel):
@@ -219,13 +223,33 @@ class ReviewFinding(BaseModel):
             raise ValueError("required finding field must not be empty")
         return value
 
-    @field_validator("required_action", "file")
+    @field_validator("required_action")
     @classmethod
     def optional_strings_blank_to_none(cls, value: str | None) -> str | None:
         if value is None:
             return None
         value = value.strip()
         return value or None
+
+    @field_validator("file")
+    @classmethod
+    def file_must_be_safe_relative_path(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        raw_value = value.strip()
+        if not raw_value:
+            raise ValueError("file must not be empty when provided")
+        if _WINDOWS_DRIVE_PATH_RE.match(raw_value):
+            raise ValueError("file must be a relative path, not a drive-qualified path")
+        normalized = raw_value.replace("\\", "/")
+        if normalized.startswith("/"):
+            raise ValueError("file must be a relative path, not a rooted path")
+        normalized_path = PurePosixPath(normalized)
+        if normalized_path.is_absolute():
+            raise ValueError("file must be a relative path")
+        if ".." in normalized_path.parts:
+            raise ValueError("file path must not escape the workspace")
+        return "/".join(normalized_path.parts)
 
     @model_validator(mode="after")
     def compute_and_validate_blocking(self) -> "ReviewFinding":
@@ -270,6 +294,8 @@ class ReviewFindingsReport(BaseModel):
     summary: str
     findings: list[ReviewFinding] = Field(default_factory=list)
     overall_decision: Literal["pass", "needs_rework", "blocked"]
+    source_profile: str | None = None
+    source_kind: Literal["manual", "deterministic", "reviewer_profile", "external"] | None = None
     counts: ReviewFindingsCounts | None = None
 
     @field_validator("run_id", "summary")
@@ -278,6 +304,27 @@ class ReviewFindingsReport(BaseModel):
         value = value.strip()
         if not value:
             raise ValueError("required findings report field must not be empty")
+        return value
+
+    @field_validator("source_profile")
+    @classmethod
+    def source_profile_blank_to_none(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        return value or None
+
+    @field_validator("source_kind")
+    @classmethod
+    def source_kind_is_allowed(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip().lower()
+        if not value:
+            return None
+        if value not in _REVIEW_FINDINGS_SOURCE_KINDS:
+            allowed = ", ".join(sorted(_REVIEW_FINDINGS_SOURCE_KINDS))
+            raise ValueError(f"source_kind must be one of: {allowed}")
         return value
 
     @model_validator(mode="after")
@@ -303,6 +350,10 @@ class ReviewFindingsReport(BaseModel):
             raise ValueError("overall_decision must be blocked when critical open findings exist")
         if has_major_open and not has_critical_open and self.overall_decision != "needs_rework":
             raise ValueError("overall_decision must be needs_rework when major open findings exist")
+        if self.source_kind == "reviewer_profile" and not self.source_profile:
+            raise ValueError("source_profile is required when source_kind is reviewer_profile")
+        if self.source_kind == "deterministic" and self.source_profile not in {None, "deterministic"}:
+            raise ValueError("source_profile must be deterministic when source_kind is deterministic")
         return self
 
 
@@ -337,6 +388,8 @@ class RunState(BaseModel):
     review_findings_decision: str | None = None
     review_findings_blocking_count: int | None = Field(default=None, ge=0)
     review_findings_created_at: datetime | None = None
+    review_findings_source_profile: str | None = None
+    review_findings_source_kind: str | None = None
     findings_feedback_path: str | None = None
     findings_feedback_created_at: datetime | None = None
     findings_feedback_source_path: str | None = None
@@ -362,6 +415,8 @@ class RunState(BaseModel):
         "human_review_decision_path",
         "review_findings_path",
         "review_findings_decision",
+        "review_findings_source_profile",
+        "review_findings_source_kind",
         "findings_feedback_path",
         "findings_feedback_source_path",
         "apply_status",
@@ -397,6 +452,19 @@ class RunState(BaseModel):
             return None
         if value not in {"pass", "needs_rework", "blocked"}:
             raise ValueError("review_findings_decision must be one of: pass, needs_rework, blocked")
+        return value
+
+    @field_validator("review_findings_source_kind")
+    @classmethod
+    def review_findings_source_kind_is_allowed(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip().lower()
+        if not value:
+            return None
+        if value not in _REVIEW_FINDINGS_SOURCE_KINDS:
+            allowed = ", ".join(sorted(_REVIEW_FINDINGS_SOURCE_KINDS))
+            raise ValueError(f"review_findings_source_kind must be one of: {allowed}")
         return value
 
     @field_validator("apply_status")

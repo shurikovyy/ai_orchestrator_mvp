@@ -470,6 +470,11 @@ def build_record_findings_parser() -> argparse.ArgumentParser:
         help="Path to a REVIEW_FINDINGS-like JSON file.",
     )
     parser.add_argument(
+        "--profile",
+        default=None,
+        help="Optional reviewer profile id. When provided, enforce reviewer/category constraints for that profile.",
+    )
+    parser.add_argument(
         "--force",
         action="store_true",
         help="Overwrite an existing REVIEW_FINDINGS.json/REVIEW_FINDINGS.md for this run.",
@@ -1040,6 +1045,7 @@ def record_findings_main(argv: list[str] | None = None) -> int:
             run_id=args.run_id,
             runs_dir=args.runs_dir,
             findings_file=args.findings_file,
+            profile_id=args.profile,
             force=args.force,
         )
     except Exception as exc:  # noqa: BLE001 - CLI should print deterministic error text.
@@ -1051,6 +1057,8 @@ def record_findings_main(argv: list[str] | None = None) -> int:
     print("status=findings_recorded")
     print(f"overall_decision={result.overall_decision}")
     print(f"blocking_findings={result.blocking_findings}")
+    print(f"review_findings_source_profile={result.source_profile or ''}")
+    print(f"review_findings_source_kind={result.source_kind or ''}")
     print(f"review_findings={result.review_findings_path}")
     print(f"review_findings_markdown={result.review_findings_markdown_path}")
     print(f"state={result.state_path}")

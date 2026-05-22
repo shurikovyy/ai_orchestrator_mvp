@@ -848,6 +848,15 @@ python -m ai_orchestrator.cli record-findings run_20260521_120000_abcd12 \
   --findings-file review_findings.json
 ```
 
+Profile-aware ingestion for external reviewer output:
+
+```bash
+python -m ai_orchestrator.cli record-findings run_20260521_120000_abcd12 \
+  --runs-dir .runs \
+  --findings-file reviewer_findings.json \
+  --profile qa
+```
+
 Then inspect the run:
 
 ```bash
@@ -858,6 +867,20 @@ If blocking findings exist:
 
 - `review-run --decision approved` fails;
 - the normal flow is `review-run --decision rejected --feedback ...` and then `rework-run`.
+
+Ingestion hardening:
+
+- duplicate finding ids are rejected;
+- `finding.file` must be a safe relative workspace path;
+- with `--profile <id>`, every `finding.reviewer` must match that profile exactly;
+- with `--profile <id>`, every `finding.category` must be allowed by that reviewer profile contract;
+- `record-findings` does not silently rewrite reviewer ids or categories.
+
+Findings provenance:
+
+- `source_kind=manual` is recorded for plain manual ingestion by default;
+- `source_kind=reviewer_profile` and `source_profile=<id>` are recorded when `record-findings --profile <id>` is used;
+- `source_kind=deterministic` and `source_profile=deterministic` are recorded for `run-review-checks`.
 
 Future step:
 
@@ -943,6 +966,7 @@ Important rules:
   - no apply/commit
   - evidence-based findings
 - future LLM reviewer agents must emit `ReviewFinding`-compatible JSON, not free-form prose;
+- external reviewer outputs should be ingested with `record-findings --profile <id>` whenever the reviewer is operating under a built-in profile contract;
 - the `deterministic` profile is already active today through `run-review-checks`;
 - the other built-in profiles are future reviewer contracts and are not executed automatically in this stage.
 

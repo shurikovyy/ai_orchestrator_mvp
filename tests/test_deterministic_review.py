@@ -321,6 +321,8 @@ class DeterministicReviewTests(unittest.TestCase):
         self.assertEqual(state.review_findings_decision, result.report.overall_decision)
         self.assertEqual(state.review_findings_blocking_count, result.report.counts.blocking_open)
         self.assertIsNotNone(state.review_findings_created_at)
+        self.assertEqual(state.review_findings_source_profile, "deterministic")
+        self.assertEqual(state.review_findings_source_kind, "deterministic")
 
     def test_review_run_approved_fails_after_blocking_deterministic_finding(self) -> None:
         with temporary_test_dir() as tmp:
@@ -355,6 +357,8 @@ class DeterministicReviewTests(unittest.TestCase):
         self.assertEqual(output_value(output, "findings_exists"), "true")
         self.assertEqual(output_value(output, "review_findings_decision"), "pass")
         self.assertEqual(output_value(output, "blocking_findings"), "0")
+        self.assertEqual(output_value(output, "review_findings_source_profile"), "deterministic")
+        self.assertEqual(output_value(output, "review_findings_source_kind"), "deterministic")
 
     def test_show_run_next_action_findings_feedback_for_blocking_finding(self) -> None:
         with temporary_test_dir() as tmp:

@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from ai_orchestrator.apply import load_run_state
+from ai_orchestrator.review_profiles import get_review_profile
 from ai_orchestrator.schemas import ReviewFinding, ReviewFindingsReport
 
 
@@ -14,6 +15,8 @@ class RecordFindingsResult:
     findings_total: int
     overall_decision: str
     blocking_findings: int
+    source_profile: str | None
+    source_kind: str | None
     review_findings_path: Path
     review_findings_markdown_path: Path
     state_path: Path
@@ -54,6 +57,8 @@ def build_review_findings_markdown(report: ReviewFindingsReport) -> str:
         "",
         f"Overall decision: `{report.overall_decision}`",
         f"Created at: `{report.created_at.isoformat()}`",
+        f"Source profile: `{report.source_profile or '(none)'}`",
+        f"Source kind: `{report.source_kind or '(none)'}`",
         "",
         "## Summary",
         "",
@@ -150,6 +155,8 @@ def persist_review_findings_report(
     state.review_findings_decision = report.overall_decision
     state.review_findings_blocking_count = report.counts.blocking_open
     state.review_findings_created_at = report.created_at
+    state.review_findings_source_profile = report.source_profile
+    state.review_findings_source_kind = report.source_kind
     state.touch()
     state.save_json(run_dir / "state.json")
 
@@ -158,9 +165,47 @@ def persist_review_findings_report(
         findings_total=report.counts.total,
         overall_decision=report.overall_decision,
         blocking_findings=report.counts.blocking_open,
+        source_profile=report.source_profile,
+        source_kind=report.source_kind,
         review_findings_path=written_json_path.resolve(),
         review_findings_markdown_path=written_markdown_path.resolve(),
         state_path=(run_dir / "state.json").resolve(),
+    )
+
+
+def _report_with_source_metadata(
+    report: ReviewFindingsReport,
+    *,
+    source_profile: str | None,
+    source_kind: str | None,
+) -> ReviewFindingsReport:
+    payload = report.model_dump(mode="python")
+    payload["source_profile"] = source_profile
+    payload["source_kind"] = source_kind
+    return ReviewFindingsReport.model_validate(payload)
+
+
+def _enforce_profile_constraints(report: ReviewFindingsReport, *, profile_id: str) -> ReviewFindingsReport:
+    profile = get_review_profile(profile_id)
+    if profile is None:
+        raise ValueError(f"review profile not found: {profile_id}")
+    if report.source_profile is not None and report.source_profile != profile_id:
+        raise ValueError(
+            f"findings report source_profile does not match selected profile: expected {profile_id}, got {report.source_profile}"
+        )
+    for finding in report.findings:
+        if finding.reviewer != profile_id:
+            raise ValueError(
+                f"finding reviewer does not match selected profile: expected {profile_id}, got {finding.reviewer}"
+            )
+        if finding.category not in profile.finding_categories:
+            raise ValueError(
+                f"finding category is not allowed for profile {profile_id}: {finding.category}"
+            )
+    return _report_with_source_metadata(
+        report,
+        source_profile=profile_id,
+        source_kind="reviewer_profile",
     )
 
 
@@ -169,9 +214,19 @@ def record_review_findings(
     run_id: str,
     runs_dir: str | Path,
     findings_file: str | Path,
+    profile_id: str | None = None,
     force: bool = False,
 ) -> RecordFindingsResult:
     report = load_findings_file(findings_file)
+    if profile_id is not None:
+        report = _enforce_profile_constraints(report, profile_id=profile_id)
+    elif report.source_kind is None:
+        default_source_kind = "external" if report.source_profile else "manual"
+        report = _report_with_source_metadata(
+            report,
+            source_profile=report.source_profile,
+            source_kind=default_source_kind,
+        )
     return persist_review_findings_report(
         run_id=run_id,
         runs_dir=runs_dir,
