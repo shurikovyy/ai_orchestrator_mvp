@@ -29,6 +29,7 @@ from ai_orchestrator.risk_classification import classify_run_risk
 from ai_orchestrator.reviewer_prompts import prepare_review_prompts
 from ai_orchestrator.run_status import build_run_status_summary, format_run_status_json, format_run_status_text
 from ai_orchestrator.task_drafts import create_task_draft_scaffold
+from ai_orchestrator.task_draft_validation import validate_task_draft
 from ai_orchestrator.rework import execute_rework_run
 from ai_orchestrator.review_decision import load_review_target_run, record_review_decision
 from ai_orchestrator.schemas import RunState, TaskSpec
@@ -710,6 +711,31 @@ def build_draft_task_scaffold_parser() -> argparse.ArgumentParser:
         choices=["text", "json"],
         default="text",
         help="Output format. Defaults to text.",
+    )
+    return parser
+
+
+def build_validate_task_draft_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="ai-orchestrator validate-task-draft",
+        description="Validate one task draft deterministically without modifying tasks.yaml or running any execution backends.",
+    )
+    parser.add_argument("draft_id", help="Existing draft id to validate, for example draft_20260522_180244_31eb0d.")
+    parser.add_argument(
+        "--drafts-dir",
+        default=".task_drafts",
+        help="Directory containing draft folders. Defaults to .task_drafts.",
+    )
+    parser.add_argument(
+        "--format",
+        choices=["text", "json"],
+        default="text",
+        help="Output format. Defaults to text.",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite existing task_draft_validator_report artifacts if they already exist.",
     )
     return parser
 
@@ -1455,8 +1481,66 @@ def draft_task_scaffold_main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def validate_task_draft_main(argv: list[str] | None = None) -> int:
+    parser = build_validate_task_draft_parser()
+    args = parser.parse_args(argv)
+    try:
+        result = validate_task_draft(
+            draft_id=args.draft_id,
+            drafts_dir=args.drafts_dir,
+            force=args.force,
+        )
+    except Exception as exc:  # noqa: BLE001 - CLI should print deterministic error text.
+        if args.format == "json":
+            print(
+                json.dumps(
+                    {
+                        "draft_id": args.draft_id,
+                        "status": "failed",
+                        "error": str(exc),
+                    },
+                    indent=2,
+                    ensure_ascii=False,
+                )
+            )
+        else:
+            print(f"draft_id={args.draft_id}")
+            print("status=failed")
+            print(f"error={exc}")
+        return 1
+
+    payload = {
+        "draft_id": result.draft_id,
+        "status": "validated",
+        "validation_status": result.report.validation_status,
+        "valid_for_promotion": result.report.valid_for_promotion,
+        "blocking_findings": result.report.counts.blocking,
+        "warnings": result.report.counts.warnings,
+        "validator_report": str(result.report_path),
+        "validator_report_markdown": str(result.report_markdown_path),
+        "manifest": str(result.manifest_path),
+        "next_action": "promote_task_draft" if result.report.valid_for_promotion else "revise_task_draft",
+    }
+    if args.format == "json":
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+    else:
+        print(f"draft_id={payload['draft_id']}")
+        print(f"status={payload['status']}")
+        print(f"validation_status={payload['validation_status']}")
+        print(f"valid_for_promotion={str(payload['valid_for_promotion']).lower()}")
+        print(f"blocking_findings={payload['blocking_findings']}")
+        print(f"warnings={payload['warnings']}")
+        print(f"validator_report={payload['validator_report']}")
+        print(f"validator_report_markdown={payload['validator_report_markdown']}")
+        print(f"manifest={payload['manifest']}")
+        print(f"next_action={payload['next_action']}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
+    if args and args[0] == "validate-task-draft":
+        return validate_task_draft_main(args[1:])
     if args and args[0] == "draft-task-scaffold":
         return draft_task_scaffold_main(args[1:])
     if args and args[0] == "prepare-review":

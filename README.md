@@ -1972,3 +1972,79 @@ The scaffold preserves these constraints by default:
 - no promotion to `tasks.yaml`
 - no weakening of validation, review, apply, or safety gates
 - no automatic apply/accept/commit behavior
+
+### Validating task drafts
+
+After scaffold generation, the next deterministic step is validating the draft in place.
+
+Flow:
+
+```text
+raw_request.md
+-> draft-task-scaffold
+-> task_draft.yaml
+-> validate-task-draft
+-> task_draft_validator_report.json
+-> task_draft_validator_report.md
+-> later human review / later promotion
+```
+
+`validate-task-draft` is deterministic and safe:
+
+- it does not call Codex
+- it does not modify `tasks.yaml`
+- it does not run the pipeline
+- it does not create `.runs`
+- it only writes validator reports inside the draft directory
+
+Example:
+
+```bash
+python -m ai_orchestrator.cli draft-task-scaffold \
+  --request raw_request.md \
+  --title "Add show-failed-runs command" \
+  --task-id "show-failed-runs"
+
+python -m ai_orchestrator.cli validate-task-draft <draft_id>
+```
+
+Then inspect:
+
+```bash
+cat .task_drafts/<draft_id>/task_draft_validator_report.md
+```
+
+Validator artifacts:
+
+```text
+.task_drafts/<draft_id>/
+├── task_draft_validator_report.json
+└── task_draft_validator_report.md
+```
+
+The validator also updates `MANIFEST.json` with:
+
+- `validator_report`
+- `validator_report_md`
+- `validation_status`
+- `valid_for_promotion`
+- `validated_at`
+
+Validation status meanings:
+
+- `valid`: no errors or warnings; a later `promote-task-draft` stage may be allowed
+- `needs_revision`: no errors, but warnings remain; promotion is blocked for now
+- `invalid`: one or more blocking errors exist
+
+Why warnings block promotion for now:
+
+- open questions mean the task scope is still unresolved
+- empty or broad `files_allowed` means the scope is too loose
+- missing reviewer/risk clarity means later task execution would not be governed tightly enough
+
+Important rules for promotion readiness:
+
+- `target_task.enabled` must stay `false`
+- `files_allowed` should be narrowed before promotion
+- dangerous commands are rejected
+- `task_draft_validator_report.json` must show `valid_for_promotion=true` before any future promotion step

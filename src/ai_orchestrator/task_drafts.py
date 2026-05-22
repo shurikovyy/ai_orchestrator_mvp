@@ -150,9 +150,30 @@ class TaskDraft(BaseModel):
     def optional_string_lists_strip(cls, value: list[str]) -> list[str]:
         return [item.strip() for item in value if item.strip()]
 
-    @field_validator("files_allowed", "files_forbidden")
+    @field_validator("files_allowed")
     @classmethod
-    def file_lists_must_be_safe_relative(cls, value: list[str]) -> list[str]:
+    def files_allowed_must_be_safe_relative_or_broad_placeholder(cls, value: list[str]) -> list[str]:
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for raw in value:
+            candidate = raw.strip()
+            if not candidate:
+                continue
+            if candidate in {".", "*"}:
+                if candidate not in seen:
+                    seen.add(candidate)
+                    normalized.append(candidate)
+                continue
+            path = normalize_safe_relative_path(candidate, field_name="task draft file path")
+            if path in seen:
+                continue
+            seen.add(path)
+            normalized.append(path)
+        return normalized
+
+    @field_validator("files_forbidden")
+    @classmethod
+    def files_forbidden_must_be_safe_relative(cls, value: list[str]) -> list[str]:
         normalized: list[str] = []
         seen: set[str] = set()
         for raw in value:
@@ -210,6 +231,27 @@ class TaskDraftManifest(BaseModel):
     task_draft: str
     codex_prompt: str
     task_review: str
+    validator_report: str | None = None
+    validator_report_md: str | None = None
+    validation_status: str | None = None
+    valid_for_promotion: bool | None = None
+    validated_at: datetime | None = None
+
+    @field_validator("request_source", "draft_dir", "raw_request", "task_draft", "codex_prompt", "task_review")
+    @classmethod
+    def required_manifest_fields_not_empty(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("manifest required field must not be empty")
+        return value
+
+    @field_validator("validator_report", "validator_report_md", "validation_status")
+    @classmethod
+    def optional_manifest_strings_blank_to_none(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        return value or None
 
 
 @dataclass(frozen=True)
@@ -337,6 +379,7 @@ def _build_task_draft(
         acceptance_criteria=[
             "report.status=completed",
             "tests.status=passed",
+            "changed_files stay within the reviewed task scope",
         ],
         validation_requirements=[
             "EXECUTION_REPORT.json must be valid.",
@@ -398,6 +441,26 @@ def render_codex_prompt_markdown(draft: TaskDraft, raw_request_text: str) -> str
             "",
             draft.objective,
             "",
+            "## Non-goals",
+            "",
+            *[f"- {item}" for item in draft.non_goals],
+            "",
+            "## Files forbidden",
+            "",
+            *[f"- `{item}`" for item in draft.files_forbidden],
+            "",
+            "## Tests required",
+            "",
+            *[f"- {item}" for item in draft.tests_required],
+            "",
+            "## Commands to run",
+            "",
+            *[f"- `{item}`" for item in draft.commands_to_run],
+            "",
+            "## Acceptance criteria",
+            "",
+            *[f"- `{item}`" for item in draft.acceptance_criteria],
+            "",
             "## Raw request",
             "",
             "```text",
@@ -410,6 +473,8 @@ def render_codex_prompt_markdown(draft: TaskDraft, raw_request_text: str) -> str
             "- Tighten acceptance_criteria and validation_requirements.",
             "- Clarify tests_required and commands_to_run if the request implies more checks.",
             "- Preserve safety invariants and forbidden files unless the human reviewer explicitly changes them.",
+            "- Create EXECUTION_REPORT.json in the final execution stage.",
+            "- Do not commit changes automatically.",
             "",
             "## Output expectation",
             "",
@@ -422,6 +487,7 @@ def render_task_review_markdown(draft: TaskDraft) -> str:
     required_profiles = ", ".join(draft.required_review_profiles) if draft.required_review_profiles else "(none)"
     optional_profiles = ", ".join(draft.optional_review_profiles) if draft.optional_review_profiles else "(none)"
     allowed = ", ".join(draft.files_allowed) if draft.files_allowed else "(not confirmed yet)"
+    forbidden = ", ".join(draft.files_forbidden)
     return "\n".join(
         [
             "# Task Draft Review Checklist",
@@ -444,6 +510,11 @@ def render_task_review_markdown(draft: TaskDraft) -> str:
             "",
             "## Notes",
             "",
+            f"- Files allowed: `{allowed}`",
+            f"- Files forbidden: `{forbidden}`",
+            f"- Risk level: `{draft.risk_level}`",
+            "- Open questions:",
+            *([f"  - {item}" for item in draft.open_questions] if draft.open_questions else ["  - (none)"]),
             "- This scaffold is deterministic and intentionally conservative.",
             "- Promotion to tasks.yaml is a later step and is out of scope for this stage.",
             "- If files_allowed or risk assumptions change, update task_draft.yaml before any validation/promotion step.",
@@ -551,3 +622,20 @@ def create_task_draft_scaffold(
         task_review_path=task_review_path.resolve(),
         manifest_path=manifest_path.resolve(),
     )
+
+
+def load_task_draft(path: str | Path) -> TaskDraft:
+    yaml = _load_yaml_module()
+    draft_path = Path(path)
+    payload = yaml.safe_load(draft_path.read_text(encoding="utf-8"))
+    return TaskDraft.model_validate(payload)
+
+
+def load_task_draft_manifest(path: str | Path) -> TaskDraftManifest:
+    manifest_path = Path(path)
+    return TaskDraftManifest.model_validate_json(manifest_path.read_text(encoding="utf-8"))
+
+
+def save_task_draft_manifest(path: str | Path, manifest: TaskDraftManifest) -> None:
+    manifest_path = Path(path)
+    manifest_path.write_text(manifest.model_dump_json(indent=2), encoding="utf-8")
