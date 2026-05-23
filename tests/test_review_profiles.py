@@ -22,6 +22,7 @@ from ai_orchestrator.review_profiles import (
 from ai_orchestrator.schemas import ReviewFinding
 
 REVIEWER_TEMPLATES_DIR = Path(__file__).resolve().parents[1] / "src" / "ai_orchestrator" / "prompts" / "reviewers"
+MAINTAINABILITY_POLICY_PATH = Path(__file__).resolve().parents[1] / "docs" / "maintainability_policy.md"
 
 
 def output_value(output: str, key: str) -> str:
@@ -37,7 +38,7 @@ class ReviewProfilesTests(unittest.TestCase):
         profile_ids = {profile.id for profile in BUILTIN_REVIEW_PROFILES}
         self.assertEqual(
             profile_ids,
-            {"deterministic", "qa", "architecture", "ops", "security", "business", "data"},
+            {"deterministic", "qa", "architecture", "maintainability", "ops", "security", "business", "data"},
         )
 
     def test_profile_ids_are_unique(self) -> None:
@@ -75,11 +76,22 @@ class ReviewProfilesTests(unittest.TestCase):
         security_profile = next(profile for profile in BUILTIN_REVIEW_PROFILES if profile.id == "security")
         self.assertIn("Security", security_profile.prompt_template)
 
+    def test_maintainability_profile_validates_and_contains_maintainability_category(self) -> None:
+        maintainability = next(profile for profile in BUILTIN_REVIEW_PROFILES if profile.id == "maintainability")
+        self.assertIsInstance(maintainability, ReviewProfile)
+        self.assertIn("maintainability", maintainability.finding_categories)
+        self.assertEqual(maintainability.reviewer_type, "llm_future")
+
+    def test_maintainability_prompt_template_contains_recognizable_marker(self) -> None:
+        maintainability = next(profile for profile in BUILTIN_REVIEW_PROFILES if profile.id == "maintainability")
+        self.assertIn("Maintainability Reviewer", maintainability.prompt_template)
+
     def test_reviewer_prompt_template_files_exist_on_disk(self) -> None:
         expected = {
             "deterministic.md",
             "qa.md",
             "architecture.md",
+            "maintainability.md",
             "ops.md",
             "security.md",
             "business.md",
@@ -88,6 +100,14 @@ class ReviewProfilesTests(unittest.TestCase):
         actual = {path.name for path in REVIEWER_TEMPLATES_DIR.glob("*.md")}
         self.assertTrue(expected.issubset(actual))
 
+    def test_maintainability_policy_doc_exists_and_mentions_key_principles(self) -> None:
+        self.assertTrue(MAINTAINABILITY_POLICY_PATH.exists())
+        content = MAINTAINABILITY_POLICY_PATH.read_text(encoding="utf-8")
+        self.assertIn("human readability", content.lower())
+        self.assertIn("simple functions", content.lower())
+        self.assertIn("cli thin", content.lower())
+        self.assertIn("hidden side effects", content.lower())
+
     def test_list_review_profiles_text_output_includes_profiles_total_and_known_ids(self) -> None:
         stdout = StringIO()
         with redirect_stdout(stdout):
@@ -95,9 +115,10 @@ class ReviewProfilesTests(unittest.TestCase):
         output = stdout.getvalue()
 
         self.assertEqual(exit_code, 0, output)
-        self.assertEqual(output_value(output, "profiles_total"), "7")
+        self.assertEqual(output_value(output, "profiles_total"), "8")
         self.assertIn("profile_id=qa", output)
         self.assertIn("profile_id=security", output)
+        self.assertIn("profile_id=maintainability", output)
 
     def test_list_review_profiles_json_output_returns_valid_json(self) -> None:
         stdout = StringIO()
@@ -106,8 +127,9 @@ class ReviewProfilesTests(unittest.TestCase):
         payload = json.loads(stdout.getvalue())
 
         self.assertEqual(exit_code, 0)
-        self.assertEqual(payload["profiles_total"], 7)
+        self.assertEqual(payload["profiles_total"], 8)
         self.assertTrue(any(profile["id"] == "qa" for profile in payload["profiles"]))
+        self.assertTrue(any(profile["id"] == "maintainability" for profile in payload["profiles"]))
 
     def test_show_review_profile_text_output_includes_focus_areas_and_categories(self) -> None:
         stdout = StringIO()
@@ -134,6 +156,17 @@ class ReviewProfilesTests(unittest.TestCase):
         self.assertIn("prompt_template", payload)
         self.assertIn("Security Reviewer Prompt Template", payload["prompt_template"])
 
+    def test_show_review_profile_maintainability_json_is_valid(self) -> None:
+        stdout = StringIO()
+        with redirect_stdout(stdout):
+            exit_code = show_review_profile_main(["maintainability", "--format", "json"])
+        payload = json.loads(stdout.getvalue())
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["id"], "maintainability")
+        self.assertIn("prompt_template", payload)
+        self.assertIn("Maintainability Reviewer Prompt Template", payload["prompt_template"])
+
     def test_show_review_profile_missing_id_returns_nonzero_and_clear_error(self) -> None:
         stdout = StringIO()
         with redirect_stdout(stdout):
@@ -157,5 +190,5 @@ class ReviewProfilesTests(unittest.TestCase):
 
     def test_format_review_profiles_text_is_stable(self) -> None:
         output = format_review_profiles_text(list_review_profiles())
-        self.assertTrue(output.startswith("profiles_total=7"))
+        self.assertTrue(output.startswith("profiles_total=8"))
         self.assertIn('title="QA Reviewer"', output)

@@ -214,6 +214,106 @@ class DeterministicReviewTests(unittest.TestCase):
         self.assertTrue(any(f.title == "High-risk orchestration/safety file changed" for f in result.report.findings))
         self.assertEqual(result.report.overall_decision, "needs_rework")
 
+    def test_cli_module_touched_creates_non_blocking_maintainability_finding(self) -> None:
+        with temporary_test_dir() as tmp:
+            run_dir, runs_dir = make_run_fixture(
+                tmp,
+                changed_files=["src/ai_orchestrator/cli.py", "tests/test_cli.py", "EXECUTION_REPORT.json"],
+                workspace_files={
+                    "src/ai_orchestrator/cli.py": "def main():\n    return 0\n",
+                    "tests/test_cli.py": "def test_cli():\n    assert True\n",
+                },
+            )
+
+            result = run_deterministic_review_checks(run_id=run_dir.name, runs_dir=runs_dir)
+
+        finding = next((f for f in result.report.findings if f.title == "CLI module touched"), None)
+        self.assertIsNotNone(finding)
+        self.assertEqual(finding.category, "maintainability")
+        self.assertEqual(finding.severity, "minor")
+        self.assertEqual(result.report.counts.blocking_open, 0)
+
+    def test_cli_plus_multiple_source_modules_creates_blocking_maintainability_finding(self) -> None:
+        with temporary_test_dir() as tmp:
+            workspace_files = {
+                "src/ai_orchestrator/cli.py": "def main():\n    return 0\n",
+                "src/ai_orchestrator/review.py": "def review():\n    return 'ok'\n",
+                "src/ai_orchestrator/rework.py": "def rework():\n    return 'ok'\n",
+                "src/ai_orchestrator/run_status.py": "VALUE = 'status'\n",
+                "tests/test_cli.py": "def test_cli():\n    assert True\n",
+            }
+            run_dir, runs_dir = make_run_fixture(
+                tmp,
+                changed_files=[*workspace_files.keys(), "EXECUTION_REPORT.json"],
+                workspace_files=workspace_files,
+            )
+
+            result = run_deterministic_review_checks(run_id=run_dir.name, runs_dir=runs_dir)
+
+        finding = next((f for f in result.report.findings if f.title == "CLI and multiple source modules changed together"), None)
+        self.assertIsNotNone(finding)
+        self.assertEqual(finding.category, "maintainability")
+        self.assertEqual(finding.severity, "major")
+        self.assertGreaterEqual(result.report.counts.blocking_open, 1)
+
+    def test_schemas_module_touched_creates_non_blocking_maintainability_finding(self) -> None:
+        with temporary_test_dir() as tmp:
+            run_dir, runs_dir = make_run_fixture(
+                tmp,
+                changed_files=["src/ai_orchestrator/schemas.py", "tests/test_schemas.py", "EXECUTION_REPORT.json"],
+                workspace_files={
+                    "src/ai_orchestrator/schemas.py": "class Demo:\n    pass\n",
+                    "tests/test_schemas.py": "def test_demo():\n    assert True\n",
+                },
+            )
+
+            result = run_deterministic_review_checks(run_id=run_dir.name, runs_dir=runs_dir)
+
+        finding = next((f for f in result.report.findings if f.title == "Shared schema module touched"), None)
+        self.assertIsNotNone(finding)
+        self.assertEqual(finding.category, "maintainability")
+        self.assertEqual(finding.severity, "minor")
+
+    def test_large_python_module_over_seven_hundred_lines_creates_minor_maintainability_finding(self) -> None:
+        with temporary_test_dir() as tmp:
+            large_module = "\n".join(f"LINE_{index} = {index}" for index in range(701)) + "\n"
+            run_dir, runs_dir = make_run_fixture(
+                tmp,
+                changed_files=["src/demo.py", "tests/test_demo.py", "EXECUTION_REPORT.json"],
+                workspace_files={
+                    "src/demo.py": large_module,
+                    "tests/test_demo.py": "def test_demo():\n    assert True\n",
+                },
+            )
+
+            result = run_deterministic_review_checks(run_id=run_dir.name, runs_dir=runs_dir)
+
+        finding = next((f for f in result.report.findings if f.title == "Large Python module touched"), None)
+        self.assertIsNotNone(finding)
+        self.assertEqual(finding.category, "maintainability")
+        self.assertEqual(finding.severity, "minor")
+        self.assertEqual(result.report.counts.blocking_open, 0)
+
+    def test_large_python_module_over_twelve_hundred_lines_creates_major_blocking_finding(self) -> None:
+        with temporary_test_dir() as tmp:
+            huge_module = "\n".join(f"LINE_{index} = {index}" for index in range(1201)) + "\n"
+            run_dir, runs_dir = make_run_fixture(
+                tmp,
+                changed_files=["src/demo.py", "tests/test_demo.py", "EXECUTION_REPORT.json"],
+                workspace_files={
+                    "src/demo.py": huge_module,
+                    "tests/test_demo.py": "def test_demo():\n    assert True\n",
+                },
+            )
+
+            result = run_deterministic_review_checks(run_id=run_dir.name, runs_dir=runs_dir)
+
+        finding = next((f for f in result.report.findings if f.title == "Very large Python module touched"), None)
+        self.assertIsNotNone(finding)
+        self.assertEqual(finding.category, "maintainability")
+        self.assertEqual(finding.severity, "major")
+        self.assertGreaterEqual(result.report.counts.blocking_open, 1)
+
     def test_broad_change_more_than_ten_files_creates_major_blocking_finding(self) -> None:
         with temporary_test_dir() as tmp:
             docs_files = {f"docs/file_{index}.md": f"# File {index}\n" for index in range(11)}

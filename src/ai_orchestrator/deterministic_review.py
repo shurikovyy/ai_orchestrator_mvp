@@ -21,6 +21,8 @@ _HIGH_RISK_FILES = {
     "src/ai_orchestrator/backends/codex_cli.py",
     "src/ai_orchestrator/schemas.py",
 }
+_CLI_MODULE_PATH = "src/ai_orchestrator/cli.py"
+_SHARED_SCHEMA_MODULE_PATH = "src/ai_orchestrator/schemas.py"
 _RUNTIME_DIR_NAMES = {
     "__pycache__",
     ".pytest_cache",
@@ -96,9 +98,26 @@ def _normalize_profiles(profiles: list[str] | tuple[str, ...] | None) -> tuple[s
 def _profile_checks(profiles: tuple[str, ...]) -> set[str]:
     enabled: set[str] = set()
     mapping = {
-        "default": {"runtime", "report_missing", "source_without_tests", "tests_without_source_or_docs", "high_risk", "breadth", "path_safety"},
+        "default": {
+            "runtime",
+            "report_missing",
+            "source_without_tests",
+            "tests_without_source_or_docs",
+            "high_risk",
+            "breadth",
+            "path_safety",
+            "maintainability",
+        },
         "docs-only": {"runtime", "report_missing", "tests_without_source_or_docs", "breadth", "path_safety"},
-        "code-safety": {"runtime", "report_missing", "source_without_tests", "high_risk", "breadth", "path_safety"},
+        "code-safety": {
+            "runtime",
+            "report_missing",
+            "source_without_tests",
+            "high_risk",
+            "breadth",
+            "path_safety",
+            "maintainability",
+        },
     }
     for profile in profiles:
         enabled.update(mapping[profile])
@@ -337,6 +356,109 @@ def _check_unsafe_paths(context: DeterministicReviewContext) -> list[Determinist
     return findings
 
 
+def _workspace_line_count(context: DeterministicReviewContext, path: str) -> int | None:
+    workspace_path = context.workspace_dir / Path(path)
+    if not workspace_path.is_file():
+        return None
+    text = workspace_path.read_text(encoding="utf-8", errors="replace")
+    return len(text.splitlines())
+
+
+def _check_large_python_modules(context: DeterministicReviewContext) -> list[DeterministicReviewCheckResult]:
+    findings: list[DeterministicReviewCheckResult] = []
+    for path in context.normalized_changed_files:
+        if not path.endswith(".py"):
+            continue
+        line_count = _workspace_line_count(context, path)
+        if line_count is None or line_count <= 700:
+            continue
+        if line_count > 1200:
+            findings.append(
+                DeterministicReviewCheckResult(
+                    category="maintainability",
+                    severity="major",
+                    title="Very large Python module touched",
+                    evidence=f"`{path}` contains {line_count} lines in the workspace, which exceeds the major maintainability threshold.",
+                    required_action="Split/refactor the module or justify why touching a very large module remains safe and maintainable.",
+                    file=path,
+                )
+            )
+            continue
+        findings.append(
+            DeterministicReviewCheckResult(
+                category="maintainability",
+                severity="minor",
+                title="Large Python module touched",
+                evidence=f"`{path}` contains {line_count} lines in the workspace, which exceeds the maintainability visibility threshold.",
+                required_action="Consider whether the change should stay localized or whether a future focused refactor is needed.",
+                file=path,
+            )
+        )
+    return findings
+
+
+def _check_cli_module_touched(context: DeterministicReviewContext) -> list[DeterministicReviewCheckResult]:
+    if _CLI_MODULE_PATH not in context.normalized_changed_files:
+        return []
+    source_files = [path for path in context.normalized_changed_files if _is_source_python(path)]
+    if len(source_files) > 3:
+        return [
+            DeterministicReviewCheckResult(
+                category="maintainability",
+                severity="major",
+                title="CLI and multiple source modules changed together",
+                evidence=(
+                    f"`{_CLI_MODULE_PATH}` changed together with {len(source_files)} source files, which broadens the CLI/domain "
+                    "change surface."
+                ),
+                required_action="Split the task or justify why broad CLI and domain changes should remain coupled.",
+                file=_CLI_MODULE_PATH,
+            )
+        ]
+    return [
+        DeterministicReviewCheckResult(
+            category="maintainability",
+            severity="minor",
+            title="CLI module touched",
+            evidence=f"`{_CLI_MODULE_PATH}` changed in this run.",
+            required_action="Keep CLI changes thin and move domain logic into focused modules when possible.",
+            file=_CLI_MODULE_PATH,
+        )
+    ]
+
+
+def _check_shared_schema_module_touched(context: DeterministicReviewContext) -> list[DeterministicReviewCheckResult]:
+    if _SHARED_SCHEMA_MODULE_PATH not in context.normalized_changed_files:
+        return []
+    other_source_files = [
+        path for path in context.normalized_changed_files if _is_source_python(path) and path != _SHARED_SCHEMA_MODULE_PATH
+    ]
+    if len(other_source_files) > 3:
+        return [
+            DeterministicReviewCheckResult(
+                category="maintainability",
+                severity="major",
+                title="Shared schema module changed alongside multiple source modules",
+                evidence=(
+                    f"`{_SHARED_SCHEMA_MODULE_PATH}` changed together with {len(other_source_files)} other source files, which "
+                    "increases shared-model coupling risk."
+                ),
+                required_action="Ensure new models belong in the shared schema layer or split domain-specific models into focused modules.",
+                file=_SHARED_SCHEMA_MODULE_PATH,
+            )
+        ]
+    return [
+        DeterministicReviewCheckResult(
+            category="maintainability",
+            severity="minor",
+            title="Shared schema module touched",
+            evidence=f"`{_SHARED_SCHEMA_MODULE_PATH}` changed in this run.",
+            required_action="Ensure new models belong in shared schemas and consider a domain-specific schema module if the scope grows.",
+            file=_SHARED_SCHEMA_MODULE_PATH,
+        )
+    ]
+
+
 def _run_checks(context: DeterministicReviewContext) -> list[DeterministicReviewCheckResult]:
     enabled_checks = _profile_checks(context.profiles)
     findings: list[DeterministicReviewCheckResult] = []
@@ -354,6 +476,10 @@ def _run_checks(context: DeterministicReviewContext) -> list[DeterministicReview
         findings.extend(_check_high_risk_files(context))
     if "breadth" in enabled_checks:
         findings.extend(_check_broad_change(context))
+    if "maintainability" in enabled_checks:
+        findings.extend(_check_large_python_modules(context))
+        findings.extend(_check_cli_module_touched(context))
+        findings.extend(_check_shared_schema_module_touched(context))
     return findings
 
 

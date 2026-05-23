@@ -180,6 +180,7 @@ class RiskClassificationRuleTests(unittest.TestCase):
         self.assertEqual(classification.risk_level, "high")
         self.assertEqual(classification.change_type, "source_code")
         self.assertEqual(classification.required_review_profiles, ["qa", "architecture"])
+        self.assertIn("maintainability", classification.optional_review_profiles)
 
     def test_source_with_tests_is_medium_and_requires_qa_architecture(self) -> None:
         classification = classify_changed_files(
@@ -189,15 +190,19 @@ class RiskClassificationRuleTests(unittest.TestCase):
         self.assertEqual(classification.risk_level, "medium")
         self.assertEqual(classification.change_type, "source_and_tests")
         self.assertEqual(classification.required_review_profiles, ["qa", "architecture"])
+        self.assertIn("maintainability", classification.optional_review_profiles)
 
-    def test_safety_critical_file_is_critical_and_requires_four_profiles(self) -> None:
+    def test_safety_critical_file_is_critical_and_requires_maintainability_too(self) -> None:
         classification = classify_changed_files(
             run_id="run_1",
             changed_files=["src/ai_orchestrator/apply.py", "EXECUTION_REPORT.json"],
         )
         self.assertEqual(classification.risk_level, "critical")
         self.assertEqual(classification.change_type, "safety_critical")
-        self.assertEqual(classification.required_review_profiles, ["security", "architecture", "qa", "ops"])
+        self.assertEqual(
+            classification.required_review_profiles,
+            ["security", "architecture", "qa", "ops", "maintainability"],
+        )
 
     def test_data_logic_file_is_high_and_requires_data_and_qa(self) -> None:
         classification = classify_changed_files(
@@ -214,12 +219,14 @@ class RiskClassificationRuleTests(unittest.TestCase):
         self.assertEqual(classification.risk_level, "high")
         self.assertIn("architecture", classification.required_review_profiles)
         self.assertIn("qa", classification.required_review_profiles)
+        self.assertIn("maintainability", classification.required_review_profiles)
 
     def test_broad_change_over_twenty_is_critical(self) -> None:
         changed_files = [f"docs/file_{i}.md" for i in range(21)] + ["EXECUTION_REPORT.json"]
         classification = classify_changed_files(run_id="run_1", changed_files=changed_files)
         self.assertEqual(classification.risk_level, "critical")
         self.assertIn("ops", classification.required_review_profiles)
+        self.assertIn("maintainability", classification.required_review_profiles)
 
     def test_unsafe_path_is_critical_and_requires_security_ops(self) -> None:
         classification = classify_changed_files(
@@ -238,6 +245,32 @@ class RiskClassificationRuleTests(unittest.TestCase):
         self.assertEqual(classification.risk_level, "medium")
         self.assertEqual(classification.change_type, "mixed")
         self.assertEqual(classification.required_review_profiles, ["qa", "architecture"])
+
+    def test_maintainability_sensitive_task_intake_module_requires_maintainability_architecture_and_qa(self) -> None:
+        classification = classify_changed_files(
+            run_id="run_1",
+            changed_files=["src/ai_orchestrator/task_drafts.py", "EXECUTION_REPORT.json"],
+        )
+        self.assertEqual(classification.risk_level, "high")
+        self.assertEqual(
+            classification.required_review_profiles,
+            ["architecture", "qa", "maintainability"],
+        )
+
+    def test_docs_only_change_does_not_require_maintainability(self) -> None:
+        classification = classify_changed_files(
+            run_id="run_1",
+            changed_files=["docs/guide.md", "README.md", "EXECUTION_REPORT.json"],
+        )
+        self.assertNotIn("maintainability", classification.required_review_profiles)
+
+    def test_small_source_and_tests_change_keeps_maintainability_optional_not_required(self) -> None:
+        classification = classify_changed_files(
+            run_id="run_1",
+            changed_files=["src/demo.py", "tests/test_demo.py", "EXECUTION_REPORT.json"],
+        )
+        self.assertNotIn("maintainability", classification.required_review_profiles)
+        self.assertIn("maintainability", classification.optional_review_profiles)
 
 
 class ClassifyRunCommandTests(unittest.TestCase):
@@ -264,6 +297,7 @@ class ClassifyRunCommandTests(unittest.TestCase):
         self.assertEqual(state.risk_level, "high")
         self.assertEqual(state.change_type, "source_code")
         self.assertEqual(state.required_review_profiles, ["qa", "architecture"])
+        self.assertIn("maintainability", state.optional_review_profiles)
         self.assertIsNotNone(classification)
         self.assertEqual(classification.risk_level, "high")
 
@@ -362,12 +396,14 @@ class PrepareReviewRequiredProfilesTests(unittest.TestCase):
             architecture_prompt_exists = (prompts_dir / "architecture_review_prompt.md").exists()
             qa_prompt_exists = (prompts_dir / "qa_review_prompt.md").exists()
             ops_prompt_exists = (prompts_dir / "ops_review_prompt.md").exists()
+            maintainability_prompt_exists = (prompts_dir / "maintainability_review_prompt.md").exists()
 
         self.assertEqual(exit_code, 0, output)
         self.assertTrue(security_prompt_exists)
         self.assertTrue(architecture_prompt_exists)
         self.assertTrue(qa_prompt_exists)
         self.assertTrue(ops_prompt_exists)
+        self.assertTrue(maintainability_prompt_exists)
 
     def test_prepare_review_required_profiles_with_no_required_profiles_succeeds_as_noop(self) -> None:
         with temporary_test_dir() as tmp:

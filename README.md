@@ -950,6 +950,7 @@ Built-in profiles:
 - `deterministic`
 - `qa`
 - `architecture`
+- `maintainability`
 - `ops`
 - `security`
 - `business`
@@ -1060,8 +1061,9 @@ Risk policy examples:
 
 - low-risk docs-only changes may require no mandatory reviewer profiles;
 - tests-only changes require `qa`;
-- source code changes typically require `qa` and `architecture`;
-- safety-critical orchestration files require `security`, `architecture`, `qa`, and `ops`;
+- source code changes typically require `qa` and `architecture`, with `maintainability` often optional;
+- safety-critical orchestration files require `security`, `architecture`, `qa`, `ops`, and `maintainability`;
+- broad or maintainability-sensitive changes may require `maintainability` review even when behavior is otherwise correct;
 - data logic changes require `data` and `qa`.
 
 `prepare-review --required-profiles` reads `RISK_CLASSIFICATION.json` and prepares prompt packets only for `required_review_profiles`. This supports a stricter lifecycle:
@@ -1076,6 +1078,24 @@ approved run
 ```
 
 This risk layer supports near-autonomous self-improvement under human governance by making reviewer requirements deterministic before any future reviewer agent is involved.
+
+### Maintainability as a quality gate
+
+Maintainability is a first-class quality concern in `ai_orchestrator`.
+
+Practical meaning:
+
+- AI-generated code must remain readable and reviewable by humans;
+- the `maintainability` reviewer profile exists to flag over-engineering, hidden side effects, oversized modules, and avoidable complexity;
+- deterministic review checks can already produce maintainability findings for obvious risks such as broad change surfaces, oversized Python modules, or CLI/schema coupling changes;
+- broad and safety-critical changes may require explicit maintainability review in addition to security, architecture, and QA review;
+- maintainability review should prefer simpler code and should not demand abstractions only for aesthetics.
+
+Reference:
+
+```text
+docs/maintainability_policy.md
+```
 
 ### Findings to rework feedback
 

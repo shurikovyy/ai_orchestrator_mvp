@@ -179,6 +179,48 @@ def _build_builtin_registry() -> tuple[ReviewProfile, ...]:
             prompt_template=_load_prompt_template("architecture"),
         ),
         _profile(
+            id="maintainability",
+            title="Maintainability Reviewer",
+            description="Checks whether the implementation remains understandable, focused, and practical for human maintainers.",
+            reviewer_type="llm_future",
+            focus_areas=[
+                "human readability",
+                "over-engineering and unnecessary abstractions",
+                "module size and cohesion",
+                "function length and clarity",
+                "CLI thinness and hidden side effects",
+                "duplicated boilerplate and test readability",
+                "whether a simpler implementation would preserve functionality",
+            ],
+            finding_categories=["maintainability", "architecture", "qa", "correctness"],
+            default_severity_guidance=[
+                "Use critical when code structure hides or bypasses validation, review, or apply safety behavior.",
+                "Use major when the solution introduces unnecessary abstraction or makes future human maintenance materially harder.",
+                "Use major when a safety-critical module becomes significantly harder to reason about.",
+                "Use minor for local readability, naming, or small duplication issues.",
+                "Use nit for comment-level or formatting-only maintainability issues.",
+            ],
+            required_evidence=[
+                "affected module, function, or CLI path",
+                "concrete readability, cohesion, or side-effect problem",
+                "why the current structure is harder to maintain than a simpler alternative",
+                "the smallest maintainability-focused correction that would help",
+            ],
+            non_goals=[
+                "Do not demand abstractions just for elegance.",
+                "Do not prefer architecture purity over simple maintainable code.",
+                "Do not approve or reject runs.",
+                "Do not apply changes.",
+                "Do not commit.",
+                "Do not create findings without concrete evidence.",
+            ],
+            output_contract=(
+                "Must produce ReviewFinding-compatible findings only. The reviewer must point to evidence-backed maintainability "
+                "risks and required actions without requesting unrelated refactors."
+            ),
+            prompt_template=_load_prompt_template("maintainability"),
+        ),
+        _profile(
             id="ops",
             title="Operations Reviewer",
             description="Focuses on local workflow safety, filesystem behavior, reproducibility, and platform-specific risks.",

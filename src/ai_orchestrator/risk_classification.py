@@ -26,6 +26,14 @@ _SAFETY_CRITICAL_FILES = {
     "src/ai_orchestrator/reviewer_prompts.py",
     "src/ai_orchestrator/review_profiles.py",
 }
+_MAINTAINABILITY_SENSITIVE_FILES = {
+    "src/ai_orchestrator/task_drafts.py",
+    "src/ai_orchestrator/task_draft_validation.py",
+    "src/ai_orchestrator/task_draft_promotion.py",
+    "src/ai_orchestrator/risk_classification.py",
+    "src/ai_orchestrator/reviewer_prompts.py",
+    "src/ai_orchestrator/review_profiles.py",
+}
 _WINDOWS_DRIVE_PATH_RE = re.compile(r"^[a-zA-Z]:[\\/]")
 
 
@@ -155,6 +163,9 @@ def classify_changed_files(
     docs_files = [path for path in non_report_files if _is_docs_markdown(path)]
     safety_files = [path for path in non_report_files if path.lower() in _SAFETY_CRITICAL_FILES]
     data_files = [path for path in non_report_files if _is_data_logic_path(path)]
+    maintainability_sensitive_files = [
+        path for path in non_report_files if path.lower() in _MAINTAINABILITY_SENSITIVE_FILES
+    ]
 
     risk_level = "low"
     change_type = "unknown"
@@ -196,12 +207,13 @@ def classify_changed_files(
         risk_level = "medium"
         change_type = "source_and_tests"
         required_profiles.extend(["qa", "architecture"])
+        optional_profiles.append("maintainability")
         reasons.append(
             _RiskReasonDraft(
                 severity="warning",
                 category="source",
-                message="Source and tests changed together; QA and architecture review are required.",
-                reviewer_profiles=("qa", "architecture"),
+                message="Source and tests changed together; QA and architecture review are required, and maintainability review is recommended.",
+                reviewer_profiles=("qa", "architecture", "maintainability"),
                 file=source_files[0],
             )
         )
@@ -209,28 +221,48 @@ def classify_changed_files(
         risk_level = "high"
         change_type = "source_code"
         required_profiles.extend(["qa", "architecture"])
-        optional_profiles.append("ops")
+        optional_profiles.extend(["ops", "maintainability"])
         reasons.append(
             _RiskReasonDraft(
                 severity="high",
                 category="source",
-                message="Source code changed without test changes; QA and architecture review are required.",
-                reviewer_profiles=("qa", "architecture", "ops"),
+                message="Source code changed without test changes; QA and architecture review are required, with ops and maintainability review recommended.",
+                reviewer_profiles=("qa", "architecture", "ops", "maintainability"),
                 file=source_files[0],
+            )
+        )
+
+    if maintainability_sensitive_files:
+        risk_level = _set_at_least(risk_level, "high")
+        required_profiles = _prepend_profiles(required_profiles, ["architecture", "qa", "maintainability"])
+        optional_profiles = [
+            profile for profile in optional_profiles if profile not in {"architecture", "qa", "maintainability"}
+        ]
+        reasons.append(
+            _RiskReasonDraft(
+                severity="high",
+                category="architecture",
+                message="Maintainability-sensitive orchestration or task-intake module touched; focused maintainability review is required.",
+                reviewer_profiles=("architecture", "qa", "maintainability"),
+                file=maintainability_sensitive_files[0],
             )
         )
 
     if safety_files:
         risk_level = _set_at_least(risk_level, "critical")
         change_type = "safety_critical"
-        required_profiles = _prepend_profiles(required_profiles, ["security", "architecture", "qa", "ops"])
-        optional_profiles = [profile for profile in optional_profiles if profile not in {"security", "architecture", "qa", "ops"}]
+        required_profiles = _prepend_profiles(required_profiles, ["security", "architecture", "qa", "ops", "maintainability"])
+        optional_profiles = [
+            profile
+            for profile in optional_profiles
+            if profile not in {"security", "architecture", "qa", "ops", "maintainability"}
+        ]
         reasons.append(
             _RiskReasonDraft(
                 severity="critical",
                 category="safety",
-                message="Safety-critical orchestration/review/apply path touched.",
-                reviewer_profiles=("security", "architecture", "qa", "ops"),
+                message="Safety-critical orchestration/review/apply path touched; the code must also remain understandable to human reviewers.",
+                reviewer_profiles=("security", "architecture", "qa", "ops", "maintainability"),
                 file=safety_files[0],
             )
         )
@@ -280,24 +312,24 @@ def classify_changed_files(
     changed_count = len(non_report_files)
     if changed_count > 20:
         risk_level = _set_at_least(risk_level, "critical")
-        required_profiles.extend(["architecture", "qa", "ops"])
+        required_profiles.extend(["architecture", "qa", "ops", "maintainability"])
         reasons.append(
             _RiskReasonDraft(
                 severity="critical",
                 category="architecture",
-                message=f"Broad change surface detected: {changed_count} changed files exceeds the critical threshold.",
-                reviewer_profiles=("architecture", "qa", "ops"),
+                message=f"Broad change surface detected: {changed_count} changed files exceeds the critical threshold and is harder for humans to review safely.",
+                reviewer_profiles=("architecture", "qa", "ops", "maintainability"),
             )
         )
     elif changed_count > 10:
         risk_level = _set_at_least(risk_level, "high")
-        required_profiles.extend(["architecture", "qa"])
+        required_profiles.extend(["architecture", "qa", "maintainability"])
         reasons.append(
             _RiskReasonDraft(
                 severity="high",
                 category="architecture",
-                message=f"Broad change surface detected: {changed_count} changed files exceeds the high-risk threshold.",
-                reviewer_profiles=("architecture", "qa"),
+                message=f"Broad change surface detected: {changed_count} changed files exceeds the high-risk threshold and reduces human reviewability.",
+                reviewer_profiles=("architecture", "qa", "maintainability"),
             )
         )
 
