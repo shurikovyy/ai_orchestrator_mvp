@@ -907,7 +907,7 @@ class ReviewRunFromFindingsTests(unittest.TestCase):
 
 
 class ShowFindingsFeedbackStatusTests(unittest.TestCase):
-    def test_show_run_next_action_findings_feedback_when_blocking_findings_exist_but_feedback_missing(self) -> None:
+    def test_show_run_next_action_arbitrate_findings_when_blocking_findings_exist_but_feedback_missing(self) -> None:
         with temporary_test_dir() as tmp:
             runs_dir = tmp / ".runs"
             _run_dir, run_id = make_approved_source_run(runs_dir)
@@ -928,9 +928,9 @@ class ShowFindingsFeedbackStatusTests(unittest.TestCase):
                 exit_code = show_run_main([run_id, "--runs-dir", str(runs_dir)])
             output = stdout.getvalue()
         self.assertEqual(exit_code, 0, output)
-        self.assertEqual(output_value(output, "next_action"), "findings_feedback")
+        self.assertEqual(output_value(output, "next_action"), "arbitrate_findings")
 
-    def test_show_run_next_action_review_rejected_when_feedback_exists_but_human_review_missing(self) -> None:
+    def test_show_run_next_action_arbitrate_findings_when_feedback_exists_but_human_review_missing(self) -> None:
         with temporary_test_dir() as tmp:
             runs_dir = tmp / ".runs"
             _run_dir, run_id = make_approved_source_run(runs_dir)
@@ -955,7 +955,7 @@ class ShowFindingsFeedbackStatusTests(unittest.TestCase):
         self.assertEqual(exit_code, 0, output)
         self.assertEqual(output_value(output, "findings_feedback_exists"), "true")
         self.assertEqual(output_value(output, "findings_feedback_count"), "1")
-        self.assertEqual(output_value(output, "next_action"), "review_rejected")
+        self.assertEqual(output_value(output, "next_action"), "arbitrate_findings")
         self.assertIn("findings_feedback=", output)
 
     def test_show_run_next_action_rework_run_after_rejected_from_findings(self) -> None:
@@ -983,7 +983,7 @@ class ShowFindingsFeedbackStatusTests(unittest.TestCase):
         self.assertEqual(exit_code, 0, output)
         self.assertEqual(output_value(output, "next_action"), "rework_run")
 
-    def test_show_pipeline_aggregates_findings_feedback(self) -> None:
+    def test_show_pipeline_aggregates_waiting_arbitration(self) -> None:
         with temporary_test_dir() as tmp:
             runs_dir = tmp / ".runs"
             _run_dir, run_id = make_approved_source_run(runs_dir)
@@ -1009,10 +1009,10 @@ class ShowFindingsFeedbackStatusTests(unittest.TestCase):
                 exit_code = show_pipeline_main(["pipeline_feedback_1", "--runs-dir", str(runs_dir)])
             output = stdout.getvalue()
         self.assertEqual(exit_code, 0, output)
-        self.assertEqual(output_value(output, "tasks_waiting_findings_feedback"), "1")
-        self.assertEqual(output_value(output, "next_action"), "findings_feedback")
+        self.assertEqual(output_value(output, "tasks_waiting_arbitration"), "1")
+        self.assertEqual(output_value(output, "next_action"), "arbitrate_findings")
 
-    def test_show_pipeline_aggregates_review_rejected(self) -> None:
+    def test_show_pipeline_keeps_waiting_arbitration_even_when_feedback_exists(self) -> None:
         with temporary_test_dir() as tmp:
             runs_dir = tmp / ".runs"
             _run_dir, run_id = make_approved_source_run(runs_dir)
@@ -1040,8 +1040,8 @@ class ShowFindingsFeedbackStatusTests(unittest.TestCase):
                 exit_code = show_pipeline_main(["pipeline_feedback_2", "--runs-dir", str(runs_dir)])
             output = stdout.getvalue()
         self.assertEqual(exit_code, 0, output)
-        self.assertEqual(output_value(output, "tasks_waiting_rejected_review"), "1")
-        self.assertEqual(output_value(output, "next_action"), "review_rejected")
+        self.assertEqual(output_value(output, "tasks_waiting_arbitration"), "1")
+        self.assertEqual(output_value(output, "next_action"), "arbitrate_findings")
 
 
 if __name__ == "__main__":

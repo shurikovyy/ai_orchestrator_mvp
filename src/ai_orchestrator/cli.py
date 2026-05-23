@@ -16,6 +16,7 @@ from ai_orchestrator.pipeline_status import (
     format_pipeline_status_text,
 )
 from ai_orchestrator.pipeline import PipelinePlan, PipelineRunResult, run_pipeline
+from ai_orchestrator.review_arbitration import record_review_arbitration
 from ai_orchestrator.review_findings import record_review_findings
 from ai_orchestrator.review_profiles import (
     format_review_profile_json,
@@ -482,6 +483,32 @@ def build_record_findings_parser() -> argparse.ArgumentParser:
         "--force",
         action="store_true",
         help="Overwrite an existing REVIEW_FINDINGS.json/REVIEW_FINDINGS.md for this run.",
+    )
+    return parser
+
+
+def build_record_arbitration_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="ai-orchestrator record-arbitration",
+        description="Record structured review arbitration for an existing run without modifying target repos.",
+    )
+    parser.add_argument("run_id", help="Existing run id to attach arbitration to.")
+    parser.add_argument("--runs-dir", default=".runs", help="Directory containing run state and artifacts.")
+    parser.add_argument(
+        "--arbitration-file",
+        required=True,
+        help="Path to a REVIEW_ARBITRATION-like JSON file.",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite an existing REVIEW_ARBITRATION.json/REVIEW_ARBITRATION.md for this run.",
+    )
+    parser.add_argument(
+        "--format",
+        choices=["text", "json"],
+        default="text",
+        help="Output format. Defaults to text.",
     )
     return parser
 
@@ -1321,6 +1348,64 @@ def record_findings_main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def record_arbitration_main(argv: list[str] | None = None) -> int:
+    parser = build_record_arbitration_parser()
+    args = parser.parse_args(argv)
+    try:
+        result = record_review_arbitration(
+            run_id=args.run_id,
+            runs_dir=args.runs_dir,
+            arbitration_file=args.arbitration_file,
+            force=args.force,
+        )
+    except Exception as exc:  # noqa: BLE001 - CLI should print deterministic error text.
+        if args.format == "json":
+            print(
+                json.dumps(
+                    {
+                        "run_id": args.run_id,
+                        "status": "failed",
+                        "error": str(exc),
+                    },
+                    indent=2,
+                    ensure_ascii=False,
+                )
+            )
+        else:
+            print(f"run_id={args.run_id}")
+            print("status=failed")
+            print(f"error={exc}")
+        return 1
+
+    next_action = "human_escalation" if result.human_escalation_required else (
+        "review_rejected" if result.final_blocking_count > 0 or result.overall_decision != "pass" else "review_run"
+    )
+    payload = {
+        "run_id": result.run_id,
+        "status": "arbitration_recorded",
+        "overall_decision": result.overall_decision,
+        "final_blocking": result.final_blocking_count,
+        "human_escalation_required": result.human_escalation_required,
+        "review_arbitration": str(result.review_arbitration_path),
+        "review_arbitration_markdown": str(result.review_arbitration_markdown_path),
+        "state": str(result.state_path),
+        "next_action": next_action,
+    }
+    if args.format == "json":
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+    else:
+        print(f"run_id={payload['run_id']}")
+        print(f"status={payload['status']}")
+        print(f"overall_decision={payload['overall_decision']}")
+        print(f"final_blocking={payload['final_blocking']}")
+        print(f"human_escalation_required={str(payload['human_escalation_required']).lower()}")
+        print(f"review_arbitration={payload['review_arbitration']}")
+        print(f"review_arbitration_markdown={payload['review_arbitration_markdown']}")
+        print(f"state={payload['state']}")
+        print(f"next_action={payload['next_action']}")
+    return 0
+
+
 def findings_feedback_main(argv: list[str] | None = None) -> int:
     parser = build_findings_feedback_parser()
     args = parser.parse_args(argv)
@@ -1849,6 +1934,8 @@ def main(argv: list[str] | None = None) -> int:
         return list_review_profiles_main(args[1:])
     if args and args[0] == "findings-feedback":
         return findings_feedback_main(args[1:])
+    if args and args[0] == "record-arbitration":
+        return record_arbitration_main(args[1:])
     if args and args[0] == "run-review-checks":
         return run_review_checks_main(args[1:])
     if args and args[0] == "classify-run":

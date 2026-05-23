@@ -21,6 +21,10 @@ class PipelineTaskStatusSummary:
     blocking_findings: int
     review_findings_source_profile: str | None
     review_findings_source_kind: str | None
+    arbitration_exists: bool
+    review_arbitration_decision: str
+    arbitration_final_blocking: int
+    arbitration_human_escalation_required: bool
     findings_feedback_exists: bool
     findings_feedback_count: int
     reviewer_prompts_exists: bool
@@ -75,6 +79,8 @@ def _run_artifact_paths_for_missing(task_result: PipelineTaskResult, runs_dir: P
         "review_packet": task_result.review_packet or str((run_dir / "REVIEW_PACKET.md").resolve()),
         "review_findings": str((run_dir / "REVIEW_FINDINGS.json").resolve()),
         "review_findings_markdown": str((run_dir / "REVIEW_FINDINGS.md").resolve()),
+        "review_arbitration": str((run_dir / "REVIEW_ARBITRATION.json").resolve()),
+        "review_arbitration_markdown": str((run_dir / "REVIEW_ARBITRATION.md").resolve()),
         "findings_feedback": str((run_dir / "REVIEW_FEEDBACK_FROM_FINDINGS.md").resolve()),
         "risk_classification": str((run_dir / "RISK_CLASSIFICATION.json").resolve()),
         "risk_classification_markdown": str((run_dir / "RISK_CLASSIFICATION.md").resolve()),
@@ -96,6 +102,8 @@ def _exists_from_artifacts(artifacts: dict[str, str]) -> dict[str, bool]:
         "review_packet": Path(artifacts["review_packet"]).exists(),
         "review_findings": Path(artifacts["review_findings"]).exists(),
         "review_findings_markdown": Path(artifacts["review_findings_markdown"]).exists(),
+        "review_arbitration": Path(artifacts["review_arbitration"]).exists(),
+        "review_arbitration_markdown": Path(artifacts["review_arbitration_markdown"]).exists(),
         "findings_feedback": Path(artifacts["findings_feedback"]).exists(),
         "risk_classification": Path(artifacts["risk_classification"]).exists(),
         "risk_classification_markdown": Path(artifacts["risk_classification_markdown"]).exists(),
@@ -123,6 +131,10 @@ def _build_task_summary_from_run_summary(task_result: PipelineTaskResult, run_su
         blocking_findings=run_summary.blocking_findings,
         review_findings_source_profile=run_summary.review_findings_source_profile,
         review_findings_source_kind=run_summary.review_findings_source_kind,
+        arbitration_exists=run_summary.arbitration_exists,
+        review_arbitration_decision=run_summary.review_arbitration_decision,
+        arbitration_final_blocking=run_summary.arbitration_final_blocking,
+        arbitration_human_escalation_required=run_summary.arbitration_human_escalation_required,
         findings_feedback_exists=run_summary.findings_feedback_exists,
         findings_feedback_count=run_summary.findings_feedback_count,
         reviewer_prompts_exists=run_summary.reviewer_prompts_exists,
@@ -158,6 +170,10 @@ def _build_missing_task_summary(task_result: PipelineTaskResult, runs_dir: Path)
         blocking_findings=0,
         review_findings_source_profile=None,
         review_findings_source_kind=None,
+        arbitration_exists=False,
+        review_arbitration_decision="empty",
+        arbitration_final_blocking=0,
+        arbitration_human_escalation_required=False,
         findings_feedback_exists=False,
         findings_feedback_count=0,
         reviewer_prompts_exists=False,
@@ -199,6 +215,12 @@ def _compute_counts(task_summaries: list[PipelineTaskStatusSummary]) -> dict[str
         "tasks_human_rejected": sum(1 for task in task_summaries if task.human_review_decision == "rejected"),
         "tasks_with_findings": sum(1 for task in task_summaries if task.findings_exists),
         "tasks_with_blocking_findings": sum(1 for task in task_summaries if task.blocking_findings > 0),
+        "tasks_with_arbitration": sum(1 for task in task_summaries if task.arbitration_exists),
+        "tasks_waiting_arbitration": sum(1 for task in task_summaries if task.next_action == "arbitrate_findings"),
+        "tasks_with_final_blocking_arbitration": sum(1 for task in task_summaries if task.arbitration_final_blocking > 0),
+        "tasks_requiring_human_escalation": sum(
+            1 for task in task_summaries if task.arbitration_human_escalation_required
+        ),
         "tasks_waiting_findings_feedback": sum(1 for task in task_summaries if task.next_action == "findings_feedback"),
         "tasks_waiting_rejected_review": sum(1 for task in task_summaries if task.next_action == "review_rejected"),
         "tasks_with_reviewer_prompts": sum(1 for task in task_summaries if task.reviewer_prompts_exists),
@@ -230,6 +252,12 @@ def _compute_pipeline_next_action(
         return "rework_or_inspect_failure"
     if any(task.next_action == "rework_run" for task in task_summaries):
         return "rework_run"
+    if any(task.next_action == "human_escalation" for task in task_summaries):
+        return "human_escalation"
+    if any(task.arbitration_final_blocking > 0 for task in task_summaries):
+        return "review_rejected"
+    if any(task.next_action == "arbitrate_findings" for task in task_summaries):
+        return "arbitrate_findings"
     if any(task.next_action == "findings_feedback" for task in task_summaries):
         return "findings_feedback"
     if any(task.next_action == "review_rejected" for task in task_summaries):
@@ -301,6 +329,10 @@ def format_pipeline_status_text(summary: PipelineStatusSummary, *, show_paths: b
         f"tasks_human_rejected={summary.counts['tasks_human_rejected']}",
         f"tasks_with_findings={summary.counts['tasks_with_findings']}",
         f"tasks_with_blocking_findings={summary.counts['tasks_with_blocking_findings']}",
+        f"tasks_with_arbitration={summary.counts['tasks_with_arbitration']}",
+        f"tasks_waiting_arbitration={summary.counts['tasks_waiting_arbitration']}",
+        f"tasks_with_final_blocking_arbitration={summary.counts['tasks_with_final_blocking_arbitration']}",
+        f"tasks_requiring_human_escalation={summary.counts['tasks_requiring_human_escalation']}",
         f"tasks_waiting_findings_feedback={summary.counts['tasks_waiting_findings_feedback']}",
         f"tasks_waiting_rejected_review={summary.counts['tasks_waiting_rejected_review']}",
         f"tasks_with_reviewer_prompts={summary.counts['tasks_with_reviewer_prompts']}",
@@ -334,6 +366,10 @@ def format_pipeline_status_text(summary: PipelineStatusSummary, *, show_paths: b
             f"blocking_findings={task.blocking_findings}",
             f"review_findings_source_profile={task.review_findings_source_profile or ''}",
             f"review_findings_source_kind={task.review_findings_source_kind or ''}",
+            f"arbitration_exists={_bool_text(task.arbitration_exists)}",
+            f"review_arbitration_decision={task.review_arbitration_decision}",
+            f"arbitration_final_blocking={task.arbitration_final_blocking}",
+            f"arbitration_human_escalation_required={_bool_text(task.arbitration_human_escalation_required)}",
             f"findings_feedback_exists={_bool_text(task.findings_feedback_exists)}",
             f"findings_feedback_count={task.findings_feedback_count}",
             f"reviewer_prompts_exists={_bool_text(task.reviewer_prompts_exists)}",
@@ -377,6 +413,10 @@ def format_pipeline_status_json(summary: PipelineStatusSummary) -> str:
                 "blocking_findings": task.blocking_findings,
                 "review_findings_source_profile": task.review_findings_source_profile,
                 "review_findings_source_kind": task.review_findings_source_kind,
+                "arbitration_exists": task.arbitration_exists,
+                "review_arbitration_decision": task.review_arbitration_decision,
+                "arbitration_final_blocking": task.arbitration_final_blocking,
+                "arbitration_human_escalation_required": task.arbitration_human_escalation_required,
                 "findings_feedback_exists": task.findings_feedback_exists,
                 "findings_feedback_count": task.findings_feedback_count,
                 "reviewer_prompts_exists": task.reviewer_prompts_exists,

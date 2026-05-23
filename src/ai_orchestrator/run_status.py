@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from ai_orchestrator.apply import load_run_state
+from ai_orchestrator.review_arbitration import load_run_arbitration
 from ai_orchestrator.review_findings import load_run_findings
 from ai_orchestrator.reviewer_prompts import load_reviewer_prompt_manifest
 from ai_orchestrator.risk_classification import load_run_risk_classification
@@ -21,6 +22,10 @@ class RunStatusSummary:
     blocking_findings: int
     review_findings_source_profile: str | None
     review_findings_source_kind: str | None
+    arbitration_exists: bool
+    review_arbitration_decision: str
+    arbitration_final_blocking: int
+    arbitration_human_escalation_required: bool
     findings_feedback_exists: bool
     findings_feedback_count: int
     reviewer_prompts_exists: bool
@@ -56,6 +61,8 @@ def _build_artifact_paths(run_dir: Path) -> dict[str, Path]:
         "review_packet": run_dir / "REVIEW_PACKET.md",
         "review_findings": run_dir / "REVIEW_FINDINGS.json",
         "review_findings_markdown": run_dir / "REVIEW_FINDINGS.md",
+        "review_arbitration": run_dir / "REVIEW_ARBITRATION.json",
+        "review_arbitration_markdown": run_dir / "REVIEW_ARBITRATION.md",
         "findings_feedback": run_dir / "REVIEW_FEEDBACK_FROM_FINDINGS.md",
         "risk_classification": run_dir / "RISK_CLASSIFICATION.json",
         "risk_classification_markdown": run_dir / "RISK_CLASSIFICATION.md",
@@ -76,6 +83,10 @@ def _compute_next_action(
     validator_status: str,
     human_review_decision: str | None,
     blocking_findings: int,
+    arbitration_exists: bool,
+    review_arbitration_decision: str,
+    arbitration_final_blocking: int,
+    arbitration_human_escalation_required: bool,
     findings_feedback_exists: bool,
     risk_classification_exists: bool,
     required_review_profiles: list[str],
@@ -87,8 +98,16 @@ def _compute_next_action(
         return "rework_or_inspect_failure"
     if human_review_decision == "rejected":
         return "rework_run"
+    if arbitration_exists and arbitration_human_escalation_required:
+        return "human_escalation"
+    if arbitration_exists and arbitration_final_blocking > 0:
+        return "review_rejected"
+    if arbitration_exists and review_arbitration_decision == "pass" and human_review_decision is None:
+        return "review_run"
+    if arbitration_exists and review_arbitration_decision != "pass":
+        return "review_rejected"
     if blocking_findings > 0:
-        return "review_rejected" if findings_feedback_exists else "findings_feedback"
+        return "arbitrate_findings"
     if acceptance_exists:
         return "done"
     if application_status == "applied":
@@ -126,6 +145,8 @@ def build_run_status_summary(*, run_id: str, runs_dir: str | Path) -> RunStatusS
         "review_packet": artifact_paths["review_packet"].exists(),
         "review_findings": artifact_paths["review_findings"].exists(),
         "review_findings_markdown": artifact_paths["review_findings_markdown"].exists(),
+        "review_arbitration": artifact_paths["review_arbitration"].exists(),
+        "review_arbitration_markdown": artifact_paths["review_arbitration_markdown"].exists(),
         "findings_feedback": artifact_paths["findings_feedback"].exists(),
         "risk_classification": artifact_paths["risk_classification"].exists(),
         "risk_classification_markdown": artifact_paths["risk_classification_markdown"].exists(),
@@ -151,6 +172,23 @@ def build_run_status_summary(*, run_id: str, runs_dir: str | Path) -> RunStatusS
     review_findings_source_kind = (
         findings_report.source_kind if findings_report is not None else state.review_findings_source_kind
     )
+    arbitration_report = load_run_arbitration(run_dir)
+    arbitration_exists = arbitration_report is not None or exists["review_arbitration"]
+    review_arbitration_decision = (
+        arbitration_report.overall_decision
+        if arbitration_report is not None
+        else (state.review_arbitration_decision or "empty")
+    )
+    arbitration_final_blocking = (
+        arbitration_report.counts.final_blocking
+        if arbitration_report is not None
+        else (state.review_arbitration_final_blocking_count or 0)
+    )
+    arbitration_human_escalation_required = (
+        arbitration_report.counts.human_escalation_required > 0
+        if arbitration_report is not None
+        else state.review_arbitration_human_escalation_required
+    )
     risk_classification = load_run_risk_classification(run_dir)
     risk_classification_exists = risk_classification is not None or exists["risk_classification"]
     risk_level = risk_classification.risk_level if risk_classification is not None else state.risk_level
@@ -172,6 +210,10 @@ def build_run_status_summary(*, run_id: str, runs_dir: str | Path) -> RunStatusS
         validator_status=state.final_status,
         human_review_decision=human_review_decision,
         blocking_findings=blocking_findings,
+        arbitration_exists=arbitration_exists,
+        review_arbitration_decision=review_arbitration_decision,
+        arbitration_final_blocking=arbitration_final_blocking,
+        arbitration_human_escalation_required=arbitration_human_escalation_required,
         findings_feedback_exists=exists["findings_feedback"],
         risk_classification_exists=risk_classification_exists,
         required_review_profiles=required_review_profiles,
@@ -196,6 +238,10 @@ def build_run_status_summary(*, run_id: str, runs_dir: str | Path) -> RunStatusS
         blocking_findings=blocking_findings,
         review_findings_source_profile=review_findings_source_profile,
         review_findings_source_kind=review_findings_source_kind,
+        arbitration_exists=arbitration_exists,
+        review_arbitration_decision=review_arbitration_decision,
+        arbitration_final_blocking=arbitration_final_blocking,
+        arbitration_human_escalation_required=arbitration_human_escalation_required,
         findings_feedback_exists=exists["findings_feedback"],
         findings_feedback_count=state.findings_feedback_count,
         reviewer_prompts_exists=reviewer_prompts_count > 0,
@@ -232,6 +278,10 @@ def format_run_status_text(summary: RunStatusSummary, *, show_paths: bool = Fals
         f"blocking_findings={summary.blocking_findings}",
         f"review_findings_source_profile={summary.review_findings_source_profile or ''}",
         f"review_findings_source_kind={summary.review_findings_source_kind or ''}",
+        f"arbitration_exists={_bool_text(summary.arbitration_exists)}",
+        f"review_arbitration_decision={summary.review_arbitration_decision}",
+        f"arbitration_final_blocking={summary.arbitration_final_blocking}",
+        f"arbitration_human_escalation_required={_bool_text(summary.arbitration_human_escalation_required)}",
         f"findings_feedback_exists={_bool_text(summary.findings_feedback_exists)}",
         f"findings_feedback_count={summary.findings_feedback_count}",
         f"reviewer_prompts_exists={_bool_text(summary.reviewer_prompts_exists)}",
@@ -260,6 +310,8 @@ def format_run_status_text(summary: RunStatusSummary, *, show_paths: bool = Fals
                 f"review_packet={summary.artifacts['review_packet']}",
                 f"review_findings={summary.artifacts['review_findings']}",
                 f"review_findings_markdown={summary.artifacts['review_findings_markdown']}",
+                f"review_arbitration={summary.artifacts['review_arbitration']}",
+                f"review_arbitration_markdown={summary.artifacts['review_arbitration_markdown']}",
                 f"findings_feedback={summary.artifacts['findings_feedback']}",
                 f"risk_classification={summary.artifacts['risk_classification']}",
                 f"risk_classification_markdown={summary.artifacts['risk_classification_markdown']}",
@@ -286,6 +338,10 @@ def format_run_status_json(summary: RunStatusSummary) -> str:
         "blocking_findings": summary.blocking_findings,
         "review_findings_source_profile": summary.review_findings_source_profile,
         "review_findings_source_kind": summary.review_findings_source_kind,
+        "arbitration_exists": summary.arbitration_exists,
+        "review_arbitration_decision": summary.review_arbitration_decision,
+        "arbitration_final_blocking": summary.arbitration_final_blocking,
+        "arbitration_human_escalation_required": summary.arbitration_human_escalation_required,
         "findings_feedback_exists": summary.findings_feedback_exists,
         "findings_feedback_count": summary.findings_feedback_count,
         "reviewer_prompts_exists": summary.reviewer_prompts_exists,

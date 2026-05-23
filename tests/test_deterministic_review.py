@@ -460,7 +460,7 @@ class DeterministicReviewTests(unittest.TestCase):
         self.assertEqual(output_value(output, "review_findings_source_profile"), "deterministic")
         self.assertEqual(output_value(output, "review_findings_source_kind"), "deterministic")
 
-    def test_show_run_next_action_findings_feedback_for_blocking_finding(self) -> None:
+    def test_show_run_next_action_arbitrate_findings_for_blocking_finding(self) -> None:
         with temporary_test_dir() as tmp:
             run_dir, runs_dir = make_run_fixture(
                 tmp,
@@ -474,7 +474,7 @@ class DeterministicReviewTests(unittest.TestCase):
             output = stdout.getvalue()
 
         self.assertEqual(exit_code, 0, output)
-        self.assertEqual(output_value(output, "next_action"), "findings_feedback")
+        self.assertEqual(output_value(output, "next_action"), "arbitrate_findings")
 
     def test_written_json_report_validates_through_model(self) -> None:
         with temporary_test_dir() as tmp:

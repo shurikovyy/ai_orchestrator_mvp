@@ -1148,6 +1148,61 @@ Important notes:
 - no target repo changes or commits occur in this flow;
 - critical and major findings remain blocking until they are resolved in a later run.
 
+### Review arbitration
+
+Reviewer profiles can conflict. For example, `security` may prefer stricter protection, `maintainability` may flag the same solution as over-engineered, `architecture` may suggest a different compromise, and `business` may argue that a finding is outside the task objective. Review arbitration is the structured layer for resolving those conflicts without weakening hard gates.
+
+`record-arbitration` does not run an LLM arbiter by itself. It records an external or manual arbitration report into:
+
+- `REVIEW_ARBITRATION.json`
+- `REVIEW_ARBITRATION.md`
+
+Arbitration may:
+
+- uphold a finding
+- downgrade or upgrade severity
+- dismiss a finding
+- mark `needs_evidence`
+- record `conflict`
+- record `accepted_risk`
+
+Important policy:
+
+- deterministic hard gates cannot be dismissed;
+- deterministic critical/major findings cannot be downgraded below their original severity;
+- arbitration may require explicit human escalation;
+- `review-run --decision approved` uses arbitration results when they exist;
+- without arbitration, raw blocking findings still block approval.
+
+Example:
+
+```bash
+python -m ai_orchestrator.cli record-arbitration run_20260523_120000_abcd12 \
+  --runs-dir .runs \
+  --arbitration-file arbitration.json
+```
+
+Then inspect the run:
+
+```bash
+python -m ai_orchestrator.cli show-run run_20260523_120000_abcd12 --runs-dir .runs
+```
+
+If arbitration resolves the findings with `overall_decision=pass` and no final blocking items remain, approval may proceed:
+
+```bash
+python -m ai_orchestrator.cli review-run run_20260523_120000_abcd12 --runs-dir .runs --decision approved
+```
+
+If arbitration still ends in rework, keep the human review gate explicit:
+
+```bash
+python -m ai_orchestrator.cli review-run run_20260523_120000_abcd12 \
+  --runs-dir .runs \
+  --decision rejected \
+  --feedback review_feedback.md
+```
+
 ### Self-improvement autonomy goal
 
 The long-term direction of `ai_orchestrator` is near-autonomous self-development under hard validation and human governance.

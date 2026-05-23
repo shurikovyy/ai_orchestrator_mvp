@@ -7,6 +7,7 @@ from pathlib import Path
 
 from ai_orchestrator.apply import load_run_state
 from ai_orchestrator.review_findings import has_blocking_findings, load_run_findings
+from ai_orchestrator.review_arbitration import load_run_arbitration
 from ai_orchestrator.schemas import RunState
 
 
@@ -143,11 +144,22 @@ def record_review_decision(
         raise ValueError("decision must be one of: approved, rejected")
 
     if normalized_decision == "approved":
-        findings_report = load_run_findings(run_dir)
-        if findings_report is not None and has_blocking_findings(findings_report):
-            raise ValueError(
-                "run has open blocking review findings; resolve findings or record rejected review for rework"
-            )
+        arbitration_report = load_run_arbitration(run_dir)
+        if arbitration_report is not None:
+            if arbitration_report.counts.human_escalation_required > 0:
+                raise ValueError("run requires human escalation before approval")
+            if arbitration_report.counts.final_blocking > 0:
+                raise ValueError("run has final blocking arbitration findings; record rejected review for rework")
+            if arbitration_report.overall_decision != "pass":
+                raise ValueError(
+                    f"run arbitration overall_decision is {arbitration_report.overall_decision}; do not approve without resolving it"
+                )
+        else:
+            findings_report = load_run_findings(run_dir)
+            if findings_report is not None and has_blocking_findings(findings_report):
+                raise ValueError(
+                    "run has open blocking review findings; resolve findings or record rejected review for rework"
+                )
 
     if normalized_decision == "rejected" and feedback_path is None:
         raise ValueError("Feedback is required for rejected review decisions.")
