@@ -2105,3 +2105,69 @@ Use revision to close scope gaps such as:
 - resolving `open_questions`
 - setting `required_review_profiles`
 - refining commands, acceptance criteria, and rollback notes
+
+### Promoting validated task drafts
+
+`promote-task-draft` converts a validated draft into a local `tasks.yaml` entry.
+
+Safety rules:
+
+- promotion requires `validate-task-draft` to produce:
+  - `validation_status=valid`
+  - `valid_for_promotion=true`
+- stale, invalid, or `needs_revision` drafts cannot be promoted
+- `promote-task-draft` does not run Codex
+- `promote-task-draft` does not run the pipeline
+- `promote-task-draft` does not create `.runs`
+- default promoted tasks stay `enabled=false`
+
+Typical flow:
+
+```bash
+python -m ai_orchestrator.cli validate-task-draft <draft_id>
+
+python -m ai_orchestrator.cli promote-task-draft <draft_id> \
+  --tasks-file tasks.yaml
+```
+
+Optional controls:
+
+```bash
+python -m ai_orchestrator.cli promote-task-draft <draft_id> \
+  --tasks-file tasks.yaml \
+  --enable \
+  --replace
+```
+
+Meaning of the flags:
+
+- `--enable` promotes the task with `enabled=true`
+- without `--enable`, promotion keeps `enabled=false`
+- `--replace` is required if `tasks.yaml` already contains the same task id
+
+Safe default workflow:
+
+1. promote with `enabled=false`
+2. inspect the generated `tasks.yaml`
+3. run deterministic checks:
+
+```bash
+python -m ai_orchestrator.cli doctor \
+  --tasks-file tasks.yaml \
+  --task-id <task_id> \
+  --codex-cmd "$CODEX_CMD"
+
+python -m ai_orchestrator.cli run-pipeline \
+  --tasks-file tasks.yaml \
+  --only <task_id> \
+  --dry-run
+```
+
+Only after that should a real `run-pipeline` happen in a later step.
+
+Notes:
+
+- promoted task prompts are generated from the validated draft, not copied directly from `raw_request.md`
+- `target_task.enabled` in the draft is still expected to remain `false`; `--enable` is an explicit promotion-time override only
+- if `tasks.yaml` is rewritten, YAML comments may not be preserved in this MVP
+- inspect `tasks.yaml` after promotion before enabling or running anything
