@@ -2166,6 +2166,44 @@ Important rules for promotion readiness:
 - dangerous commands are rejected
 - `task_draft_validator_report.json` must show `valid_for_promotion=true` before any future promotion step
 
+### Preparing task draft improvement prompts
+
+`prepare-task-draft-improvement` creates a markdown prompt packet for a future task-authoring agent that may improve a draft later.
+
+It is intentionally artifact-only:
+
+- it does not run Codex or ChatGPT
+- it does not modify `task_draft.yaml`
+- it does not modify `codex_prompt.md` or `task_review.md`
+- it does not promote anything to `tasks.yaml`
+- it does not create `.runs`
+
+Typical flow:
+
+```bash
+python -m ai_orchestrator.cli draft-task-scaffold --request raw_request.md
+
+python -m ai_orchestrator.cli validate-task-draft <draft_id>
+
+python -m ai_orchestrator.cli prepare-task-draft-improvement <draft_id>
+```
+
+The generated artifact is:
+
+```text
+.task_drafts/<draft_id>/TASK_DRAFT_IMPROVEMENT_PROMPT.md
+```
+
+Give that prompt to Codex/ChatGPT manually in a later human-governed step. The prompt includes the raw request, current `task_draft.yaml`, current `codex_prompt.md`, current `task_review.md`, and validator findings if `task_draft_validator_report.json` exists.
+
+After an external agent proposes an improved draft, the user should save or apply the revised draft deliberately, then run:
+
+```bash
+python -m ai_orchestrator.cli validate-task-draft <draft_id>
+```
+
+Warnings from `validate-task-draft` still block promotion. This prompt-preparation command does not mark validation stale because it does not edit the draft.
+
 ### Revising task drafts
 
 `revise-task-draft` is the deterministic edit step between scaffold generation and later validation/promotion.

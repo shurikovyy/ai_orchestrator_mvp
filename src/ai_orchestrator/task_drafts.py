@@ -246,6 +246,9 @@ class TaskDraftManifest(BaseModel):
     promoted_task_id: str | None = None
     promoted_enabled: bool | None = None
     promotion_status: str | None = None
+    task_draft_improvement_prompt: str | None = None
+    task_draft_improvement_prompt_created_at: datetime | None = None
+    improvement_prompt_status: str | None = None
 
     @field_validator("request_source", "draft_dir", "raw_request", "task_draft", "codex_prompt", "task_review")
     @classmethod
@@ -264,6 +267,8 @@ class TaskDraftManifest(BaseModel):
         "promoted_tasks_file",
         "promoted_task_id",
         "promotion_status",
+        "task_draft_improvement_prompt",
+        "improvement_prompt_status",
     )
     @classmethod
     def optional_manifest_strings_blank_to_none(cls, value: str | None) -> str | None:

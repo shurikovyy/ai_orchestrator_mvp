@@ -30,6 +30,7 @@ from ai_orchestrator.risk_classification import classify_run_risk
 from ai_orchestrator.reviewer_prompts import prepare_review_prompts
 from ai_orchestrator.run_status import build_run_status_summary, format_run_status_json, format_run_status_text
 from ai_orchestrator.task_drafts import create_task_draft_scaffold, revise_task_draft
+from ai_orchestrator.task_draft_improvement import prepare_task_draft_improvement_prompt
 from ai_orchestrator.task_draft_promotion import promote_task_draft
 from ai_orchestrator.task_draft_validation import validate_task_draft
 from ai_orchestrator.rework import execute_rework_run
@@ -914,6 +915,39 @@ def build_promote_task_draft_parser() -> argparse.ArgumentParser:
         "--replace",
         action="store_true",
         help="Replace an existing task with the same id in tasks.yaml.",
+    )
+    parser.add_argument(
+        "--format",
+        choices=["text", "json"],
+        default="text",
+        help="Output format. Defaults to text.",
+    )
+    return parser
+
+
+def build_prepare_task_draft_improvement_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="ai-orchestrator prepare-task-draft-improvement",
+        description=(
+            "Prepare a markdown prompt packet for a future task-authoring agent without running Codex, "
+            "modifying the draft, promoting tasks.yaml, or creating .runs."
+        ),
+    )
+    parser.add_argument("draft_id", help="Existing draft id to prepare an improvement prompt for.")
+    parser.add_argument(
+        "--drafts-dir",
+        default=".task_drafts",
+        help="Directory containing draft folders. Defaults to .task_drafts.",
+    )
+    parser.add_argument(
+        "--output",
+        default=None,
+        help="Optional output path. Defaults to .task_drafts/<draft_id>/TASK_DRAFT_IMPROVEMENT_PROMPT.md.",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite an existing improvement prompt artifact.",
     )
     parser.add_argument(
         "--format",
@@ -1916,8 +1950,57 @@ def promote_task_draft_main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def prepare_task_draft_improvement_main(argv: list[str] | None = None) -> int:
+    parser = build_prepare_task_draft_improvement_parser()
+    args = parser.parse_args(argv)
+    try:
+        result = prepare_task_draft_improvement_prompt(
+            draft_id=args.draft_id,
+            drafts_dir=args.drafts_dir,
+            output=args.output,
+            force=args.force,
+        )
+    except Exception as exc:  # noqa: BLE001 - CLI should print deterministic error text.
+        if args.format == "json":
+            print(
+                json.dumps(
+                    {
+                        "draft_id": args.draft_id,
+                        "status": "failed",
+                        "error": str(exc),
+                    },
+                    indent=2,
+                    ensure_ascii=False,
+                )
+            )
+        else:
+            print(f"draft_id={args.draft_id}")
+            print("status=failed")
+            print(f"error={exc}")
+        return 1
+
+    payload = {
+        "draft_id": result.draft_id,
+        "status": "task_draft_improvement_prompt_prepared",
+        "prompt": str(result.prompt_path),
+        "manifest": str(result.manifest_path),
+        "next_action": "run_external_task_authoring_agent_or_revise_task_draft",
+    }
+    if args.format == "json":
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+    else:
+        print(f"draft_id={payload['draft_id']}")
+        print(f"status={payload['status']}")
+        print(f"prompt={payload['prompt']}")
+        print(f"manifest={payload['manifest']}")
+        print(f"next_action={payload['next_action']}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
+    if args and args[0] == "prepare-task-draft-improvement":
+        return prepare_task_draft_improvement_main(args[1:])
     if args and args[0] == "promote-task-draft":
         return promote_task_draft_main(args[1:])
     if args and args[0] == "revise-task-draft":
