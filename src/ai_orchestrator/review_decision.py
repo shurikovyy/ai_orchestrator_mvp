@@ -7,7 +7,7 @@ from pathlib import Path
 
 from ai_orchestrator.apply import load_run_state
 from ai_orchestrator.review_findings import has_blocking_findings, load_run_findings
-from ai_orchestrator.review_arbitration import load_run_arbitration
+from ai_orchestrator.review_arbitration import is_arbitration_stale, load_run_arbitration
 from ai_orchestrator.schemas import RunState
 
 
@@ -146,6 +146,8 @@ def record_review_decision(
     if normalized_decision == "approved":
         arbitration_report = load_run_arbitration(run_dir)
         if arbitration_report is not None:
+            if is_arbitration_stale(run_dir, arbitration_report):
+                raise ValueError("run has stale review arbitration; re-run record-arbitration for current findings")
             if arbitration_report.counts.human_escalation_required > 0:
                 raise ValueError("run requires human escalation before approval")
             if arbitration_report.counts.final_blocking > 0:

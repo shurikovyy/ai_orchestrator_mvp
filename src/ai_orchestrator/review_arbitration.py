@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
+import hashlib
 import json
 from pathlib import Path
 
@@ -29,13 +31,34 @@ def load_arbitration_file(path: str | Path) -> ReviewArbitrationReport:
     return ReviewArbitrationReport.model_validate_json(arbitration_path.read_text(encoding="utf-8-sig"))
 
 
-def _report_with_source_findings_path(
+def compute_file_sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def is_arbitration_stale(run_dir: str | Path, report: ReviewArbitrationReport) -> bool:
+    findings_path = Path(run_dir) / "REVIEW_FINDINGS.json"
+    if report.source_findings_path and not findings_path.exists():
+        return True
+    if findings_path.exists():
+        if not report.source_findings_sha256:
+            return True
+        return compute_file_sha256(findings_path) != report.source_findings_sha256
+    return bool(report.source_findings_path or report.source_findings_sha256)
+
+
+def _report_with_source_findings_metadata(
     report: ReviewArbitrationReport,
     *,
     source_findings_path: str | None,
+    source_findings_sha256: str | None,
+    source_findings_updated_at: str | None,
+    arbitration_stale: bool,
 ) -> ReviewArbitrationReport:
     payload = report.model_dump(mode="python")
     payload["source_findings_path"] = source_findings_path
+    payload["source_findings_sha256"] = source_findings_sha256
+    payload["source_findings_updated_at"] = source_findings_updated_at
+    payload["arbitration_stale"] = arbitration_stale
     return ReviewArbitrationReport.model_validate(payload)
 
 
@@ -71,9 +94,13 @@ def _validate_arbitrated_finding_against_source(
 
 
 def _validate_against_source_findings(report: ReviewArbitrationReport, *, run_dir: Path) -> ReviewArbitrationReport:
+    findings_path = run_dir / "REVIEW_FINDINGS.json"
+    if not findings_path.exists():
+        raise ValueError("REVIEW_FINDINGS.json does not exist for this run; arbitration requires source findings")
+
     findings_report = load_run_findings(run_dir)
     if findings_report is None:
-        return report
+        raise ValueError("REVIEW_FINDINGS.json does not exist for this run; arbitration requires source findings")
 
     source_map = _source_finding_map(findings_report.findings)
     open_blocking_ids = {
@@ -94,9 +121,13 @@ def _validate_against_source_findings(report: ReviewArbitrationReport, *, run_di
             + ", ".join(missing_blocking)
         )
 
-    return _report_with_source_findings_path(
+    findings_mtime = datetime.fromtimestamp(findings_path.stat().st_mtime, tz=timezone.utc).isoformat()
+    return _report_with_source_findings_metadata(
         report,
-        source_findings_path=str((run_dir / "REVIEW_FINDINGS.json").resolve()),
+        source_findings_path=str(findings_path.resolve()),
+        source_findings_sha256=compute_file_sha256(findings_path),
+        source_findings_updated_at=findings_mtime,
+        arbitration_stale=False,
     )
 
 
@@ -108,6 +139,9 @@ def build_review_arbitration_markdown(report: ReviewArbitrationReport) -> str:
         f"Overall decision: `{report.overall_decision}`",
         f"Created at: `{report.created_at.isoformat()}`",
         f"Source findings path: `{report.source_findings_path or '(none)'}`",
+        f"Source findings sha256: `{report.source_findings_sha256 or '(none)'}`",
+        f"Source findings updated at: `{report.source_findings_updated_at or '(none)'}`",
+        f"Arbitration stale: `{str(report.arbitration_stale).lower()}`",
         "",
         "## Summary",
         "",
@@ -206,6 +240,8 @@ def persist_review_arbitration_report(
     state.review_arbitration_decision = report.overall_decision
     state.review_arbitration_final_blocking_count = report.counts.final_blocking
     state.review_arbitration_human_escalation_required = report.counts.human_escalation_required > 0
+    state.review_arbitration_source_findings_sha256 = report.source_findings_sha256
+    state.review_arbitration_stale = False
     state.review_arbitration_created_at = report.created_at
     state.touch()
     state.save_json(run_dir / "state.json")
@@ -230,6 +266,8 @@ def record_review_arbitration(
 ) -> RecordArbitrationResult:
     report = load_arbitration_file(arbitration_file)
     run_dir = Path(runs_dir) / run_id
+    if not run_dir.exists():
+        raise FileNotFoundError(f"run does not exist: {run_id}")
     if report.run_id != run_id:
         raise ValueError(f"arbitration report run_id mismatch: expected {run_id}, got {report.run_id}")
     report = _validate_against_source_findings(report, run_dir=run_dir)

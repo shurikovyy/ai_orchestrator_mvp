@@ -23,7 +23,7 @@ from ai_orchestrator.cli import (
 )
 from ai_orchestrator.engine import TaskExecutionEngine
 from ai_orchestrator.pipeline import PipelineSelectedTask, PipelineState, PipelineTaskResult
-from ai_orchestrator.review_arbitration import load_arbitration_file
+from ai_orchestrator.review_arbitration import compute_file_sha256, is_arbitration_stale, load_arbitration_file
 from ai_orchestrator.schemas import ReviewArbitrationReport, TaskSpec
 
 TEST_TEMP_ROOT = Path(__file__).resolve().parents[1] / ".tmp_tests"
@@ -106,11 +106,14 @@ def make_approved_source_run(runs_dir: Path, *, task: TaskSpec | None = None) ->
     return runs_dir / state.run_id, state.run_id
 
 
-def record_findings_for_run(runs_dir: Path, run_id: str, payload: dict) -> None:
+def record_findings_for_run(runs_dir: Path, run_id: str, payload: dict, *, force: bool = False) -> None:
     with temporary_test_dir() as tmp:
         findings_file = write_json_file(tmp / "findings.json", payload)
+        args = [run_id, "--runs-dir", str(runs_dir), "--findings-file", str(findings_file)]
+        if force:
+            args.append("--force")
         with redirect_stdout(StringIO()):
-            exit_code = record_findings_main([run_id, "--runs-dir", str(runs_dir), "--findings-file", str(findings_file)])
+            exit_code = record_findings_main(args)
         if exit_code != 0:
             raise AssertionError("failed to record findings fixture")
 
@@ -445,15 +448,173 @@ class RecordArbitrationTests(unittest.TestCase):
             state = load_run_state(run_dir)
             arbitration_json_exists = (run_dir / "REVIEW_ARBITRATION.json").exists()
             arbitration_markdown_exists = (run_dir / "REVIEW_ARBITRATION.md").exists()
+            findings_sha = compute_file_sha256(run_dir / "REVIEW_FINDINGS.json")
+            arbitration_report = ReviewArbitrationReport.model_validate_json(
+                (run_dir / "REVIEW_ARBITRATION.json").read_text(encoding="utf-8")
+            )
+            arbitration_markdown = (run_dir / "REVIEW_ARBITRATION.md").read_text(encoding="utf-8")
 
         self.assertEqual(exit_code, 0, output)
         self.assertTrue(arbitration_json_exists)
         self.assertTrue(arbitration_markdown_exists)
         self.assertEqual(output_value(output, "status"), "arbitration_recorded")
+        self.assertEqual(arbitration_report.source_findings_sha256, findings_sha)
+        self.assertIsNotNone(arbitration_report.source_findings_updated_at)
+        self.assertFalse(arbitration_report.arbitration_stale)
+        self.assertIn(findings_sha, arbitration_markdown)
         self.assertEqual(state.review_arbitration_decision, "pass")
         self.assertEqual(state.review_arbitration_final_blocking_count, 0)
         self.assertFalse(state.review_arbitration_human_escalation_required)
+        self.assertEqual(state.review_arbitration_source_findings_sha256, findings_sha)
+        self.assertFalse(state.review_arbitration_stale)
         self.assertIsNotNone(state.review_arbitration_created_at)
+
+    def test_is_arbitration_stale_false_immediately_after_record(self) -> None:
+        with temporary_test_dir() as tmp:
+            runs_dir = tmp / ".runs"
+            run_dir, run_id = make_approved_source_run(runs_dir)
+            record_findings_for_run(
+                runs_dir,
+                run_id,
+                make_findings_payload(run_id=run_id, overall_decision="needs_rework", findings=[make_blocking_qa_finding()]),
+            )
+            arbitration_file = write_json_file(
+                tmp / "arbitration.json",
+                make_arbitration_payload(
+                    run_id=run_id,
+                    overall_decision="pass",
+                    arbitrated_findings=[
+                        {
+                            "finding_id": "F001",
+                            "source_reviewer": "qa",
+                            "original_severity": "major",
+                            "final_severity": "minor",
+                            "original_blocking": True,
+                            "final_blocking": False,
+                            "status": "downgraded",
+                            "reason": "Fresh arbitration.",
+                            "final_required_action": None,
+                        }
+                    ],
+                ),
+            )
+            with redirect_stdout(StringIO()):
+                self.assertEqual(
+                    record_arbitration_main([run_id, "--runs-dir", str(runs_dir), "--arbitration-file", str(arbitration_file)]),
+                    0,
+                )
+            report = ReviewArbitrationReport.model_validate_json(
+                (run_dir / "REVIEW_ARBITRATION.json").read_text(encoding="utf-8")
+            )
+            stale_result = is_arbitration_stale(run_dir, report)
+
+        self.assertFalse(stale_result)
+
+    def test_is_arbitration_stale_true_after_review_findings_are_replaced(self) -> None:
+        with temporary_test_dir() as tmp:
+            runs_dir = tmp / ".runs"
+            run_dir, run_id = make_approved_source_run(runs_dir)
+            record_findings_for_run(
+                runs_dir,
+                run_id,
+                make_findings_payload(run_id=run_id, overall_decision="needs_rework", findings=[make_blocking_qa_finding()]),
+            )
+            arbitration_file = write_json_file(
+                tmp / "arbitration.json",
+                make_arbitration_payload(
+                    run_id=run_id,
+                    overall_decision="pass",
+                    arbitrated_findings=[
+                        {
+                            "finding_id": "F001",
+                            "source_reviewer": "qa",
+                            "original_severity": "major",
+                            "final_severity": "minor",
+                            "original_blocking": True,
+                            "final_blocking": False,
+                            "status": "downgraded",
+                            "reason": "Fresh arbitration.",
+                            "final_required_action": None,
+                        }
+                    ],
+                ),
+            )
+            with redirect_stdout(StringIO()):
+                self.assertEqual(
+                    record_arbitration_main([run_id, "--runs-dir", str(runs_dir), "--arbitration-file", str(arbitration_file)]),
+                    0,
+                )
+            record_findings_for_run(
+                runs_dir,
+                run_id,
+                make_findings_payload(
+                    run_id=run_id,
+                    overall_decision="needs_rework",
+                    summary="Updated findings payload.",
+                    findings=[
+                        {
+                            "id": "F001",
+                            "reviewer": "qa",
+                            "category": "qa",
+                            "severity": "major",
+                            "title": "Missing regression test",
+                            "evidence": "No regression test was added and the evidence changed.",
+                            "required_action": "Add a regression test.",
+                            "status": "open",
+                        }
+                    ],
+                ),
+                force=True,
+            )
+            report = ReviewArbitrationReport.model_validate_json(
+                (run_dir / "REVIEW_ARBITRATION.json").read_text(encoding="utf-8")
+            )
+            stale_result = is_arbitration_stale(run_dir, report)
+
+        self.assertTrue(stale_result)
+
+    def test_old_arbitration_report_without_source_hash_is_treated_as_stale(self) -> None:
+        with temporary_test_dir() as tmp:
+            runs_dir = tmp / ".runs"
+            run_dir, run_id = make_approved_source_run(runs_dir)
+            record_findings_for_run(
+                runs_dir,
+                run_id,
+                make_findings_payload(run_id=run_id, overall_decision="needs_rework", findings=[make_blocking_qa_finding()]),
+            )
+            arbitration_file = write_json_file(
+                tmp / "arbitration.json",
+                make_arbitration_payload(
+                    run_id=run_id,
+                    overall_decision="pass",
+                    arbitrated_findings=[
+                        {
+                            "finding_id": "F001",
+                            "source_reviewer": "qa",
+                            "original_severity": "major",
+                            "final_severity": "minor",
+                            "original_blocking": True,
+                            "final_blocking": False,
+                            "status": "downgraded",
+                            "reason": "Fresh arbitration.",
+                            "final_required_action": None,
+                        }
+                    ],
+                ),
+            )
+            with redirect_stdout(StringIO()):
+                self.assertEqual(
+                    record_arbitration_main([run_id, "--runs-dir", str(runs_dir), "--arbitration-file", str(arbitration_file)]),
+                    0,
+                )
+            report_path = run_dir / "REVIEW_ARBITRATION.json"
+            payload = json.loads(report_path.read_text(encoding="utf-8"))
+            payload.pop("source_findings_sha256", None)
+            report_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            report = ReviewArbitrationReport.model_validate_json(report_path.read_text(encoding="utf-8"))
+            stale_result = is_arbitration_stale(run_dir, report)
+
+        self.assertTrue(stale_result)
 
     def test_record_arbitration_fails_if_run_missing(self) -> None:
         with temporary_test_dir() as tmp:
@@ -470,6 +631,31 @@ class RecordArbitrationTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 1, output)
         self.assertEqual(output_value(output, "error"), "run does not exist: missing-run")
+
+    def test_record_arbitration_fails_if_review_findings_missing(self) -> None:
+        with temporary_test_dir() as tmp:
+            runs_dir = tmp / ".runs"
+            _run_dir, run_id = make_approved_source_run(runs_dir)
+            arbitration_file = write_json_file(
+                tmp / "arbitration.json",
+                make_arbitration_payload(
+                    run_id=run_id,
+                    overall_decision="pass",
+                    arbitrated_findings=[],
+                ),
+            )
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                exit_code = record_arbitration_main(
+                    [run_id, "--runs-dir", str(runs_dir), "--arbitration-file", str(arbitration_file)]
+                )
+            output = stdout.getvalue()
+
+        self.assertEqual(exit_code, 1, output)
+        self.assertEqual(
+            output_value(output, "error"),
+            "REVIEW_FINDINGS.json does not exist for this run; arbitration requires source findings",
+        )
 
     def test_record_arbitration_fails_if_run_id_mismatch(self) -> None:
         with temporary_test_dir() as tmp:
@@ -883,6 +1069,73 @@ class ReviewRunArbitrationGateTests(unittest.TestCase):
         self.assertEqual(output_value(output, "status"), "review_recorded")
         self.assertEqual(output_value(output, "decision"), "approved")
 
+    def test_review_run_approved_fails_with_stale_arbitration_even_if_decision_is_pass(self) -> None:
+        with temporary_test_dir() as tmp:
+            runs_dir = tmp / ".runs"
+            _run_dir, run_id = make_approved_source_run(runs_dir)
+            record_findings_for_run(
+                runs_dir,
+                run_id,
+                make_findings_payload(run_id=run_id, overall_decision="needs_rework", findings=[make_blocking_qa_finding()]),
+            )
+            arbitration_file = write_json_file(
+                tmp / "arbitration.json",
+                make_arbitration_payload(
+                    run_id=run_id,
+                    overall_decision="pass",
+                    arbitrated_findings=[
+                        {
+                            "finding_id": "F001",
+                            "source_reviewer": "qa",
+                            "original_severity": "major",
+                            "final_severity": "minor",
+                            "original_blocking": True,
+                            "final_blocking": False,
+                            "status": "downgraded",
+                            "reason": "Non-blocking after arbitration.",
+                            "final_required_action": None,
+                        }
+                    ],
+                ),
+            )
+            with redirect_stdout(StringIO()):
+                self.assertEqual(
+                    record_arbitration_main([run_id, "--runs-dir", str(runs_dir), "--arbitration-file", str(arbitration_file)]),
+                    0,
+                )
+            record_findings_for_run(
+                runs_dir,
+                run_id,
+                make_findings_payload(
+                    run_id=run_id,
+                    overall_decision="needs_rework",
+                    summary="Updated findings after arbitration.",
+                    findings=[
+                        {
+                            "id": "F001",
+                            "reviewer": "qa",
+                            "category": "qa",
+                            "severity": "major",
+                            "title": "Missing regression test",
+                            "evidence": "Updated evidence after arbitration.",
+                            "required_action": "Add a regression test.",
+                            "status": "open",
+                        }
+                    ],
+                ),
+                force=True,
+            )
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                exit_code = review_run_main([run_id, "--runs-dir", str(runs_dir), "--decision", "approved"])
+            output = stdout.getvalue()
+
+        self.assertEqual(exit_code, 1, output)
+        self.assertEqual(
+            output_value(output, "error"),
+            "run has stale review arbitration; re-run record-arbitration for current findings",
+        )
+
     def test_arbitration_final_blocking_blocks_review_run_approved(self) -> None:
         with temporary_test_dir() as tmp:
             runs_dir = tmp / ".runs"
@@ -1018,6 +1271,75 @@ class ReviewRunArbitrationGateTests(unittest.TestCase):
         self.assertEqual(output_value(output, "status"), "review_recorded")
         self.assertEqual(output_value(output, "decision"), "rejected")
 
+    def test_review_run_rejected_still_succeeds_with_stale_arbitration(self) -> None:
+        with temporary_test_dir() as tmp:
+            runs_dir = tmp / ".runs"
+            _run_dir, run_id = make_approved_source_run(runs_dir)
+            record_findings_for_run(
+                runs_dir,
+                run_id,
+                make_findings_payload(run_id=run_id, overall_decision="needs_rework", findings=[make_blocking_qa_finding()]),
+            )
+            arbitration_file = write_json_file(
+                tmp / "arbitration.json",
+                make_arbitration_payload(
+                    run_id=run_id,
+                    overall_decision="pass",
+                    arbitrated_findings=[
+                        {
+                            "finding_id": "F001",
+                            "source_reviewer": "qa",
+                            "original_severity": "major",
+                            "final_severity": "minor",
+                            "original_blocking": True,
+                            "final_blocking": False,
+                            "status": "downgraded",
+                            "reason": "Non-blocking after arbitration.",
+                            "final_required_action": None,
+                        }
+                    ],
+                ),
+            )
+            feedback_path = tmp / "review_feedback.md"
+            write_text(feedback_path, "Rejecting the run until the current findings are re-arbitrated.\n")
+            with redirect_stdout(StringIO()):
+                self.assertEqual(
+                    record_arbitration_main([run_id, "--runs-dir", str(runs_dir), "--arbitration-file", str(arbitration_file)]),
+                    0,
+                )
+            record_findings_for_run(
+                runs_dir,
+                run_id,
+                make_findings_payload(
+                    run_id=run_id,
+                    overall_decision="needs_rework",
+                    summary="Updated findings after arbitration.",
+                    findings=[
+                        {
+                            "id": "F001",
+                            "reviewer": "qa",
+                            "category": "qa",
+                            "severity": "major",
+                            "title": "Missing regression test",
+                            "evidence": "Updated evidence after arbitration.",
+                            "required_action": "Add a regression test.",
+                            "status": "open",
+                        }
+                    ],
+                ),
+                force=True,
+            )
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                exit_code = review_run_main(
+                    [run_id, "--runs-dir", str(runs_dir), "--decision", "rejected", "--feedback", str(feedback_path)]
+                )
+            output = stdout.getvalue()
+
+        self.assertEqual(exit_code, 0, output)
+        self.assertEqual(output_value(output, "status"), "review_recorded")
+        self.assertEqual(output_value(output, "decision"), "rejected")
+
 
 class ShowStatusArbitrationTests(unittest.TestCase):
     def test_show_run_displays_arbitration_fields(self) -> None:
@@ -1064,6 +1386,8 @@ class ShowStatusArbitrationTests(unittest.TestCase):
         self.assertEqual(output_value(output, "review_arbitration_decision"), "pass")
         self.assertEqual(output_value(output, "arbitration_final_blocking"), "0")
         self.assertEqual(output_value(output, "arbitration_human_escalation_required"), "false")
+        self.assertEqual(output_value(output, "arbitration_stale"), "false")
+        self.assertTrue(output_value(output, "review_arbitration_source_findings_sha256"))
         self.assertIn("review_arbitration=", output)
         self.assertIn("review_arbitration_markdown=", output)
 
@@ -1126,6 +1450,134 @@ class ShowStatusArbitrationTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 0, output)
         self.assertEqual(output_value(output, "next_action"), "human_escalation")
+
+    def test_show_run_displays_stale_arbitration_after_findings_change(self) -> None:
+        with temporary_test_dir() as tmp:
+            runs_dir = tmp / ".runs"
+            _run_dir, run_id = make_approved_source_run(runs_dir)
+            record_findings_for_run(
+                runs_dir,
+                run_id,
+                make_findings_payload(run_id=run_id, overall_decision="needs_rework", findings=[make_blocking_qa_finding()]),
+            )
+            arbitration_file = write_json_file(
+                tmp / "arbitration.json",
+                make_arbitration_payload(
+                    run_id=run_id,
+                    overall_decision="pass",
+                    arbitrated_findings=[
+                        {
+                            "finding_id": "F001",
+                            "source_reviewer": "qa",
+                            "original_severity": "major",
+                            "final_severity": "minor",
+                            "original_blocking": True,
+                            "final_blocking": False,
+                            "status": "downgraded",
+                            "reason": "Non-blocking after arbitration.",
+                            "final_required_action": None,
+                        }
+                    ],
+                ),
+            )
+            with redirect_stdout(StringIO()):
+                self.assertEqual(
+                    record_arbitration_main([run_id, "--runs-dir", str(runs_dir), "--arbitration-file", str(arbitration_file)]),
+                    0,
+                )
+            record_findings_for_run(
+                runs_dir,
+                run_id,
+                make_findings_payload(
+                    run_id=run_id,
+                    overall_decision="needs_rework",
+                    summary="Updated findings after arbitration.",
+                    findings=[
+                        {
+                            "id": "F001",
+                            "reviewer": "qa",
+                            "category": "qa",
+                            "severity": "major",
+                            "title": "Missing regression test",
+                            "evidence": "Updated evidence after arbitration.",
+                            "required_action": "Add a regression test.",
+                            "status": "open",
+                        }
+                    ],
+                ),
+                force=True,
+            )
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                exit_code = show_run_main([run_id, "--runs-dir", str(runs_dir)])
+            output = stdout.getvalue()
+
+        self.assertEqual(exit_code, 0, output)
+        self.assertEqual(output_value(output, "arbitration_stale"), "true")
+
+    def test_show_run_next_action_arbitrate_findings_when_arbitration_is_stale(self) -> None:
+        with temporary_test_dir() as tmp:
+            runs_dir = tmp / ".runs"
+            _run_dir, run_id = make_approved_source_run(runs_dir)
+            record_findings_for_run(
+                runs_dir,
+                run_id,
+                make_findings_payload(run_id=run_id, overall_decision="needs_rework", findings=[make_blocking_qa_finding()]),
+            )
+            arbitration_file = write_json_file(
+                tmp / "arbitration.json",
+                make_arbitration_payload(
+                    run_id=run_id,
+                    overall_decision="pass",
+                    arbitrated_findings=[
+                        {
+                            "finding_id": "F001",
+                            "source_reviewer": "qa",
+                            "original_severity": "major",
+                            "final_severity": "minor",
+                            "original_blocking": True,
+                            "final_blocking": False,
+                            "status": "downgraded",
+                            "reason": "Non-blocking after arbitration.",
+                            "final_required_action": None,
+                        }
+                    ],
+                ),
+            )
+            with redirect_stdout(StringIO()):
+                self.assertEqual(
+                    record_arbitration_main([run_id, "--runs-dir", str(runs_dir), "--arbitration-file", str(arbitration_file)]),
+                    0,
+                )
+            record_findings_for_run(
+                runs_dir,
+                run_id,
+                make_findings_payload(
+                    run_id=run_id,
+                    overall_decision="needs_rework",
+                    summary="Updated findings after arbitration.",
+                    findings=[
+                        {
+                            "id": "F001",
+                            "reviewer": "qa",
+                            "category": "qa",
+                            "severity": "major",
+                            "title": "Missing regression test",
+                            "evidence": "Updated evidence after arbitration.",
+                            "required_action": "Add a regression test.",
+                            "status": "open",
+                        }
+                    ],
+                ),
+                force=True,
+            )
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                exit_code = show_run_main([run_id, "--runs-dir", str(runs_dir)])
+            output = stdout.getvalue()
+
+        self.assertEqual(exit_code, 0, output)
+        self.assertEqual(output_value(output, "next_action"), "arbitrate_findings")
 
     def test_show_run_next_action_review_rejected_when_final_blocking_arbitration_exists(self) -> None:
         with temporary_test_dir() as tmp:
@@ -1229,6 +1681,85 @@ class ShowStatusArbitrationTests(unittest.TestCase):
         self.assertEqual(output_value(output, "tasks_waiting_arbitration"), "1")
         self.assertEqual(output_value(output, "tasks_with_final_blocking_arbitration"), "1")
         self.assertEqual(output_value(output, "next_action"), "review_rejected")
+
+    def test_show_pipeline_counts_stale_arbitration_and_prefers_rearbitration(self) -> None:
+        with temporary_test_dir() as tmp:
+            runs_dir = tmp / ".runs"
+            _run_dir_a, run_id_a = make_approved_source_run(runs_dir)
+            _run_dir_b, run_id_b = make_approved_source_run(runs_dir)
+            record_findings_for_run(
+                runs_dir,
+                run_id_a,
+                make_findings_payload(run_id=run_id_a, overall_decision="needs_rework", findings=[make_blocking_qa_finding()]),
+            )
+            record_findings_for_run(
+                runs_dir,
+                run_id_b,
+                make_findings_payload(run_id=run_id_b, overall_decision="needs_rework", findings=[make_blocking_qa_finding()]),
+            )
+            arbitration_file = write_json_file(
+                tmp / "arbitration.json",
+                make_arbitration_payload(
+                    run_id=run_id_a,
+                    overall_decision="pass",
+                    arbitrated_findings=[
+                        {
+                            "finding_id": "F001",
+                            "source_reviewer": "qa",
+                            "original_severity": "major",
+                            "final_severity": "minor",
+                            "original_blocking": True,
+                            "final_blocking": False,
+                            "status": "downgraded",
+                            "reason": "Non-blocking after arbitration.",
+                            "final_required_action": None,
+                        }
+                    ],
+                ),
+            )
+            with redirect_stdout(StringIO()):
+                self.assertEqual(
+                    record_arbitration_main([run_id_a, "--runs-dir", str(runs_dir), "--arbitration-file", str(arbitration_file)]),
+                    0,
+                )
+            record_findings_for_run(
+                runs_dir,
+                run_id_a,
+                make_findings_payload(
+                    run_id=run_id_a,
+                    overall_decision="needs_rework",
+                    summary="Updated findings after arbitration.",
+                    findings=[
+                        {
+                            "id": "F001",
+                            "reviewer": "qa",
+                            "category": "qa",
+                            "severity": "major",
+                            "title": "Missing regression test",
+                            "evidence": "Updated evidence after arbitration.",
+                            "required_action": "Add a regression test.",
+                            "status": "open",
+                        }
+                    ],
+                ),
+                force=True,
+            )
+            create_pipeline_fixture(
+                tmp,
+                pipeline_id="pipeline_arbitration_stale_1",
+                tasks=[
+                    build_pipeline_task_result("task-a", run_id_a, runs_dir, title="Task A"),
+                    build_pipeline_task_result("task-b", run_id_b, runs_dir, title="Task B"),
+                ],
+            )
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                exit_code = show_pipeline_main(["pipeline_arbitration_stale_1", "--runs-dir", str(runs_dir)])
+            output = stdout.getvalue()
+
+        self.assertEqual(exit_code, 0, output)
+        self.assertEqual(output_value(output, "tasks_with_stale_arbitration"), "1")
+        self.assertEqual(output_value(output, "next_action"), "arbitrate_findings")
 
 
 if __name__ == "__main__":

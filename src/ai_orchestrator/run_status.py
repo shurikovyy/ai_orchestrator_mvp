@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 from ai_orchestrator.apply import load_run_state
-from ai_orchestrator.review_arbitration import load_run_arbitration
+from ai_orchestrator.review_arbitration import is_arbitration_stale, load_run_arbitration
 from ai_orchestrator.review_findings import load_run_findings
 from ai_orchestrator.reviewer_prompts import load_reviewer_prompt_manifest
 from ai_orchestrator.risk_classification import load_run_risk_classification
@@ -26,6 +26,8 @@ class RunStatusSummary:
     review_arbitration_decision: str
     arbitration_final_blocking: int
     arbitration_human_escalation_required: bool
+    arbitration_stale: bool
+    review_arbitration_source_findings_sha256: str | None
     findings_feedback_exists: bool
     findings_feedback_count: int
     reviewer_prompts_exists: bool
@@ -87,6 +89,7 @@ def _compute_next_action(
     review_arbitration_decision: str,
     arbitration_final_blocking: int,
     arbitration_human_escalation_required: bool,
+    arbitration_stale: bool,
     findings_feedback_exists: bool,
     risk_classification_exists: bool,
     required_review_profiles: list[str],
@@ -98,6 +101,8 @@ def _compute_next_action(
         return "rework_or_inspect_failure"
     if human_review_decision == "rejected":
         return "rework_run"
+    if arbitration_exists and arbitration_stale:
+        return "arbitrate_findings"
     if arbitration_exists and arbitration_human_escalation_required:
         return "human_escalation"
     if arbitration_exists and arbitration_final_blocking > 0:
@@ -184,10 +189,20 @@ def build_run_status_summary(*, run_id: str, runs_dir: str | Path) -> RunStatusS
         if arbitration_report is not None
         else (state.review_arbitration_final_blocking_count or 0)
     )
+    arbitration_stale = (
+        is_arbitration_stale(run_dir, arbitration_report)
+        if arbitration_report is not None
+        else state.review_arbitration_stale
+    )
     arbitration_human_escalation_required = (
         arbitration_report.counts.human_escalation_required > 0
         if arbitration_report is not None
         else state.review_arbitration_human_escalation_required
+    )
+    review_arbitration_source_findings_sha256 = (
+        arbitration_report.source_findings_sha256
+        if arbitration_report is not None
+        else state.review_arbitration_source_findings_sha256
     )
     risk_classification = load_run_risk_classification(run_dir)
     risk_classification_exists = risk_classification is not None or exists["risk_classification"]
@@ -214,6 +229,7 @@ def build_run_status_summary(*, run_id: str, runs_dir: str | Path) -> RunStatusS
         review_arbitration_decision=review_arbitration_decision,
         arbitration_final_blocking=arbitration_final_blocking,
         arbitration_human_escalation_required=arbitration_human_escalation_required,
+        arbitration_stale=arbitration_stale,
         findings_feedback_exists=exists["findings_feedback"],
         risk_classification_exists=risk_classification_exists,
         required_review_profiles=required_review_profiles,
@@ -242,6 +258,8 @@ def build_run_status_summary(*, run_id: str, runs_dir: str | Path) -> RunStatusS
         review_arbitration_decision=review_arbitration_decision,
         arbitration_final_blocking=arbitration_final_blocking,
         arbitration_human_escalation_required=arbitration_human_escalation_required,
+        arbitration_stale=arbitration_stale,
+        review_arbitration_source_findings_sha256=review_arbitration_source_findings_sha256,
         findings_feedback_exists=exists["findings_feedback"],
         findings_feedback_count=state.findings_feedback_count,
         reviewer_prompts_exists=reviewer_prompts_count > 0,
@@ -282,6 +300,8 @@ def format_run_status_text(summary: RunStatusSummary, *, show_paths: bool = Fals
         f"review_arbitration_decision={summary.review_arbitration_decision}",
         f"arbitration_final_blocking={summary.arbitration_final_blocking}",
         f"arbitration_human_escalation_required={_bool_text(summary.arbitration_human_escalation_required)}",
+        f"arbitration_stale={_bool_text(summary.arbitration_stale)}",
+        f"review_arbitration_source_findings_sha256={summary.review_arbitration_source_findings_sha256 or ''}",
         f"findings_feedback_exists={_bool_text(summary.findings_feedback_exists)}",
         f"findings_feedback_count={summary.findings_feedback_count}",
         f"reviewer_prompts_exists={_bool_text(summary.reviewer_prompts_exists)}",
@@ -342,6 +362,8 @@ def format_run_status_json(summary: RunStatusSummary) -> str:
         "review_arbitration_decision": summary.review_arbitration_decision,
         "arbitration_final_blocking": summary.arbitration_final_blocking,
         "arbitration_human_escalation_required": summary.arbitration_human_escalation_required,
+        "arbitration_stale": summary.arbitration_stale,
+        "review_arbitration_source_findings_sha256": summary.review_arbitration_source_findings_sha256,
         "findings_feedback_exists": summary.findings_feedback_exists,
         "findings_feedback_count": summary.findings_feedback_count,
         "reviewer_prompts_exists": summary.reviewer_prompts_exists,

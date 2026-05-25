@@ -479,6 +479,9 @@ class ReviewArbitrationReport(BaseModel):
     run_id: str
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     source_findings_path: str | None = None
+    source_findings_sha256: str | None = None
+    source_findings_updated_at: str | None = None
+    arbitration_stale: bool = False
     arbiter: Literal["manual", "deterministic", "llm_future", "human"] = "manual"
     summary: str
     overall_decision: Literal["pass", "needs_rework", "blocked", "human_escalation"]
@@ -493,9 +496,9 @@ class ReviewArbitrationReport(BaseModel):
             raise ValueError("required arbitration report field must not be empty")
         return value
 
-    @field_validator("source_findings_path")
+    @field_validator("source_findings_path", "source_findings_sha256", "source_findings_updated_at")
     @classmethod
-    def source_findings_path_blank_to_none(cls, value: str | None) -> str | None:
+    def source_findings_fields_blank_to_none(cls, value: str | None) -> str | None:
         if value is None:
             return None
         value = value.strip()
@@ -660,6 +663,8 @@ class RunState(BaseModel):
     review_arbitration_decision: str | None = None
     review_arbitration_final_blocking_count: int | None = Field(default=None, ge=0)
     review_arbitration_human_escalation_required: bool = False
+    review_arbitration_source_findings_sha256: str | None = None
+    review_arbitration_stale: bool = False
     review_arbitration_created_at: datetime | None = None
     findings_feedback_path: str | None = None
     findings_feedback_created_at: datetime | None = None
@@ -695,6 +700,7 @@ class RunState(BaseModel):
         "review_findings_source_kind",
         "review_arbitration_path",
         "review_arbitration_decision",
+        "review_arbitration_source_findings_sha256",
         "findings_feedback_path",
         "findings_feedback_source_path",
         "risk_classification_path",

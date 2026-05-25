@@ -1171,6 +1171,10 @@ Important policy:
 - deterministic hard gates cannot be dismissed;
 - deterministic critical/major findings cannot be downgraded below their original severity;
 - arbitration may require explicit human escalation;
+- arbitration is tied to the exact `REVIEW_FINDINGS.json` bytes via `sha256`;
+- if findings are replaced after arbitration, the arbitration becomes stale;
+- stale arbitration cannot be used to approve a run;
+- `show-run` and `show-pipeline` expose `arbitration_stale=true|false`;
 - `review-run --decision approved` uses arbitration results when they exist;
 - without arbitration, raw blocking findings still block approval.
 
@@ -1201,6 +1205,32 @@ python -m ai_orchestrator.cli review-run run_20260523_120000_abcd12 \
   --runs-dir .runs \
   --decision rejected \
   --feedback review_feedback.md
+```
+
+If findings are replaced after arbitration, record a fresh arbitration against the current findings:
+
+```bash
+python -m ai_orchestrator.cli record-findings run_20260523_120000_abcd12 \
+  --runs-dir .runs \
+  --findings-file reviewer_findings_v2.json \
+  --force
+
+python -m ai_orchestrator.cli show-run run_20260523_120000_abcd12 --runs-dir .runs
+```
+
+If `show-run` reports:
+
+```text
+arbitration_stale=true
+```
+
+then re-record arbitration for the current `REVIEW_FINDINGS.json`:
+
+```bash
+python -m ai_orchestrator.cli record-arbitration run_20260523_120000_abcd12 \
+  --runs-dir .runs \
+  --arbitration-file arbitration.json \
+  --force
 ```
 
 ### Self-improvement autonomy goal

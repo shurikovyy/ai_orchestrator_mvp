@@ -25,6 +25,7 @@ class PipelineTaskStatusSummary:
     review_arbitration_decision: str
     arbitration_final_blocking: int
     arbitration_human_escalation_required: bool
+    arbitration_stale: bool
     findings_feedback_exists: bool
     findings_feedback_count: int
     reviewer_prompts_exists: bool
@@ -135,6 +136,7 @@ def _build_task_summary_from_run_summary(task_result: PipelineTaskResult, run_su
         review_arbitration_decision=run_summary.review_arbitration_decision,
         arbitration_final_blocking=run_summary.arbitration_final_blocking,
         arbitration_human_escalation_required=run_summary.arbitration_human_escalation_required,
+        arbitration_stale=run_summary.arbitration_stale,
         findings_feedback_exists=run_summary.findings_feedback_exists,
         findings_feedback_count=run_summary.findings_feedback_count,
         reviewer_prompts_exists=run_summary.reviewer_prompts_exists,
@@ -174,6 +176,7 @@ def _build_missing_task_summary(task_result: PipelineTaskResult, runs_dir: Path)
         review_arbitration_decision="empty",
         arbitration_final_blocking=0,
         arbitration_human_escalation_required=False,
+        arbitration_stale=False,
         findings_feedback_exists=False,
         findings_feedback_count=0,
         reviewer_prompts_exists=False,
@@ -216,6 +219,7 @@ def _compute_counts(task_summaries: list[PipelineTaskStatusSummary]) -> dict[str
         "tasks_with_findings": sum(1 for task in task_summaries if task.findings_exists),
         "tasks_with_blocking_findings": sum(1 for task in task_summaries if task.blocking_findings > 0),
         "tasks_with_arbitration": sum(1 for task in task_summaries if task.arbitration_exists),
+        "tasks_with_stale_arbitration": sum(1 for task in task_summaries if task.arbitration_stale),
         "tasks_waiting_arbitration": sum(1 for task in task_summaries if task.next_action == "arbitrate_findings"),
         "tasks_with_final_blocking_arbitration": sum(1 for task in task_summaries if task.arbitration_final_blocking > 0),
         "tasks_requiring_human_escalation": sum(
@@ -330,6 +334,7 @@ def format_pipeline_status_text(summary: PipelineStatusSummary, *, show_paths: b
         f"tasks_with_findings={summary.counts['tasks_with_findings']}",
         f"tasks_with_blocking_findings={summary.counts['tasks_with_blocking_findings']}",
         f"tasks_with_arbitration={summary.counts['tasks_with_arbitration']}",
+        f"tasks_with_stale_arbitration={summary.counts['tasks_with_stale_arbitration']}",
         f"tasks_waiting_arbitration={summary.counts['tasks_waiting_arbitration']}",
         f"tasks_with_final_blocking_arbitration={summary.counts['tasks_with_final_blocking_arbitration']}",
         f"tasks_requiring_human_escalation={summary.counts['tasks_requiring_human_escalation']}",
@@ -370,6 +375,7 @@ def format_pipeline_status_text(summary: PipelineStatusSummary, *, show_paths: b
             f"review_arbitration_decision={task.review_arbitration_decision}",
             f"arbitration_final_blocking={task.arbitration_final_blocking}",
             f"arbitration_human_escalation_required={_bool_text(task.arbitration_human_escalation_required)}",
+            f"arbitration_stale={_bool_text(task.arbitration_stale)}",
             f"findings_feedback_exists={_bool_text(task.findings_feedback_exists)}",
             f"findings_feedback_count={task.findings_feedback_count}",
             f"reviewer_prompts_exists={_bool_text(task.reviewer_prompts_exists)}",
@@ -417,6 +423,7 @@ def format_pipeline_status_json(summary: PipelineStatusSummary) -> str:
                 "review_arbitration_decision": task.review_arbitration_decision,
                 "arbitration_final_blocking": task.arbitration_final_blocking,
                 "arbitration_human_escalation_required": task.arbitration_human_escalation_required,
+                "arbitration_stale": task.arbitration_stale,
                 "findings_feedback_exists": task.findings_feedback_exists,
                 "findings_feedback_count": task.findings_feedback_count,
                 "reviewer_prompts_exists": task.reviewer_prompts_exists,
