@@ -10,9 +10,10 @@ from pydantic import BaseModel, Field
 from ai_orchestrator.apply import build_run_application_context, load_run_state
 from ai_orchestrator.review import build_review_packet_data
 from ai_orchestrator.review_findings import load_run_findings
+from ai_orchestrator.review_findings_schemas import ReviewFinding, ReviewFindingsReport
 from ai_orchestrator.review_profiles import get_review_profile, list_review_profiles
 from ai_orchestrator.risk_classification import load_run_risk_classification
-from ai_orchestrator.schemas import ReviewFindingsReport, ReviewFinding, RunState, StructuredExecutionReport
+from ai_orchestrator.schemas import RunState, StructuredExecutionReport
 from ai_orchestrator.validation import load_structured_report
 
 _REVIEW_PACKET_CHAR_CAP = 50_000

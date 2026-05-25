@@ -10,7 +10,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from ai_orchestrator.schemas import normalize_safe_relative_path
+from ai_orchestrator.schema_utils import normalize_safe_relative_path
 
 _TASK_DRAFT_RISK_LEVELS = {"low", "medium", "high", "critical", "unknown"}
 _DANGEROUS_COMMAND_SNIPPETS = (

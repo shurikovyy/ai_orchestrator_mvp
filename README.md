@@ -1097,6 +1097,18 @@ Reference:
 docs/maintainability_policy.md
 ```
 
+### Schema module organization
+
+Core execution, task, and run-state schemas remain in `src/ai_orchestrator/schemas.py`.
+
+Domain-specific schemas live in focused modules:
+
+- review findings: `src/ai_orchestrator/review_findings_schemas.py`
+- review arbitration: `src/ai_orchestrator/review_arbitration_schemas.py`
+- risk classification: `src/ai_orchestrator/risk_schemas.py`
+
+Compatibility imports remain available from `ai_orchestrator.schemas`, so older code such as `from ai_orchestrator.schemas import ReviewFinding` still works. New production code should prefer the domain-specific schema modules so `schemas.py` stays focused and human-maintainable.
+
 ### Findings to rework feedback
 
 `run-review-checks` and `record-findings` create structured findings, but they do not reject a run by themselves. `findings-feedback` turns open findings into concrete markdown feedback that can be reused for a rejected human review and then by `rework-run`.

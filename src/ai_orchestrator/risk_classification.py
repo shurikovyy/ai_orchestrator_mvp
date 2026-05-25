@@ -7,7 +7,9 @@ from pathlib import Path, PurePosixPath
 import re
 
 from ai_orchestrator.apply import load_run_state
-from ai_orchestrator.schemas import RiskClassification, RiskReason, RunState, StructuredExecutionReport, normalize_safe_relative_path
+from ai_orchestrator.risk_schemas import RiskClassification, RiskReason
+from ai_orchestrator.schema_utils import normalize_safe_relative_path
+from ai_orchestrator.schemas import RunState, StructuredExecutionReport
 from ai_orchestrator.validation import _normalize_manifest_path, load_structured_report
 
 _RISK_LEVEL_PRIORITY = {"low": 1, "medium": 2, "high": 3, "critical": 4}

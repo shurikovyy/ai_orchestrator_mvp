@@ -7,7 +7,8 @@ import re
 
 from ai_orchestrator.apply import load_run_state
 from ai_orchestrator.review_findings import RecordFindingsResult, persist_review_findings_report
-from ai_orchestrator.schemas import ReviewFinding, ReviewFindingsReport, RunState, StructuredExecutionReport
+from ai_orchestrator.review_findings_schemas import ReviewFinding, ReviewFindingsReport
+from ai_orchestrator.schemas import RunState, StructuredExecutionReport
 from ai_orchestrator.validation import _normalize_manifest_path, load_structured_report
 
 SUPPORTED_REVIEW_PROFILES = {"default", "docs-only", "code-safety"}

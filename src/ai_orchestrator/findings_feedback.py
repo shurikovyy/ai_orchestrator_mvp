@@ -5,7 +5,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ai_orchestrator.apply import load_run_state
-from ai_orchestrator.review_findings import ReviewFindingsReport, load_run_findings
+from ai_orchestrator.review_findings import load_run_findings
+from ai_orchestrator.review_findings_schemas import ReviewFindingsReport
 
 _SEVERITY_PRIORITY = {
     "critical": 0,

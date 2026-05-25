@@ -7,8 +7,9 @@ import json
 from pathlib import Path
 
 from ai_orchestrator.apply import load_run_state
+from ai_orchestrator.review_arbitration_schemas import ArbitratedFinding, ReviewArbitrationReport
 from ai_orchestrator.review_findings import load_run_findings
-from ai_orchestrator.schemas import ArbitratedFinding, ReviewArbitrationReport, ReviewFinding
+from ai_orchestrator.review_findings_schemas import ReviewFinding
 
 
 @dataclass(frozen=True)

@@ -6,7 +6,7 @@ from typing import Literal, get_args
 
 from pydantic import BaseModel, Field, field_validator
 
-from ai_orchestrator.schemas import ReviewFinding
+from ai_orchestrator.review_findings_schemas import ReviewFinding
 
 _CATEGORY_FIELD = ReviewFinding.model_fields["category"]
 VALID_REVIEW_FINDING_CATEGORIES = tuple(get_args(_CATEGORY_FIELD.annotation))

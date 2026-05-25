@@ -6,7 +6,7 @@ from pathlib import Path
 
 from ai_orchestrator.apply import load_run_state
 from ai_orchestrator.review_profiles import get_review_profile
-from ai_orchestrator.schemas import ReviewFinding, ReviewFindingsReport
+from ai_orchestrator.review_findings_schemas import ReviewFinding, ReviewFindingsReport
 
 
 @dataclass(frozen=True)
