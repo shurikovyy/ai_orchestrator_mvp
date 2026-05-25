@@ -12,7 +12,7 @@ from uuid import uuid4
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from ai_orchestrator.cli import draft_task_scaffold_main, validate_task_draft_main
+from ai_orchestrator.cli import draft_task_scaffold_main, revise_task_draft_main, validate_task_draft_main
 from ai_orchestrator.task_drafts import TaskDraftManifest, load_task_draft, load_task_draft_manifest
 from ai_orchestrator.task_draft_validation import TaskDraftValidationReport
 
@@ -343,6 +343,43 @@ class TaskDraftValidationCliTests(unittest.TestCase):
         self.assertIsNotNone(manifest.validated_at)
         self.assertTrue(manifest.validator_report)
         self.assertTrue(manifest.validator_report_md)
+
+    def test_validate_task_draft_clears_stale_reason_after_revision(self) -> None:
+        with temporary_test_dir() as tmp:
+            draft_id, draft_dir = scaffold_draft(tmp, request_text="# Docs\n\nDocument flow.\n")
+            with redirect_stdout(StringIO()):
+                self.assertEqual(validate_task_draft_main([draft_id, "--drafts-dir", str(tmp / ".task_drafts")]), 0)
+            with redirect_stdout(StringIO()):
+                self.assertEqual(
+                    revise_task_draft_main(
+                        [
+                            draft_id,
+                            "--drafts-dir",
+                            str(tmp / ".task_drafts"),
+                            "--risk-level",
+                            "low",
+                            "--clear-files-allowed",
+                            "--allow-file",
+                            "docs/example.md",
+                            "--clear-open-questions",
+                        ]
+                    ),
+                    0,
+                )
+            stale_manifest = load_task_draft_manifest(draft_dir / "MANIFEST.json")
+            with redirect_stdout(StringIO()):
+                self.assertEqual(
+                    validate_task_draft_main([draft_id, "--drafts-dir", str(tmp / ".task_drafts"), "--force"]),
+                    0,
+                )
+            current_manifest = load_task_draft_manifest(draft_dir / "MANIFEST.json")
+
+        self.assertEqual(stale_manifest.validation_status, "stale")
+        self.assertFalse(stale_manifest.valid_for_promotion)
+        self.assertEqual(stale_manifest.validation_stale_reason, "task draft revised after last validation")
+        self.assertIn(current_manifest.validation_status, {"valid", "needs_revision", "invalid"})
+        self.assertIsNone(current_manifest.validation_stale_reason)
+        self.assertIsNotNone(current_manifest.validated_at)
 
     def test_force_required_to_overwrite_existing_validator_report(self) -> None:
         with temporary_test_dir() as tmp:

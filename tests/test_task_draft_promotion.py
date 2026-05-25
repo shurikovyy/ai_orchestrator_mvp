@@ -130,6 +130,75 @@ class TaskDraftPromotionCliTests(unittest.TestCase):
         self.assertEqual(config.project, "ai_orchestrator_mvp")
         self.assertEqual(output_value(output, "status"), "promoted")
 
+    def test_revalidate_after_revision_clears_stale_reason_and_allows_promotion(self) -> None:
+        with temporary_test_dir() as tmp:
+            draft_id, draft_dir = scaffold_draft(
+                tmp,
+                request_text="# Dogfood docs\n\nCreate docs/intake_workflow_dogfood.md for intake dogfood.\n",
+                task_id="0.1.40-task-intake-dogfood-doc",
+                title="Add task-intake dogfood documentation",
+            )
+            initial_validation = validate_draft(tmp, draft_id)
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                self.assertEqual(
+                    revise_task_draft_main(
+                        [
+                            draft_id,
+                            "--drafts-dir",
+                            str(tmp / ".task_drafts"),
+                            "--risk-level",
+                            "low",
+                            "--clear-files-allowed",
+                            "--allow-file",
+                            "docs/intake_workflow_dogfood.md",
+                            "--clear-open-questions",
+                            "--require-profile",
+                            "qa",
+                            "--optional-profile",
+                            "business",
+                            "--add-acceptance",
+                            "changed_files includes docs/intake_workflow_dogfood.md",
+                            "--add-validation-requirement",
+                            "Only docs/intake_workflow_dogfood.md and EXECUTION_REPORT.json may be changed.",
+                            "--add-rollback-note",
+                            "Remove docs/intake_workflow_dogfood.md if the task is reverted.",
+                        ]
+                    ),
+                    0,
+                    stdout.getvalue(),
+                )
+            stale_manifest = load_task_draft_manifest(draft_dir / "MANIFEST.json")
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                self.assertEqual(
+                    validate_task_draft_main([draft_id, "--drafts-dir", str(tmp / ".task_drafts"), "--force"]),
+                    0,
+                    stdout.getvalue(),
+                )
+            second_validation = stdout.getvalue()
+            current_manifest = load_task_draft_manifest(draft_dir / "MANIFEST.json")
+            exit_code, output = promote_draft(tmp, draft_id)
+            tasks_file = tmp / "tasks.yaml"
+            tasks_file_exists = tasks_file.exists()
+            config = load_task_queue_config(tasks_file)
+            task = next(task for task in config.tasks if task.id == "0.1.40-task-intake-dogfood-doc")
+            runs_exists = (tmp / ".runs").exists()
+
+        self.assertIn("validation_status=needs_revision", initial_validation)
+        self.assertEqual(stale_manifest.validation_status, "stale")
+        self.assertFalse(stale_manifest.valid_for_promotion)
+        self.assertTrue(stale_manifest.validation_stale_reason)
+        self.assertIn("validation_status=valid", second_validation)
+        self.assertIn("valid_for_promotion=true", second_validation)
+        self.assertEqual(current_manifest.validation_status, "valid")
+        self.assertTrue(current_manifest.valid_for_promotion)
+        self.assertIsNone(current_manifest.validation_stale_reason)
+        self.assertEqual(exit_code, 0, output)
+        self.assertTrue(tasks_file_exists)
+        self.assertFalse(task.enabled)
+        self.assertFalse(runs_exists)
+
     def test_promoted_task_enabled_false_by_default(self) -> None:
         with temporary_test_dir() as tmp:
             draft_id, draft_dir = scaffold_draft(tmp, request_text="# Docs\n\nDocument docs flow.\n")

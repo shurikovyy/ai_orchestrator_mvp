@@ -591,6 +591,7 @@ def validate_task_draft(
             "validation_status": report.validation_status,
             "valid_for_promotion": report.valid_for_promotion,
             "validated_at": report.created_at,
+            "validation_stale_reason": None,
         }
     )
     save_task_draft_manifest(manifest_path, updated_manifest)
