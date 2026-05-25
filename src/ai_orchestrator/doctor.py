@@ -15,6 +15,7 @@ from ai_orchestrator.task_queue import TaskQueueConfig, TaskQueueConfigError, ge
 
 DoctorCheckStatus = Literal["ok", "warning", "error", "info", "skipped"]
 DoctorOverallStatus = Literal["ok", "warning", "failed"]
+DoctorIntent = Literal["preflight", "dry-run", "real-run"]
 
 
 @dataclass(frozen=True)
@@ -28,6 +29,7 @@ class DoctorCheck:
 @dataclass(frozen=True)
 class DoctorResult:
     doctor_status: DoctorOverallStatus
+    doctor_intent: DoctorIntent
     next_action: str
     checks: list[DoctorCheck]
     strict: bool = False
@@ -158,11 +160,21 @@ def _check_codex_command(command: str) -> DoctorCheck:
     )
 
 
-def _compute_next_action(checks: list[DoctorCheck], *, tasks_file: str | None, task_id: str | None) -> str:
+def _compute_next_action(
+    checks: list[DoctorCheck],
+    *,
+    tasks_file: str | None,
+    task_id: str | None,
+    intent: DoctorIntent,
+) -> str:
     if any(check.status == "error" for check in checks):
         return "fix_errors"
     if any(check.status == "warning" for check in checks):
         return "review_warnings"
+    if intent == "dry-run" and (tasks_file or task_id):
+        return "run_pipeline_dry_run"
+    if intent == "real-run" and (tasks_file or task_id):
+        return "run_pipeline"
     if tasks_file or task_id:
         return "run_pipeline"
     return "ready"
@@ -183,8 +195,12 @@ def run_doctor(
     codex_cmd: str | None = None,
     skip_tests: bool = False,
     strict: bool = False,
+    intent: DoctorIntent = "preflight",
     cwd: str | Path | None = None,
 ) -> DoctorResult:
+    if intent not in {"preflight", "dry-run", "real-run"}:
+        raise ValueError(f"unsupported doctor intent: {intent}")
+
     repo_cwd = Path.cwd() if cwd is None else Path(cwd).expanduser().resolve()
     checks: list[DoctorCheck] = []
 
@@ -406,7 +422,22 @@ def run_doctor(
                             },
                         )
                     )
-                    if resolved_backend in {"codex", "codex_cli"} and effective_codex_command is None:
+                    if (
+                        resolved_backend in {"codex", "codex_cli"}
+                        and intent == "dry-run"
+                        and codex_cmd is None
+                    ):
+                        checks.append(
+                            DoctorCheck(
+                                "codex_cmd",
+                                "info",
+                                "codex command is not required for dry-run intent",
+                                details={
+                                    "task_id": task.id,
+                                },
+                            )
+                        )
+                    elif resolved_backend in {"codex", "codex_cli"} and effective_codex_command is None:
                         checks.append(
                             DoctorCheck(
                                 "codex_cmd",
@@ -420,7 +451,7 @@ def run_doctor(
 
     if codex_cmd is not None:
         checks.append(_check_codex_command(codex_cmd))
-    elif effective_codex_command is not None:
+    elif effective_codex_command is not None and intent != "dry-run":
         codex_check = _check_codex_command(effective_codex_command)
         checks.append(
             DoctorCheck(
@@ -461,9 +492,10 @@ def run_doctor(
     )
 
     overall_status = _compute_overall_status(checks)
-    next_action = _compute_next_action(checks, tasks_file=tasks_file, task_id=task_id)
+    next_action = _compute_next_action(checks, tasks_file=tasks_file, task_id=task_id, intent=intent)
     return DoctorResult(
         doctor_status=overall_status,
+        doctor_intent=intent,
         next_action=next_action,
         checks=checks,
         strict=strict,
@@ -481,7 +513,7 @@ def _format_text_value(value: Any) -> str:
 
 
 def format_doctor_text(result: DoctorResult) -> str:
-    lines = [f"doctor_status={result.doctor_status}"]
+    lines = [f"doctor_status={result.doctor_status}", f"doctor_intent={result.doctor_intent}"]
     for check in result.checks:
         parts = [
             f"check={check.name}",
@@ -498,6 +530,7 @@ def format_doctor_text(result: DoctorResult) -> str:
 def format_doctor_json(result: DoctorResult) -> str:
     payload = {
         "doctor_status": result.doctor_status,
+        "doctor_intent": result.doctor_intent,
         "next_action": result.next_action,
         "checks": [
             {

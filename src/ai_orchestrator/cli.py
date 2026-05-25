@@ -617,6 +617,12 @@ def build_doctor_parser() -> argparse.ArgumentParser:
         help="Skip `python -m unittest discover -s tests` during doctor checks.",
     )
     parser.add_argument(
+        "--intent",
+        choices=["preflight", "dry-run", "real-run"],
+        default="preflight",
+        help="Doctor intent mode. Defaults to preflight.",
+    )
+    parser.add_argument(
         "--format",
         choices=["text", "json"],
         default="text",
@@ -1627,6 +1633,7 @@ def doctor_main(argv: list[str] | None = None) -> int:
             codex_cmd=args.codex_cmd,
             skip_tests=args.skip_tests,
             strict=args.strict,
+            intent=args.intent,
         )
     except Exception as exc:  # noqa: BLE001 - CLI should print deterministic error text.
         if args.format == "json":
@@ -1634,6 +1641,7 @@ def doctor_main(argv: list[str] | None = None) -> int:
                 json.dumps(
                     {
                         "doctor_status": "failed",
+                        "doctor_intent": args.intent,
                         "next_action": "fix_errors",
                         "checks": [],
                         "error": str(exc),

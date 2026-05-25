@@ -1501,6 +1501,21 @@ python -m ai_orchestrator.cli doctor \
   --skip-tests
 ```
 
+```bash
+python -m ai_orchestrator.cli doctor \
+  --tasks-file tasks.yaml \
+  --task-id my-task \
+  --intent dry-run
+```
+
+```bash
+python -m ai_orchestrator.cli doctor \
+  --tasks-file tasks.yaml \
+  --task-id my-task \
+  --intent real-run \
+  --codex-cmd "$CODEX_CMD"
+```
+
 Behavior:
 
 - `doctor` is read-only;
@@ -1512,7 +1527,15 @@ Behavior:
 - it does not run `run-pipeline`, `run-task`, `apply-run`, `accept-run`, `review-run`, or `rework-run`;
 - it does not create files, modify artifacts, or create commits.
 
+Doctor intent modes:
+
+- `--intent preflight` is the default backward-compatible general readiness check;
+- `--intent dry-run` checks readiness for `run-pipeline --dry-run`; Codex command is not required, so missing `codex_cmd` is reported as info rather than a warning;
+- `--intent real-run` checks readiness for actual `run-pipeline`; `codex_cli` tasks should provide `--codex-cmd`, task `codex_cmd`, defaults `codex_cmd`, or `CODEX_CMD`/`AI_ORCHESTRATOR_CODEX_CMD`.
+
 Use `doctor` before a real `run-pipeline` when you want a quick deterministic answer about whether the repo is clean, tests are green, the selected task is valid, and the Codex command is available.
+
+For task-intake dogfood and other planning-only checks, use `--intent dry-run` before `run-pipeline --dry-run`. Before actual pipeline execution, use `--intent real-run`.
 
 Important notes:
 

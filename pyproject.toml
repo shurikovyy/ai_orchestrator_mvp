@@ -1,6 +1,6 @@
 [project]
 name = "ai-orchestrator-mvp"
-version = "0.1.39"
+version = "0.1.40.2"
 description = "Minimal workflow-first AI task orchestrator with plan/execute/validate/rework loop."
 requires-python = ">=3.10,<3.14"
 dependencies = [
