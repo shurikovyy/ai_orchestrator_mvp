@@ -1,14 +1,22 @@
-# AI Orchestrator MVP 0.1.9.1
+# AI Orchestrator MVP
 
 Минимальный workflow-first инструмент для управляемого цикла:
 
 ```text
-user task -> planner -> executor -> validator -> retry/rework -> final_report
+task intake -> isolated execution -> deterministic validation -> review findings/arbitration -> human approval -> apply-run -> manual commit
 ```
 
-Ключевая идея: **Codex/LLM выполняет работу, но не принимает решение о приемке**. Приемка остается в детерминированном Python-коде.
+Ключевая идея: **Codex/LLM может выполнять работу, но не принимает решение о приемке и не должен владеть финальным переходом в target repo**.
 
-## Что умеет 0.1.9.1
+Текущая safety-модель:
+
+- deterministic validator проверяет технические инварианты, но **не равен human approval**;
+- review findings и review arbitration могут блокировать `review-run --decision approved`;
+- human approval записывается явно через `review-run`;
+- recommended path после approval: `apply-run`, затем ручной `git diff`, тесты, `git add` и `git commit`;
+- `accept-run` остается advanced explicit path для случаев, когда оператор осознанно хочет delegated apply + git commit.
+
+## Current capabilities
 
 - хранит состояние запуска в `.runs/<run_id>/state.json`;
 - сохраняет логи и артефакты в `.runs/<run_id>/artifacts/`;
@@ -22,7 +30,9 @@ user task -> planner -> executor -> validator -> retry/rework -> final_report
 - поддерживает `--seed-workspace <path>`: копирует существующий toy/project workspace в isolated run workspace;
 - при seed workspace сохраняет baseline manifest до Codex и проверяет `changed_files` как diff относительно baseline;
 - создает `REVIEW_PACKET.md` после каждого run и пишет в него финальный, а не промежуточный статус;
-- поддерживает controlled accept/commit через `ai-orchestrator accept-run <run_id>`;
+- поддерживает human review gate через `review-run`;
+- поддерживает manual apply workflow через `apply-run`;
+- поддерживает delegated apply+commit через explicit `accept-run`;
 - поддерживает console progress logs через `--verbose`;
 - поддерживает live Codex CLI streaming через `--stream-codex-output`;
 - для disposable/toy seed workspace может инициализировать git через `accept-run --init-target-git`.
@@ -74,7 +84,7 @@ python -m venv .venv
 Ожидаемо:
 
 ```text
-Ran 31 tests ... OK
+Ran N tests ... OK
 ```
 
 ### 3. Подключить portable Node только для текущей Git Bash-сессии
@@ -1706,8 +1716,10 @@ Optional CLI overrides still work and take priority over `tasks.yaml`:
 After review, the next step stays manual:
 
 - review `.runs/<run_id>/REVIEW_PACKET.md`
-- either use `accept-run` explicitly
-- or apply/commit manually with your normal git workflow
+- record explicit human approval with `review-run --decision approved`
+- use `apply-run` to copy approved files back without staging or committing
+- inspect `git diff`, run tests, then commit manually with your normal git workflow
+- use `accept-run` only as an advanced explicit delegated apply + commit path
 
 The optional `commit_message` field is stored as run metadata only. `run-task` never turns it into an automatic commit.
 
@@ -1826,7 +1838,8 @@ validation feedback
 baseline-relative changed_files
 apply plan
 diff preview
-accept command
+recommended manual apply workflow
+advanced delegated commit option
 ```
 
 Сначала смотри пакет:
@@ -1836,30 +1849,39 @@ RUN_ID="<run_id>"
 cat ".runs/$RUN_ID/REVIEW_PACKET.md"
 ```
 
-Если результат принят, применить изменения из isolated workspace обратно в seed git repo и сделать commit можно отдельной командой:
+Если результат принят, сначала запиши human approval, затем применяй изменения без commit:
 
 ```bash
-./.venv/Scripts/python.exe -m ai_orchestrator.cli accept-run "$RUN_ID" \
+./.venv/Scripts/python.exe -m ai_orchestrator.cli review-run "$RUN_ID" \
   --runs-dir .runs \
-  --commit-message "fix: correct toy subtract implementation"
+  --decision approved
+
+./.venv/Scripts/python.exe -m ai_orchestrator.cli apply-run "$RUN_ID" \
+  --runs-dir .runs
 ```
 
-Ожидаемо:
+Ожидаемо после `apply-run`:
 
 ```text
-accept_status=accepted
-commit_hash=<hash>
+apply_status=applied
 ```
 
 Проверка target repo:
 
 ```bash
-git -C toy_seed_project log -1 --oneline
-git -C toy_seed_project show --stat --oneline HEAD
-git -C toy_seed_project show -- src/toy_calc.py
+git diff --stat
+git diff
+python -m unittest discover -s tests
 ```
 
-Что делает `accept-run`:
+Финальный commit остается ручным:
+
+```bash
+git add <files>
+git commit -m "fix: correct toy subtract implementation"
+```
+
+Что делает `apply-run`:
 
 ```text
 1. требует final_status=approved;
@@ -1868,14 +1890,19 @@ git -C toy_seed_project show -- src/toy_calc.py
 4. отказывается работать с dirty git repo;
 5. применяет только безопасные changed_files;
 6. не переносит EXECUTION_REPORT.json в target repo;
-7. делает git commit;
-8. пишет .runs/<run_id>/ACCEPTANCE.md.
+7. не делает git add;
+8. не делает git commit;
+9. пишет .runs/<run_id>/APPLY_REPORT.md и APPLY_REPORT.json.
 ```
 
-Dry-run без изменений и commit:
+Advanced delegated commit path:
+
+`accept-run` применяет файлы, делает `git add` и создает commit. Используй его только если явно нужен delegated apply + commit.
+
+Dry-run без изменений:
 
 ```bash
-./.venv/Scripts/python.exe -m ai_orchestrator.cli accept-run "$RUN_ID" \
+./.venv/Scripts/python.exe -m ai_orchestrator.cli apply-run "$RUN_ID" \
   --runs-dir .runs \
   --dry-run
 ```
@@ -2005,31 +2032,53 @@ git -C toy_seed_project status --short
 
 Дальше либо закоммить/удали эти изменения, либо используй другой clean clone.
 
-## Что дальше
+## Current near-term direction
 
-0.1.8 закрывает ручной gate `review → run-task → review packet → accept-run/commit`. Следующий архитектурный шаг — multi-task queue/pipeline runner:
+The current dogfood direction is controlled real execution from the task-intake flow, without moving final repository ownership away from a human operator.
 
-```text
-0.1.9 — multi-task queue/pipeline orchestration
-```
-
-Идея:
+Recommended preparation path:
 
 ```text
-tasks.yaml
+raw_request.md
 ↓
-run one task in isolated workspace
+draft-task-scaffold
 ↓
-validate structured report / tests / manifest
+validate-task-draft
 ↓
-generate REVIEW_PACKET.md
+revise-task-draft if needed
 ↓
-manual assistant/human approval
+validate-task-draft
 ↓
-accept-run commit
+promote-task-draft with enabled=false
 ↓
-next task
+inspect tasks.yaml / list-tasks
+↓
+explicit --replace --enable or manual enabled:true
+↓
+doctor --intent dry-run
+↓
+run-pipeline --dry-run
+↓
+user-run real pipeline from a normal Git Bash session
 ```
+
+After a successful real run, the target repo transition remains human-governed:
+
+```text
+show-run / show-pipeline
+↓
+classify-run / run-review-checks / reviewer findings as needed
+↓
+review-run --decision approved
+↓
+apply-run
+↓
+git diff --stat / git diff / tests
+↓
+manual git add / git commit
+```
+
+`accept-run` remains available only as an advanced explicit delegated apply + commit path.
 
 
 ## accept-run idempotent disposable note
@@ -2366,13 +2415,29 @@ Safe default workflow:
 
 1. promote with `enabled=false`
 2. inspect the generated `tasks.yaml`
-3. run deterministic checks:
+
+```bash
+python -m ai_orchestrator.cli list-tasks --tasks-file tasks.yaml
+```
+
+3. explicitly switch to execution intent only after inspection:
+
+```bash
+python -m ai_orchestrator.cli promote-task-draft <draft_id> \
+  --tasks-file tasks.yaml \
+  --replace \
+  --enable
+```
+
+You can also edit `enabled: true` manually after inspection. `doctor --intent dry-run` still treats a disabled selected task as not ready, because `run-pipeline --dry-run --only <task_id>` will skip disabled tasks.
+
+4. run deterministic dry-run checks:
 
 ```bash
 python -m ai_orchestrator.cli doctor \
   --tasks-file tasks.yaml \
   --task-id <task_id> \
-  --codex-cmd "$CODEX_CMD"
+  --intent dry-run
 
 python -m ai_orchestrator.cli run-pipeline \
   --tasks-file tasks.yaml \

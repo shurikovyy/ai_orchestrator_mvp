@@ -119,7 +119,7 @@ def add_workspace_changed_file(run_dir: Path, relative_path: str, content: str) 
 
 
 class ReviewAcceptTests(unittest.TestCase):
-    def test_write_review_packet_includes_diff_and_accept_command(self) -> None:
+    def test_write_review_packet_includes_diff_and_manual_apply_workflow(self) -> None:
         with temporary_test_dir() as tmp:
             repo = make_git_seed_repo(tmp)
             run_dir, _ = make_approved_run(tmp, target_repo=repo)
@@ -129,7 +129,30 @@ class ReviewAcceptTests(unittest.TestCase):
             self.assertIn("src/toy_calc.py", text)
             self.assertIn("return a + b", text)
             self.assertIn("return a - b", text)
-            self.assertIn("accept-run run_test_accept", text)
+            self.assertIn("## Recommended manual apply workflow", text)
+            self.assertIn("review-run run_test_accept", text)
+            self.assertIn("--decision approved", text)
+            self.assertIn("apply-run run_test_accept", text)
+            self.assertIn("git diff --stat", text)
+            self.assertIn("git diff", text)
+            self.assertIn("python -m unittest discover -s tests", text)
+            self.assertIn("git add <files>", text)
+            self.assertIn("git commit -m", text)
+            self.assertNotIn("## Accept command", text)
+
+    def test_write_review_packet_keeps_accept_run_as_advanced_explicit_option(self) -> None:
+        with temporary_test_dir() as tmp:
+            repo = make_git_seed_repo(tmp)
+            run_dir, _ = make_approved_run(tmp, target_repo=repo)
+            packet = write_review_packet(run_dir)
+            text = packet.read_text(encoding="utf-8")
+
+        manual_workflow_index = text.index("## Recommended manual apply workflow")
+        advanced_index = text.index("## Advanced delegated commit path")
+        accept_index = text.index("accept-run run_test_accept")
+        self.assertLess(manual_workflow_index, advanced_index)
+        self.assertLess(advanced_index, accept_index)
+        self.assertIn("Use it only when you explicitly want delegated apply + commit", text)
 
     def test_accept_run_applies_allowed_files_and_commits(self) -> None:
         with temporary_test_dir() as tmp:
