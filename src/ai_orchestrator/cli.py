@@ -30,7 +30,10 @@ from ai_orchestrator.risk_classification import classify_run_risk
 from ai_orchestrator.reviewer_prompts import prepare_review_prompts
 from ai_orchestrator.run_status import build_run_status_summary, format_run_status_json, format_run_status_text
 from ai_orchestrator.task_drafts import create_task_draft_scaffold, revise_task_draft
-from ai_orchestrator.task_draft_improvement import prepare_task_draft_improvement_prompt
+from ai_orchestrator.task_draft_improvement import (
+    import_task_draft_improvement,
+    prepare_task_draft_improvement_prompt,
+)
 from ai_orchestrator.task_draft_promotion import promote_task_draft
 from ai_orchestrator.task_draft_validation import validate_task_draft
 from ai_orchestrator.rework import execute_rework_run
@@ -948,6 +951,44 @@ def build_prepare_task_draft_improvement_parser() -> argparse.ArgumentParser:
         "--force",
         action="store_true",
         help="Overwrite an existing improvement prompt artifact.",
+    )
+    parser.add_argument(
+        "--format",
+        choices=["text", "json"],
+        default="text",
+        help="Output format. Defaults to text.",
+    )
+    return parser
+
+
+def build_import_task_draft_improvement_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="ai-orchestrator import-task-draft-improvement",
+        description=(
+            "Import a full improved task_draft.yaml from an external task-authoring step without running Codex, "
+            "promoting tasks.yaml, or creating .runs."
+        ),
+    )
+    parser.add_argument("draft_id", help="Existing draft id to import the improved draft into.")
+    parser.add_argument(
+        "--drafts-dir",
+        default=".task_drafts",
+        help="Directory containing draft folders. Defaults to .task_drafts.",
+    )
+    parser.add_argument(
+        "--improved-draft",
+        required=True,
+        help="Path to a full improved TaskDraft YAML file.",
+    )
+    parser.add_argument(
+        "--notes",
+        default=None,
+        help="Optional markdown notes from the external task-authoring agent.",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite existing imported improvement artifacts such as TASK_DRAFT_IMPROVEMENT_NOTES.md.",
     )
     parser.add_argument(
         "--format",
@@ -1997,8 +2038,66 @@ def prepare_task_draft_improvement_main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def import_task_draft_improvement_main(argv: list[str] | None = None) -> int:
+    parser = build_import_task_draft_improvement_parser()
+    args = parser.parse_args(argv)
+    try:
+        result = import_task_draft_improvement(
+            draft_id=args.draft_id,
+            drafts_dir=args.drafts_dir,
+            improved_draft=args.improved_draft,
+            notes=args.notes,
+            force=args.force,
+        )
+    except Exception as exc:  # noqa: BLE001 - CLI should print deterministic error text.
+        if args.format == "json":
+            print(
+                json.dumps(
+                    {
+                        "draft_id": args.draft_id,
+                        "status": "failed",
+                        "error": str(exc),
+                    },
+                    indent=2,
+                    ensure_ascii=False,
+                )
+            )
+        else:
+            print(f"draft_id={args.draft_id}")
+            print("status=failed")
+            print(f"error={exc}")
+        return 1
+
+    payload = {
+        "draft_id": result.draft_id,
+        "status": "task_draft_improvement_imported",
+        "task_draft": str(result.task_draft_path),
+        "backup": str(result.backup_path),
+        "codex_prompt": str(result.codex_prompt_path),
+        "task_review": str(result.task_review_path),
+        "manifest": str(result.manifest_path),
+        "validation_status": "stale",
+        "next_action": "validate_task_draft",
+    }
+    if args.format == "json":
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+    else:
+        print(f"draft_id={payload['draft_id']}")
+        print(f"status={payload['status']}")
+        print(f"task_draft={payload['task_draft']}")
+        print(f"backup={payload['backup']}")
+        print(f"codex_prompt={payload['codex_prompt']}")
+        print(f"task_review={payload['task_review']}")
+        print(f"manifest={payload['manifest']}")
+        print(f"validation_status={payload['validation_status']}")
+        print(f"next_action={payload['next_action']}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
+    if args and args[0] == "import-task-draft-improvement":
+        return import_task_draft_improvement_main(args[1:])
     if args and args[0] == "prepare-task-draft-improvement":
         return prepare_task_draft_improvement_main(args[1:])
     if args and args[0] == "promote-task-draft":

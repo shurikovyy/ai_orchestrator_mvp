@@ -6,8 +6,11 @@ from pathlib import Path
 
 from ai_orchestrator.task_drafts import (
     TaskDraft,
+    _write_task_draft_yaml,
     load_task_draft,
     load_task_draft_manifest,
+    render_codex_prompt_markdown,
+    render_task_review_markdown,
     save_task_draft_manifest,
 )
 from ai_orchestrator.task_draft_validation import TaskDraftValidationReport
@@ -28,6 +31,16 @@ class TaskDraftImprovementPromptResult:
     manifest_path: Path
 
 
+@dataclass(frozen=True)
+class TaskDraftImprovementImportResult:
+    draft_id: str
+    task_draft_path: Path
+    backup_path: Path
+    codex_prompt_path: Path
+    task_review_path: Path
+    manifest_path: Path
+
+
 def _require_artifacts(draft_dir: Path) -> dict[str, Path]:
     paths = {name: draft_dir / name for name in _REQUIRED_ARTIFACTS}
     for name, path in paths.items():
@@ -42,6 +55,59 @@ def _load_validation_report(path: Path) -> TaskDraftValidationReport | None:
     if not path.exists():
         return None
     return TaskDraftValidationReport.model_validate_json(path.read_text(encoding="utf-8"))
+
+
+def _backup_path_for_task_draft(task_draft_path: Path) -> Path:
+    default_backup = task_draft_path.with_name("task_draft.before_improvement.yaml")
+    if not default_backup.exists():
+        return default_backup
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    return task_draft_path.with_name(f"task_draft.before_improvement.{timestamp}.yaml")
+
+
+def _ensure_improved_draft_is_safe(*, draft_id: str, current: TaskDraft, improved: TaskDraft) -> None:
+    if improved.draft_id != draft_id:
+        raise ValueError(f"improved draft_id does not match selected draft: expected {draft_id}, got {improved.draft_id}")
+    if current.draft_id != draft_id:
+        raise ValueError(f"current task_draft.yaml draft_id does not match selected draft: {current.draft_id}")
+    if not improved.target_task.id.strip():
+        raise ValueError("improved target_task.id must not be empty")
+    if improved.target_task.enabled:
+        raise ValueError("improved target_task.enabled must be false")
+
+    required_lists = (
+        ("non_goals", improved.non_goals),
+        ("files_forbidden", improved.files_forbidden),
+        ("invariants", improved.invariants),
+        ("tests_required", improved.tests_required),
+        ("acceptance_criteria", improved.acceptance_criteria),
+    )
+    for field_name, values in required_lists:
+        if not values:
+            raise ValueError(f"improved draft must not remove all {field_name}")
+
+
+def _load_improved_task_draft(path: str | Path) -> TaskDraft:
+    improved_path = Path(path)
+    if not improved_path.exists():
+        raise FileNotFoundError(f"improved draft file not found: {improved_path}")
+    if not improved_path.is_file():
+        raise ValueError(f"improved draft path is not a file: {improved_path}")
+    return load_task_draft(improved_path)
+
+
+def _load_notes(path: str | Path | None) -> tuple[str | None, Path | None]:
+    if path is None:
+        return None, None
+    notes_path = Path(path)
+    if not notes_path.exists():
+        raise FileNotFoundError(f"improvement notes file not found: {notes_path}")
+    if not notes_path.is_file():
+        raise ValueError(f"improvement notes path is not a file: {notes_path}")
+    text = notes_path.read_text(encoding="utf-8-sig")
+    if not text.strip():
+        raise ValueError("improvement notes file is empty")
+    return text, notes_path
 
 
 def _format_validator_report_section(report: TaskDraftValidationReport | None) -> list[str]:
@@ -252,5 +318,94 @@ def prepare_task_draft_improvement_prompt(
     return TaskDraftImprovementPromptResult(
         draft_id=draft.draft_id,
         prompt_path=output_path.resolve(),
+        manifest_path=manifest_path.resolve(),
+    )
+
+
+def import_task_draft_improvement(
+    *,
+    draft_id: str,
+    drafts_dir: str | Path = ".task_drafts",
+    improved_draft: str | Path,
+    notes: str | Path | None = None,
+    force: bool = False,
+) -> TaskDraftImprovementImportResult:
+    draft_dir = Path(drafts_dir) / draft_id
+    if not draft_dir.exists():
+        raise FileNotFoundError(f"task draft not found: {draft_id}")
+    if not draft_dir.is_dir():
+        raise ValueError(f"task draft path is not a directory: {draft_id}")
+
+    paths = _require_artifacts(draft_dir)
+    raw_request_path = paths["raw_request.md"]
+    task_draft_path = paths["task_draft.yaml"]
+    codex_prompt_path = paths["codex_prompt.md"]
+    task_review_path = paths["task_review.md"]
+    manifest_path = paths["MANIFEST.json"]
+
+    manifest = load_task_draft_manifest(manifest_path)
+    current_draft = load_task_draft(task_draft_path)
+    improved_draft_path = Path(improved_draft)
+    improved = _load_improved_task_draft(improved_draft_path)
+    notes_text, notes_source_path = _load_notes(notes)
+
+    notes_destination = draft_dir / "TASK_DRAFT_IMPROVEMENT_NOTES.md"
+    if notes_text is not None and notes_destination.exists() and not force:
+        raise FileExistsError(f"task draft improvement notes already exist: {notes_destination}")
+
+    _ensure_improved_draft_is_safe(draft_id=draft_id, current=current_draft, improved=improved)
+
+    raw_request_text = raw_request_path.read_text(encoding="utf-8")
+    new_codex_prompt = render_codex_prompt_markdown(improved, raw_request_text)
+    new_task_review = render_task_review_markdown(improved)
+    original_task_draft = task_draft_path.read_text(encoding="utf-8")
+    original_codex_prompt = codex_prompt_path.read_text(encoding="utf-8")
+    original_task_review = task_review_path.read_text(encoding="utf-8")
+    original_manifest = manifest_path.read_text(encoding="utf-8")
+    original_notes = notes_destination.read_text(encoding="utf-8") if notes_destination.exists() else None
+    backup_path = _backup_path_for_task_draft(task_draft_path)
+
+    try:
+        backup_path.write_text(original_task_draft, encoding="utf-8")
+        _write_task_draft_yaml(task_draft_path, improved)
+        codex_prompt_path.write_text(new_codex_prompt, encoding="utf-8")
+        task_review_path.write_text(new_task_review, encoding="utf-8")
+        if notes_text is not None:
+            notes_destination.write_text(notes_text, encoding="utf-8")
+
+        updated_manifest = manifest.model_copy(
+            update={
+                "task_draft": str(task_draft_path.resolve()),
+                "codex_prompt": str(codex_prompt_path.resolve()),
+                "task_review": str(task_review_path.resolve()),
+                "imported_improvement_at": datetime.now(),
+                "imported_improvement_source": str(improved_draft_path.resolve()),
+                "improvement_notes": str(notes_destination.resolve()) if notes_text is not None else manifest.improvement_notes,
+                "revision_count": manifest.revision_count + 1,
+                "last_revision_summary": "Imported task draft from external improvement.",
+                "validation_status": "stale",
+                "valid_for_promotion": False,
+                "validation_stale_reason": "task draft imported from external improvement",
+            }
+        )
+        save_task_draft_manifest(manifest_path, updated_manifest)
+    except Exception:
+        task_draft_path.write_text(original_task_draft, encoding="utf-8")
+        codex_prompt_path.write_text(original_codex_prompt, encoding="utf-8")
+        task_review_path.write_text(original_task_review, encoding="utf-8")
+        manifest_path.write_text(original_manifest, encoding="utf-8")
+        if notes_text is not None:
+            if original_notes is None:
+                notes_destination.unlink(missing_ok=True)
+            else:
+                notes_destination.write_text(original_notes, encoding="utf-8")
+        raise
+
+    return TaskDraftImprovementImportResult(
+        draft_id=improved.draft_id,
+        task_draft_path=task_draft_path.resolve(),
+        backup_path=backup_path.resolve(),
+        codex_prompt_path=codex_prompt_path.resolve(),
+        task_review_path=task_review_path.resolve(),
         manifest_path=manifest_path.resolve(),
     )

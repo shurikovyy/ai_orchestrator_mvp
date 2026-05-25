@@ -2204,6 +2204,45 @@ python -m ai_orchestrator.cli validate-task-draft <draft_id>
 
 Warnings from `validate-task-draft` still block promotion. This prompt-preparation command does not mark validation stale because it does not edit the draft.
 
+### Importing improved task drafts
+
+After `prepare-task-draft-improvement`, an external task-authoring agent may return a complete improved `task_draft.yaml` plus optional notes. `import-task-draft-improvement` validates that full draft and imports it back into the draft workspace.
+
+Safety rules:
+
+- it does not run Codex or ChatGPT
+- it does not run the pipeline
+- it does not promote to `tasks.yaml`
+- it does not create `.runs`
+- it validates the improved draft before replacing the current draft
+- it backs up the previous `task_draft.yaml`
+- it marks validation stale, so `validate-task-draft` must run again
+
+Example:
+
+```bash
+python -m ai_orchestrator.cli prepare-task-draft-improvement <draft_id>
+
+# external agent returns improved_task_draft.yaml and optional notes.md
+
+python -m ai_orchestrator.cli import-task-draft-improvement <draft_id> \
+  --improved-draft improved_task_draft.yaml \
+  --notes TASK_DRAFT_IMPROVEMENT_NOTES.md
+
+python -m ai_orchestrator.cli validate-task-draft <draft_id>
+```
+
+Import writes or updates only draft-local artifacts:
+
+- `task_draft.yaml`
+- `codex_prompt.md`
+- `task_review.md`
+- `MANIFEST.json`
+- `task_draft.before_improvement*.yaml`
+- optional `TASK_DRAFT_IMPROVEMENT_NOTES.md`
+
+It preserves `raw_request.md` and `TASK_DRAFT_IMPROVEMENT_PROMPT.md`. Invalid improved drafts are rejected before the current draft is replaced.
+
 ### Revising task drafts
 
 `revise-task-draft` is the deterministic edit step between scaffold generation and later validation/promotion.
