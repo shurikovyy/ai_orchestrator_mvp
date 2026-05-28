@@ -225,7 +225,6 @@ def _compute_counts(task_summaries: list[PipelineTaskStatusSummary]) -> dict[str
         "tasks_requiring_human_escalation": sum(
             1 for task in task_summaries if task.arbitration_human_escalation_required
         ),
-        "tasks_waiting_findings_feedback": sum(1 for task in task_summaries if task.next_action == "findings_feedback"),
         "tasks_waiting_rejected_review": sum(1 for task in task_summaries if task.next_action == "review_rejected"),
         "tasks_with_reviewer_prompts": sum(1 for task in task_summaries if task.reviewer_prompts_exists),
         "tasks_risk_unclassified": sum(1 for task in task_summaries if task.risk_classification_exists is False),
@@ -233,6 +232,10 @@ def _compute_counts(task_summaries: list[PipelineTaskStatusSummary]) -> dict[str
         "tasks_medium_risk": sum(1 for task in task_summaries if task.risk_level == "medium"),
         "tasks_high_risk": sum(1 for task in task_summaries if task.risk_level == "high"),
         "tasks_critical_risk": sum(1 for task in task_summaries if task.risk_level == "critical"),
+        "tasks_waiting_review_checks": sum(1 for task in task_summaries if task.next_action == "run_review_checks"),
+        "tasks_waiting_external_review_findings": sum(
+            1 for task in task_summaries if task.next_action == "run_external_reviewer_or_record_findings"
+        ),
         "tasks_waiting_required_review_prompts": sum(
             1 for task in task_summaries if task.next_action == "prepare_required_reviews"
         ),
@@ -262,16 +265,16 @@ def _compute_pipeline_next_action(
         return "review_rejected"
     if any(task.next_action == "arbitrate_findings" for task in task_summaries):
         return "arbitrate_findings"
-    if any(task.next_action == "findings_feedback" for task in task_summaries):
-        return "findings_feedback"
     if any(task.next_action == "review_rejected" for task in task_summaries):
         return "review_rejected"
-    if any(task.next_action == "review_findings" for task in task_summaries):
-        return "review_findings"
     if any(task.next_action == "classify_run" for task in task_summaries):
         return "classify_runs"
     if any(task.next_action == "prepare_required_reviews" for task in task_summaries):
         return "prepare_required_reviews"
+    if any(task.next_action == "run_review_checks" for task in task_summaries):
+        return "run_review_checks"
+    if any(task.next_action == "run_external_reviewer_or_record_findings" for task in task_summaries):
+        return "run_external_reviewer_or_record_findings"
     if any(task.next_action == "review_run" for task in task_summaries):
         return "review_runs"
     if any(task.next_action == "apply_run" for task in task_summaries):
@@ -338,7 +341,6 @@ def format_pipeline_status_text(summary: PipelineStatusSummary, *, show_paths: b
         f"tasks_waiting_arbitration={summary.counts['tasks_waiting_arbitration']}",
         f"tasks_with_final_blocking_arbitration={summary.counts['tasks_with_final_blocking_arbitration']}",
         f"tasks_requiring_human_escalation={summary.counts['tasks_requiring_human_escalation']}",
-        f"tasks_waiting_findings_feedback={summary.counts['tasks_waiting_findings_feedback']}",
         f"tasks_waiting_rejected_review={summary.counts['tasks_waiting_rejected_review']}",
         f"tasks_with_reviewer_prompts={summary.counts['tasks_with_reviewer_prompts']}",
         f"tasks_risk_unclassified={summary.counts['tasks_risk_unclassified']}",
@@ -346,6 +348,8 @@ def format_pipeline_status_text(summary: PipelineStatusSummary, *, show_paths: b
         f"tasks_medium_risk={summary.counts['tasks_medium_risk']}",
         f"tasks_high_risk={summary.counts['tasks_high_risk']}",
         f"tasks_critical_risk={summary.counts['tasks_critical_risk']}",
+        f"tasks_waiting_review_checks={summary.counts['tasks_waiting_review_checks']}",
+        f"tasks_waiting_external_review_findings={summary.counts['tasks_waiting_external_review_findings']}",
         f"tasks_waiting_required_review_prompts={summary.counts['tasks_waiting_required_review_prompts']}",
         f"tasks_accepted={summary.counts['tasks_accepted']}",
         f"tasks_applied={summary.counts['tasks_applied']}",

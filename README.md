@@ -1299,8 +1299,14 @@ Behavior:
 
 `next_action` values:
 
-- `review_findings`: blocking structured findings exist and should be reviewed before approval;
-- `review_run`: validator approved the run, but no human review decision is recorded yet;
+- `classify_run`: classify run risk before review routing;
+- `prepare_required_reviews`: prepare prompt packets for required reviewer profiles;
+- `run_review_checks`: run deterministic review checks before human review;
+- `run_external_reviewer_or_record_findings`: run required external review or record its findings;
+- `review_run`: review checks/findings are clear enough for explicit human review;
+- `arbitrate_findings`: blocking findings need arbitration before approval;
+- `human_escalation`: arbitration requires explicit human escalation;
+- `review_rejected`: final blocking findings require a rejected review and rework;
 - `rework_run`: human review rejected the run and feedback/rework is the next step;
 - `apply_run`: validator approved the run and human review approved it, but files have not been applied back to the target repo yet;
 - `manual_commit`: files were already applied with `apply-run`, so inspect `git diff`, run tests, and commit manually;
@@ -1336,10 +1342,14 @@ Behavior:
 
 `next_action` values:
 
-- `findings_feedback`: at least one run has blocking structured review findings but no generated feedback yet;
-- `review_rejected`: at least one run already has generated findings feedback and is waiting for an explicit rejected human review;
-- `review_findings`: legacy/fallback findings inspection state;
-- `review_runs`: at least one validator-approved run still needs human review;
+- `classify_runs`: at least one run needs risk classification;
+- `prepare_required_reviews`: at least one run needs required reviewer prompt packets;
+- `run_review_checks`: at least one run needs deterministic review checks;
+- `run_external_reviewer_or_record_findings`: at least one run needs external review findings recorded;
+- `review_runs`: at least one reviewed run still needs an explicit human review decision;
+- `arbitrate_findings`: at least one run has blocking findings that need arbitration;
+- `human_escalation`: at least one run requires human escalation;
+- `review_rejected`: at least one run is blocked and waiting for an explicit rejected human review;
 - `rework_run`: at least one run has a rejected human review decision;
 - `apply_runs`: at least one run is human-approved and waiting for explicit `apply-run`;
 - `manual_commit`: at least one run was already applied and now needs manual git review/commit;

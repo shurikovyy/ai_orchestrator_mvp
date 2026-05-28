@@ -1605,7 +1605,7 @@ def classify_run_main(argv: list[str] | None = None) -> int:
         "risk_classification": str(result.risk_classification_path),
         "risk_classification_markdown": str(result.risk_classification_markdown_path),
         "state": str(result.state_path),
-        "next_action": "prepare_required_reviews",
+        "next_action": build_run_status_summary(run_id=result.run_id, runs_dir=args.runs_dir).next_action,
     }
     if args.format == "json":
         print(json.dumps(payload, indent=2, ensure_ascii=False))

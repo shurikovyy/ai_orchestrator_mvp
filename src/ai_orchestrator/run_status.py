@@ -90,7 +90,7 @@ def _compute_next_action(
     arbitration_final_blocking: int,
     arbitration_human_escalation_required: bool,
     arbitration_stale: bool,
-    findings_feedback_exists: bool,
+    findings_exists: bool,
     risk_classification_exists: bool,
     required_review_profiles: list[str],
     prepared_review_profiles: list[str],
@@ -122,9 +122,14 @@ def _compute_next_action(
     if not risk_classification_exists:
         return "classify_run"
     if required_review_profiles:
-        missing_required = [profile for profile in required_review_profiles if profile not in set(prepared_review_profiles)]
+        prepared_profiles = set(prepared_review_profiles)
+        missing_required = [profile for profile in required_review_profiles if profile not in prepared_profiles]
         if missing_required:
             return "prepare_required_reviews"
+        if not findings_exists:
+            return "run_external_reviewer_or_record_findings"
+    if not findings_exists:
+        return "run_review_checks"
     return "review_run"
 
 
@@ -230,7 +235,7 @@ def build_run_status_summary(*, run_id: str, runs_dir: str | Path) -> RunStatusS
         arbitration_final_blocking=arbitration_final_blocking,
         arbitration_human_escalation_required=arbitration_human_escalation_required,
         arbitration_stale=arbitration_stale,
-        findings_feedback_exists=exists["findings_feedback"],
+        findings_exists=findings_exists,
         risk_classification_exists=risk_classification_exists,
         required_review_profiles=required_review_profiles,
         prepared_review_profiles=prepared_review_profiles,

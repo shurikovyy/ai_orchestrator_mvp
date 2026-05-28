@@ -12,7 +12,13 @@ from uuid import uuid4
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from ai_orchestrator.cli import classify_run_main, prepare_review_main, show_pipeline_main, show_run_main
+from ai_orchestrator.cli import (
+    classify_run_main,
+    prepare_review_main,
+    run_review_checks_main,
+    show_pipeline_main,
+    show_run_main,
+)
 from ai_orchestrator.pipeline import PipelineSelectedTask, PipelineState, PipelineTaskResult
 from ai_orchestrator.risk_classification import classify_changed_files, load_run_risk_classification
 from ai_orchestrator.schemas import ExecutionResult, RunState, TaskSpec, ValidationResult
@@ -300,6 +306,23 @@ class ClassifyRunCommandTests(unittest.TestCase):
         self.assertIn("maintainability", state.optional_review_profiles)
         self.assertIsNotNone(classification)
         self.assertEqual(classification.risk_level, "high")
+        self.assertEqual(output_value(output, "next_action"), "prepare_required_reviews")
+
+    def test_classify_run_next_action_run_review_checks_for_docs_only_without_required_profiles(self) -> None:
+        with temporary_test_dir() as tmp:
+            run_dir, runs_dir = make_run_fixture(
+                tmp,
+                changed_files=["docs/guide.md", "EXECUTION_REPORT.json"],
+                workspace_files={"docs/guide.md": "# Guide\n"},
+            )
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                exit_code = classify_run_main([run_dir.name, "--runs-dir", str(runs_dir)])
+            output = stdout.getvalue()
+
+        self.assertEqual(exit_code, 0, output)
+        self.assertEqual(output_value(output, "required_review_profiles"), "")
+        self.assertEqual(output_value(output, "next_action"), "run_review_checks")
 
     def test_classify_run_refuses_overwrite_without_force(self) -> None:
         with temporary_test_dir() as tmp:
@@ -360,6 +383,7 @@ class ClassifyRunCommandTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(payload["status"], "risk_classified")
         self.assertEqual(payload["risk_level"], "low")
+        self.assertEqual(payload["next_action"], "run_review_checks")
 
 
 class PrepareReviewRequiredProfilesTests(unittest.TestCase):
@@ -509,6 +533,71 @@ class RiskShowStatusTests(unittest.TestCase):
         self.assertEqual(exit_code, 0, output)
         self.assertEqual(output_value(output, "next_action"), "prepare_required_reviews")
 
+    def test_show_run_next_action_run_review_checks_when_docs_only_findings_missing(self) -> None:
+        with temporary_test_dir() as tmp:
+            run_dir, runs_dir = make_run_fixture(
+                tmp,
+                changed_files=["docs/guide.md", "EXECUTION_REPORT.json"],
+                workspace_files={"docs/guide.md": "# Guide\n"},
+            )
+            with redirect_stdout(StringIO()):
+                self.assertEqual(classify_run_main([run_dir.name, "--runs-dir", str(runs_dir)]), 0)
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                exit_code = show_run_main([run_dir.name, "--runs-dir", str(runs_dir)])
+            output = stdout.getvalue()
+
+        self.assertEqual(exit_code, 0, output)
+        self.assertEqual(output_value(output, "risk_classification_exists"), "true")
+        self.assertEqual(output_value(output, "required_review_profiles"), "")
+        self.assertEqual(output_value(output, "findings_exists"), "false")
+        self.assertEqual(output_value(output, "next_action"), "run_review_checks")
+
+    def test_show_run_next_action_review_run_after_review_checks_pass(self) -> None:
+        with temporary_test_dir() as tmp:
+            run_dir, runs_dir = make_run_fixture(
+                tmp,
+                changed_files=["docs/guide.md", "EXECUTION_REPORT.json"],
+                workspace_files={"docs/guide.md": "# Guide\n"},
+            )
+            with redirect_stdout(StringIO()):
+                self.assertEqual(classify_run_main([run_dir.name, "--runs-dir", str(runs_dir)]), 0)
+                self.assertEqual(
+                    run_review_checks_main([run_dir.name, "--runs-dir", str(runs_dir), "--profile", "docs-only"]),
+                    0,
+                )
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                exit_code = show_run_main([run_dir.name, "--runs-dir", str(runs_dir)])
+            output = stdout.getvalue()
+
+        self.assertEqual(exit_code, 0, output)
+        self.assertEqual(output_value(output, "findings_exists"), "true")
+        self.assertEqual(output_value(output, "review_findings_decision"), "pass")
+        self.assertEqual(output_value(output, "blocking_findings"), "0")
+        self.assertEqual(output_value(output, "next_action"), "review_run")
+
+    def test_show_run_next_action_external_reviewer_after_required_prompts_prepared(self) -> None:
+        with temporary_test_dir() as tmp:
+            run_dir, runs_dir = make_run_fixture(
+                tmp,
+                changed_files=["src/demo.py", "EXECUTION_REPORT.json"],
+                workspace_files={"src/demo.py": "VALUE = 1\n"},
+            )
+            with redirect_stdout(StringIO()):
+                self.assertEqual(classify_run_main([run_dir.name, "--runs-dir", str(runs_dir)]), 0)
+                self.assertEqual(prepare_review_main([run_dir.name, "--runs-dir", str(runs_dir), "--required-profiles"]), 0)
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                exit_code = show_run_main([run_dir.name, "--runs-dir", str(runs_dir)])
+            output = stdout.getvalue()
+
+        self.assertEqual(exit_code, 0, output)
+        self.assertEqual(output_value(output, "required_review_profiles"), "qa,architecture")
+        self.assertEqual(output_value(output, "reviewer_prompts_exists"), "true")
+        self.assertEqual(output_value(output, "findings_exists"), "false")
+        self.assertEqual(output_value(output, "next_action"), "run_external_reviewer_or_record_findings")
+
     def test_show_pipeline_counts_risk_levels(self) -> None:
         with temporary_test_dir() as tmp:
             run_dir_a, runs_dir = make_run_fixture(
@@ -562,6 +651,30 @@ class RiskShowStatusTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 0, output)
         self.assertEqual(output_value(output, "next_action"), "classify_runs")
+
+    def test_show_pipeline_next_action_run_review_checks_for_docs_only_without_required_profiles(self) -> None:
+        with temporary_test_dir() as tmp:
+            run_dir, runs_dir = make_run_fixture(
+                tmp,
+                changed_files=["docs/guide.md", "EXECUTION_REPORT.json"],
+                workspace_files={"docs/guide.md": "# Guide\n"},
+            )
+            with redirect_stdout(StringIO()):
+                self.assertEqual(classify_run_main([run_dir.name, "--runs-dir", str(runs_dir)]), 0)
+            create_pipeline_fixture(
+                tmp,
+                pipeline_id="pipeline_run_review_checks",
+                tasks=[build_pipeline_task_result("task-a", run_dir.name, runs_dir)],
+            )
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                exit_code = show_pipeline_main(["pipeline_run_review_checks", "--runs-dir", str(runs_dir)])
+            output = stdout.getvalue()
+
+        self.assertEqual(exit_code, 0, output)
+        self.assertEqual(output_value(output, "tasks_waiting_required_review_prompts"), "0")
+        self.assertEqual(output_value(output, "tasks_waiting_review_checks"), "1")
+        self.assertEqual(output_value(output, "next_action"), "run_review_checks")
 
     def test_show_pipeline_next_action_prepare_required_reviews(self) -> None:
         with temporary_test_dir() as tmp:
