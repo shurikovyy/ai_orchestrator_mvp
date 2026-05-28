@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 import json
 from pathlib import Path
@@ -206,7 +207,16 @@ def _build_task_summary(task_result: PipelineTaskResult, runs_dir: Path) -> Pipe
     return _build_task_summary_from_run_summary(task_result, run_summary)
 
 
+def _count_next_actions(task_summaries: list[PipelineTaskStatusSummary]) -> Counter[str]:
+    return Counter(task.next_action for task in task_summaries)
+
+
+def _has_next_action(next_action_counts: Counter[str], next_action: str) -> bool:
+    return next_action_counts[next_action] > 0
+
+
 def _compute_counts(task_summaries: list[PipelineTaskStatusSummary]) -> dict[str, int]:
+    next_action_counts = _count_next_actions(task_summaries)
     return {
         "tasks_total": len(task_summaries),
         "tasks_validator_approved": sum(1 for task in task_summaries if task.validator_status == "approved"),
@@ -220,29 +230,25 @@ def _compute_counts(task_summaries: list[PipelineTaskStatusSummary]) -> dict[str
         "tasks_with_blocking_findings": sum(1 for task in task_summaries if task.blocking_findings > 0),
         "tasks_with_arbitration": sum(1 for task in task_summaries if task.arbitration_exists),
         "tasks_with_stale_arbitration": sum(1 for task in task_summaries if task.arbitration_stale),
-        "tasks_waiting_arbitration": sum(1 for task in task_summaries if task.next_action == "arbitrate_findings"),
+        "tasks_waiting_arbitration": next_action_counts["arbitrate_findings"],
         "tasks_with_final_blocking_arbitration": sum(1 for task in task_summaries if task.arbitration_final_blocking > 0),
         "tasks_requiring_human_escalation": sum(
             1 for task in task_summaries if task.arbitration_human_escalation_required
         ),
-        "tasks_waiting_rejected_review": sum(1 for task in task_summaries if task.next_action == "review_rejected"),
+        "tasks_waiting_rejected_review": next_action_counts["review_rejected"],
         "tasks_with_reviewer_prompts": sum(1 for task in task_summaries if task.reviewer_prompts_exists),
         "tasks_risk_unclassified": sum(1 for task in task_summaries if task.risk_classification_exists is False),
         "tasks_low_risk": sum(1 for task in task_summaries if task.risk_level == "low"),
         "tasks_medium_risk": sum(1 for task in task_summaries if task.risk_level == "medium"),
         "tasks_high_risk": sum(1 for task in task_summaries if task.risk_level == "high"),
         "tasks_critical_risk": sum(1 for task in task_summaries if task.risk_level == "critical"),
-        "tasks_waiting_review_checks": sum(1 for task in task_summaries if task.next_action == "run_review_checks"),
-        "tasks_waiting_external_review_findings": sum(
-            1 for task in task_summaries if task.next_action == "run_external_reviewer_or_record_findings"
-        ),
-        "tasks_waiting_required_review_prompts": sum(
-            1 for task in task_summaries if task.next_action == "prepare_required_reviews"
-        ),
+        "tasks_waiting_review_checks": next_action_counts["run_review_checks"],
+        "tasks_waiting_external_review_findings": next_action_counts["run_external_reviewer_or_record_findings"],
+        "tasks_waiting_required_review_prompts": next_action_counts["prepare_required_reviews"],
         "tasks_accepted": sum(1 for task in task_summaries if task.acceptance_status == "accepted"),
         "tasks_applied": sum(1 for task in task_summaries if task.application_status == "applied"),
-        "tasks_waiting_apply": sum(1 for task in task_summaries if task.next_action == "apply_run"),
-        "tasks_waiting_manual_commit": sum(1 for task in task_summaries if task.next_action == "manual_commit"),
+        "tasks_waiting_apply": next_action_counts["apply_run"],
+        "tasks_waiting_manual_commit": next_action_counts["manual_commit"],
     }
 
 
@@ -253,35 +259,36 @@ def _compute_pipeline_next_action(
 ) -> str:
     if not task_summaries or any(not task.run_id for task in task_summaries):
         return "inspect_pipeline"
-    if any(task.next_action == "inspect_missing_run" for task in task_summaries):
+    next_action_counts = _count_next_actions(task_summaries)
+    if _has_next_action(next_action_counts, "inspect_missing_run"):
         return "inspect_pipeline"
     if pipeline_status in {"failed", "partial"} and any(task.validator_status != "approved" for task in task_summaries):
         return "rework_or_inspect_failure"
-    if any(task.next_action == "rework_run" for task in task_summaries):
+    if _has_next_action(next_action_counts, "rework_run"):
         return "rework_run"
-    if any(task.next_action == "human_escalation" for task in task_summaries):
+    if _has_next_action(next_action_counts, "human_escalation"):
         return "human_escalation"
     if any(task.arbitration_final_blocking > 0 for task in task_summaries):
         return "review_rejected"
-    if any(task.next_action == "arbitrate_findings" for task in task_summaries):
+    if _has_next_action(next_action_counts, "arbitrate_findings"):
         return "arbitrate_findings"
-    if any(task.next_action == "review_rejected" for task in task_summaries):
+    if _has_next_action(next_action_counts, "review_rejected"):
         return "review_rejected"
-    if any(task.next_action == "classify_run" for task in task_summaries):
+    if _has_next_action(next_action_counts, "classify_run"):
         return "classify_runs"
-    if any(task.next_action == "prepare_required_reviews" for task in task_summaries):
+    if _has_next_action(next_action_counts, "prepare_required_reviews"):
         return "prepare_required_reviews"
-    if any(task.next_action == "run_review_checks" for task in task_summaries):
+    if _has_next_action(next_action_counts, "run_review_checks"):
         return "run_review_checks"
-    if any(task.next_action == "run_external_reviewer_or_record_findings" for task in task_summaries):
+    if _has_next_action(next_action_counts, "run_external_reviewer_or_record_findings"):
         return "run_external_reviewer_or_record_findings"
-    if any(task.next_action == "review_run" for task in task_summaries):
+    if _has_next_action(next_action_counts, "review_run"):
         return "review_runs"
-    if any(task.next_action == "apply_run" for task in task_summaries):
+    if _has_next_action(next_action_counts, "apply_run"):
         return "apply_runs"
-    if any(task.next_action == "manual_commit" for task in task_summaries):
+    if _has_next_action(next_action_counts, "manual_commit"):
         return "manual_commit"
-    if task_summaries and all(task.next_action == "done" for task in task_summaries):
+    if task_summaries and next_action_counts["done"] == len(task_summaries):
         return "done"
     return "inspect_pipeline"
 

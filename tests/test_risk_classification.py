@@ -699,6 +699,31 @@ class RiskShowStatusTests(unittest.TestCase):
         self.assertEqual(output_value(output, "tasks_waiting_required_review_prompts"), "1")
         self.assertEqual(output_value(output, "next_action"), "prepare_required_reviews")
 
+    def test_show_pipeline_next_action_external_reviewer_after_required_prompts_prepared(self) -> None:
+        with temporary_test_dir() as tmp:
+            run_dir, runs_dir = make_run_fixture(
+                tmp,
+                changed_files=["src/demo.py", "EXECUTION_REPORT.json"],
+                workspace_files={"src/demo.py": "VALUE = 1\n"},
+            )
+            with redirect_stdout(StringIO()):
+                self.assertEqual(classify_run_main([run_dir.name, "--runs-dir", str(runs_dir)]), 0)
+                self.assertEqual(prepare_review_main([run_dir.name, "--runs-dir", str(runs_dir), "--required-profiles"]), 0)
+            create_pipeline_fixture(
+                tmp,
+                pipeline_id="pipeline_external_reviewer_findings",
+                tasks=[build_pipeline_task_result("task-a", run_dir.name, runs_dir)],
+            )
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                exit_code = show_pipeline_main(["pipeline_external_reviewer_findings", "--runs-dir", str(runs_dir)])
+            output = stdout.getvalue()
+
+        self.assertEqual(exit_code, 0, output)
+        self.assertEqual(output_value(output, "tasks_waiting_required_review_prompts"), "0")
+        self.assertEqual(output_value(output, "tasks_waiting_external_review_findings"), "1")
+        self.assertEqual(output_value(output, "next_action"), "run_external_reviewer_or_record_findings")
+
 
 if __name__ == "__main__":
     unittest.main()
