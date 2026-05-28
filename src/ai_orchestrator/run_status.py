@@ -107,11 +107,10 @@ def _compute_next_action(
         return "human_escalation"
     if arbitration_exists and arbitration_final_blocking > 0:
         return "review_rejected"
-    if arbitration_exists and review_arbitration_decision == "pass" and human_review_decision is None:
-        return "review_run"
     if arbitration_exists and review_arbitration_decision != "pass":
         return "review_rejected"
-    if blocking_findings > 0:
+    arbitration_resolves_blocking_findings = arbitration_exists and review_arbitration_decision == "pass"
+    if blocking_findings > 0 and not arbitration_resolves_blocking_findings:
         return "arbitrate_findings"
     if acceptance_exists:
         return "done"
@@ -119,6 +118,8 @@ def _compute_next_action(
         return "manual_commit"
     if human_review_decision == "approved":
         return "apply_run"
+    if arbitration_resolves_blocking_findings:
+        return "review_run"
     if not risk_classification_exists:
         return "classify_run"
     if required_review_profiles:

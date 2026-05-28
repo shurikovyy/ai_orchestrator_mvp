@@ -1064,10 +1064,16 @@ class ReviewRunArbitrationGateTests(unittest.TestCase):
             with redirect_stdout(stdout):
                 exit_code = review_run_main([run_id, "--runs-dir", str(runs_dir), "--decision", "approved"])
             output = stdout.getvalue()
+            status_stdout = StringIO()
+            with redirect_stdout(status_stdout):
+                status_exit_code = show_run_main([run_id, "--runs-dir", str(runs_dir)])
+            status_output = status_stdout.getvalue()
 
         self.assertEqual(exit_code, 0, output)
         self.assertEqual(output_value(output, "status"), "review_recorded")
         self.assertEqual(output_value(output, "decision"), "approved")
+        self.assertEqual(status_exit_code, 0, status_output)
+        self.assertEqual(output_value(status_output, "next_action"), "apply_run")
 
     def test_review_run_approved_fails_with_stale_arbitration_even_if_decision_is_pass(self) -> None:
         with temporary_test_dir() as tmp:
