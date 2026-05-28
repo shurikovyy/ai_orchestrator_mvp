@@ -80,6 +80,27 @@ def _build_artifact_paths(run_dir: Path) -> dict[str, Path]:
     }
 
 
+def _has_current_pass_arbitration(*, arbitration_exists: bool, review_arbitration_decision: str) -> bool:
+    return arbitration_exists and review_arbitration_decision == "pass"
+
+
+def _has_missing_required_review_prompts(
+    *,
+    required_review_profiles: list[str],
+    prepared_review_profiles: list[str],
+) -> bool:
+    prepared_profiles = set(prepared_review_profiles)
+    return any(profile not in prepared_profiles for profile in required_review_profiles)
+
+
+def _has_required_reviewer_findings_pending(
+    *,
+    required_review_profiles: list[str],
+    findings_exists: bool,
+) -> bool:
+    return bool(required_review_profiles) and not findings_exists
+
+
 def _compute_next_action(
     *,
     validator_status: str,
@@ -109,7 +130,10 @@ def _compute_next_action(
         return "review_rejected"
     if arbitration_exists and review_arbitration_decision != "pass":
         return "review_rejected"
-    arbitration_resolves_blocking_findings = arbitration_exists and review_arbitration_decision == "pass"
+    arbitration_resolves_blocking_findings = _has_current_pass_arbitration(
+        arbitration_exists=arbitration_exists,
+        review_arbitration_decision=review_arbitration_decision,
+    )
     if blocking_findings > 0 and not arbitration_resolves_blocking_findings:
         return "arbitrate_findings"
     if acceptance_exists:
@@ -123,11 +147,15 @@ def _compute_next_action(
     if not risk_classification_exists:
         return "classify_run"
     if required_review_profiles:
-        prepared_profiles = set(prepared_review_profiles)
-        missing_required = [profile for profile in required_review_profiles if profile not in prepared_profiles]
-        if missing_required:
+        if _has_missing_required_review_prompts(
+            required_review_profiles=required_review_profiles,
+            prepared_review_profiles=prepared_review_profiles,
+        ):
             return "prepare_required_reviews"
-        if not findings_exists:
+        if _has_required_reviewer_findings_pending(
+            required_review_profiles=required_review_profiles,
+            findings_exists=findings_exists,
+        ):
             return "run_external_reviewer_or_record_findings"
     if not findings_exists:
         return "run_review_checks"

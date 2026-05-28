@@ -1393,6 +1393,7 @@ class ShowStatusArbitrationTests(unittest.TestCase):
         self.assertEqual(output_value(output, "arbitration_final_blocking"), "0")
         self.assertEqual(output_value(output, "arbitration_human_escalation_required"), "false")
         self.assertEqual(output_value(output, "arbitration_stale"), "false")
+        self.assertEqual(output_value(output, "next_action"), "review_run")
         self.assertTrue(output_value(output, "review_arbitration_source_findings_sha256"))
         self.assertIn("review_arbitration=", output)
         self.assertIn("review_arbitration_markdown=", output)
