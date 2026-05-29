@@ -12,7 +12,13 @@ from uuid import uuid4
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from ai_orchestrator.cli import draft_task_scaffold_main
+from ai_orchestrator.cli import (
+    draft_task_scaffold_main,
+    promote_task_draft_main,
+    revise_task_draft_main,
+    show_task_draft_main,
+    validate_task_draft_main,
+)
 from ai_orchestrator.task_drafts import TaskDraft, TargetTaskDraft
 
 TEST_TEMP_ROOT = Path(__file__).resolve().parents[1] / ".tmp_tests"
@@ -48,6 +54,66 @@ def load_yaml(path: Path) -> object:
     return yaml.safe_load(path.read_text(encoding="utf-8"))
 
 
+def scaffold_draft(
+    tmp: Path,
+    *,
+    request_text: str = "# Show draft\n\nDocument task draft inspection.\n",
+    risk_level: str = "low",
+    task_id: str = "show-task-draft-test",
+) -> tuple[str, Path]:
+    request_path = tmp / "raw_request.md"
+    write_text(request_path, request_text)
+    output_dir = tmp / ".task_drafts"
+    stdout = StringIO()
+    with redirect_stdout(stdout):
+        exit_code = draft_task_scaffold_main(
+            [
+                "--request",
+                str(request_path),
+                "--output-dir",
+                str(output_dir),
+                "--risk-level",
+                risk_level,
+                "--task-id",
+                task_id,
+            ]
+        )
+    output = stdout.getvalue()
+    if exit_code != 0:
+        raise AssertionError(output)
+    return output_value(output, "draft_id"), Path(output_value(output, "draft_dir"))
+
+
+def revise_draft_to_valid(tmp: Path, draft_id: str) -> None:
+    stdout = StringIO()
+    with redirect_stdout(stdout):
+        exit_code = revise_task_draft_main(
+            [
+                draft_id,
+                "--drafts-dir",
+                str(tmp / ".task_drafts"),
+                "--risk-level",
+                "low",
+                "--clear-files-allowed",
+                "--allow-file",
+                "docs/show_task_draft.md",
+                "--clear-open-questions",
+            ]
+        )
+    if exit_code != 0:
+        raise AssertionError(stdout.getvalue())
+
+
+def validate_draft(tmp: Path, draft_id: str, *extra_args: str) -> str:
+    stdout = StringIO()
+    with redirect_stdout(stdout):
+        exit_code = validate_task_draft_main([draft_id, "--drafts-dir", str(tmp / ".task_drafts"), *extra_args])
+    output = stdout.getvalue()
+    if exit_code != 0:
+        raise AssertionError(output)
+    return output
+
+
 class TaskDraftModelTests(unittest.TestCase):
     def test_task_draft_rejects_dangerous_commands(self) -> None:
         with self.assertRaisesRegex(ValueError, "dangerous command snippet: git reset --hard"):
@@ -80,6 +146,160 @@ class TaskDraftModelTests(unittest.TestCase):
                 validation_requirements=["EXECUTION_REPORT.json must be valid."],
                 target_task=TargetTaskDraft(id="draft-task-1", title="Draft"),
             )
+
+
+class ShowTaskDraftCliTests(unittest.TestCase):
+    def test_missing_draft_id_fails_clearly(self) -> None:
+        with temporary_test_dir() as tmp:
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                exit_code = show_task_draft_main(["missing-draft", "--drafts-dir", str(tmp / ".task_drafts")])
+            output = stdout.getvalue()
+
+        self.assertEqual(exit_code, 1, output)
+        self.assertEqual(output_value(output, "draft_id"), "missing-draft")
+        self.assertEqual(output_value(output, "status"), "failed")
+        self.assertIn("task draft not found: missing-draft", output)
+
+    def test_scaffolded_unvalidated_draft_points_to_validation(self) -> None:
+        with temporary_test_dir() as tmp:
+            draft_id, _draft_dir = scaffold_draft(tmp)
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                exit_code = show_task_draft_main([draft_id, "--drafts-dir", str(tmp / ".task_drafts")])
+            output = stdout.getvalue()
+
+        self.assertEqual(exit_code, 0, output)
+        self.assertEqual(output_value(output, "draft_id"), draft_id)
+        self.assertEqual(output_value(output, "validation_status"), "missing")
+        self.assertEqual(output_value(output, "valid_for_promotion"), "unknown")
+        self.assertEqual(output_value(output, "target_enabled"), "false")
+        self.assertEqual(output_value(output, "next_action"), "validate_task_draft")
+
+    def test_stale_validation_after_revision_points_to_validation(self) -> None:
+        with temporary_test_dir() as tmp:
+            draft_id, _draft_dir = scaffold_draft(tmp)
+            validate_draft(tmp, draft_id)
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                self.assertEqual(
+                    revise_task_draft_main(
+                        [draft_id, "--drafts-dir", str(tmp / ".task_drafts"), "--add-assumption", "Needs another pass."]
+                    ),
+                    0,
+                )
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                exit_code = show_task_draft_main([draft_id, "--drafts-dir", str(tmp / ".task_drafts")])
+            output = stdout.getvalue()
+
+        self.assertEqual(exit_code, 0, output)
+        self.assertEqual(output_value(output, "validation_status"), "stale")
+        self.assertEqual(output_value(output, "valid_for_promotion"), "false")
+        self.assertEqual(output_value(output, "next_action"), "validate_task_draft")
+
+    def test_needs_revision_draft_points_to_revision(self) -> None:
+        with temporary_test_dir() as tmp:
+            draft_id, _draft_dir = scaffold_draft(tmp)
+            validate_draft(tmp, draft_id)
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                exit_code = show_task_draft_main([draft_id, "--drafts-dir", str(tmp / ".task_drafts")])
+            output = stdout.getvalue()
+
+        self.assertEqual(exit_code, 0, output)
+        self.assertEqual(output_value(output, "validation_status"), "needs_revision")
+        self.assertEqual(output_value(output, "valid_for_promotion"), "false")
+        self.assertEqual(output_value(output, "next_action"), "revise_task_draft")
+
+    def test_valid_draft_points_to_promotion(self) -> None:
+        with temporary_test_dir() as tmp:
+            draft_id, _draft_dir = scaffold_draft(tmp)
+            revise_draft_to_valid(tmp, draft_id)
+            validate_draft(tmp, draft_id)
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                exit_code = show_task_draft_main([draft_id, "--drafts-dir", str(tmp / ".task_drafts")])
+            output = stdout.getvalue()
+
+        self.assertEqual(exit_code, 0, output)
+        self.assertEqual(output_value(output, "validation_status"), "valid")
+        self.assertEqual(output_value(output, "valid_for_promotion"), "true")
+        self.assertEqual(output_value(output, "open_questions"), "0")
+        self.assertEqual(output_value(output, "files_allowed"), "1")
+        self.assertEqual(output_value(output, "next_action"), "promote_task_draft")
+
+    def test_promoted_draft_points_to_promoted_task_inspection(self) -> None:
+        with temporary_test_dir() as tmp:
+            draft_id, _draft_dir = scaffold_draft(tmp)
+            revise_draft_to_valid(tmp, draft_id)
+            validate_draft(tmp, draft_id)
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                self.assertEqual(
+                    promote_task_draft_main(
+                        [draft_id, "--drafts-dir", str(tmp / ".task_drafts"), "--tasks-file", str(tmp / "tasks.yaml")]
+                    ),
+                    0,
+                )
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                exit_code = show_task_draft_main([draft_id, "--drafts-dir", str(tmp / ".task_drafts")])
+            output = stdout.getvalue()
+
+        self.assertEqual(exit_code, 0, output)
+        self.assertEqual(output_value(output, "validation_status"), "valid")
+        self.assertEqual(output_value(output, "next_action"), "inspect_promoted_task")
+
+    def test_show_task_draft_is_read_only_for_core_artifacts(self) -> None:
+        with temporary_test_dir() as tmp:
+            draft_id, draft_dir = scaffold_draft(tmp)
+            task_draft_path = draft_dir / "task_draft.yaml"
+            manifest_path = draft_dir / "MANIFEST.json"
+            before_task_draft = task_draft_path.read_text(encoding="utf-8")
+            before_manifest = manifest_path.read_text(encoding="utf-8")
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                exit_code = show_task_draft_main([draft_id, "--drafts-dir", str(tmp / ".task_drafts")])
+            output = stdout.getvalue()
+            after_task_draft = task_draft_path.read_text(encoding="utf-8")
+            after_manifest = manifest_path.read_text(encoding="utf-8")
+
+        self.assertEqual(exit_code, 0, output)
+        self.assertEqual(after_task_draft, before_task_draft)
+        self.assertEqual(after_manifest, before_manifest)
+
+    def test_show_task_draft_json_output_is_parseable(self) -> None:
+        with temporary_test_dir() as tmp:
+            draft_id, _draft_dir = scaffold_draft(tmp)
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                exit_code = show_task_draft_main(
+                    [draft_id, "--drafts-dir", str(tmp / ".task_drafts"), "--format", "json"]
+                )
+            payload = json.loads(stdout.getvalue())
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["draft_id"], draft_id)
+        self.assertEqual(payload["validation_status"], "missing")
+        self.assertEqual(payload["valid_for_promotion"], None)
+        self.assertEqual(payload["next_action"], "validate_task_draft")
+        self.assertIn("paths", payload)
+        self.assertIn("target_task", payload)
+
+    def test_show_task_draft_show_paths_includes_resolved_paths(self) -> None:
+        with temporary_test_dir() as tmp:
+            draft_id, draft_dir = scaffold_draft(tmp)
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                exit_code = show_task_draft_main(
+                    [draft_id, "--drafts-dir", str(tmp / ".task_drafts"), "--show-paths"]
+                )
+            output = stdout.getvalue()
+
+        self.assertEqual(exit_code, 0, output)
+        self.assertEqual(output_value(output, "draft_dir"), str(draft_dir.resolve()))
+        self.assertEqual(output_value(output, "task_draft"), str((draft_dir / "task_draft.yaml").resolve()))
 
 
 class DraftTaskScaffoldCliTests(unittest.TestCase):

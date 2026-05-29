@@ -2248,6 +2248,40 @@ Important rules for promotion readiness:
 - dangerous commands are rejected
 - `task_draft_validator_report.json` must show `valid_for_promotion=true` before any future promotion step
 
+### Inspecting task drafts
+
+`show-task-draft` is a read-only inspection command for deterministic task-intake artifacts.
+
+It summarizes:
+
+- draft artifact paths
+- target task id/title/enabled state
+- risk level and reviewer profiles
+- validation status and promotion readiness
+- the next deterministic operator action
+
+Example:
+
+```bash
+python -m ai_orchestrator.cli show-task-draft <draft_id>
+```
+
+Optional output modes:
+
+```bash
+python -m ai_orchestrator.cli show-task-draft <draft_id> --show-paths
+python -m ai_orchestrator.cli show-task-draft <draft_id> --format json
+```
+
+Safety rules:
+
+- it does not validate the draft
+- it does not revise the draft
+- it does not promote anything to `tasks.yaml`
+- it does not run Codex or the pipeline
+- it does not create `.runs`
+- it does not apply or commit changes
+
 ### Preparing task draft improvement prompts
 
 `prepare-task-draft-improvement` creates a markdown prompt packet for a future task-authoring agent that may improve a draft later.
