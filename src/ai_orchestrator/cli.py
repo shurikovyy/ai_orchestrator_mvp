@@ -29,13 +29,12 @@ from ai_orchestrator.review_profiles import (
 from ai_orchestrator.risk_classification import classify_run_risk
 from ai_orchestrator.reviewer_prompts import prepare_review_prompts
 from ai_orchestrator.run_status import build_run_status_summary, format_run_status_json, format_run_status_text
-from ai_orchestrator.task_drafts import (
+from ai_orchestrator.task_draft_inspection import (
     build_task_draft_inspection_summary,
-    create_task_draft_scaffold,
     format_task_draft_inspection_json,
     format_task_draft_inspection_text,
-    revise_task_draft,
 )
+from ai_orchestrator.task_drafts import create_task_draft_scaffold, revise_task_draft
 from ai_orchestrator.task_draft_improvement import (
     import_task_draft_improvement,
     prepare_task_draft_improvement_prompt,
