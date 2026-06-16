@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="panel">
+  <p><a href="/tasks">&larr; Back to tasks</a></p>
+  <div class="panel-heading">
+    <h2>Task Detail</h2>
+    <span class="badge {{ 'badge-clean' if summary.enabled else 'badge-dirty' }}">enabled={{ summary.enabled|string|lower }}</span>
+  </div>
+  <p class="note">This page is read-only. It does not run doctor, run pipeline, run Codex, apply, accept, or commit.</p>
+  <dl class="status-grid">
+    <div>
+      <dt>task_id</dt>
+      <dd><code>{{ summary.task_id }}</code></dd>
+    </div>
+    <div>
+      <dt>title</dt>
+      <dd>{{ summary.title }}</dd>
+    </div>
+    <div>
+      <dt>enabled</dt>
+      <dd>{{ summary.enabled|string|lower }}</dd>
+    </div>
+    <div>
+      <dt>dry_run_readiness</dt>
+      <dd>{{ summary.dry_run_readiness }}</dd>
+    </div>
+    <div>
+      <dt>backend</dt>
+      <dd>{{ summary.backend }}</dd>
+    </div>
+    <div>
+      <dt>seed_workspace</dt>
+      <dd>{{ summary.seed_workspace or "" }}</dd>
+    </div>
+    <div>
+      <dt>seed_workspace_resolved</dt>
+      <dd>{{ summary.seed_workspace_resolved or "" }}</dd>
+    </div>
+    <div>
+      <dt>seed_workspace_exists</dt>
+      <dd>{{ summary.seed_workspace_exists if summary.seed_workspace_exists is not none else "not_applicable" }}</dd>
+    </div>
+    <div>
+      <dt>max_retries</dt>
+      <dd>{{ summary.max_retries }}</dd>
+    </div>
+    <div>
+      <dt>validation_command_timeout</dt>
+      <dd>{{ summary.validation_command_timeout }}</dd>
+    </div>
+    <div>
+      <dt>require_structured_report</dt>
+      <dd>{{ summary.require_structured_report|string|lower }}</dd>
+    </div>
+    <div>
+      <dt>rerun_report_test_commands</dt>
+      <dd>{{ summary.rerun_report_test_commands|string|lower }}</dd>
+    </div>
+    <div>
+      <dt>validate_workspace_manifest</dt>
+      <dd>{{ summary.validate_workspace_manifest|string|lower }}</dd>
+    </div>
+    <div>
+      <dt>stream_codex_output</dt>
+      <dd>{{ summary.stream_codex_output|string|lower }}</dd>
+    </div>
+    <div>
+      <dt>verbose</dt>
+      <dd>{{ summary.verbose|string|lower }}</dd>
+    </div>
+    <div>
+      <dt>commit_message</dt>
+      <dd>{{ summary.commit_message or "" }}</dd>
+    </div>
+  </dl>
+</section>
+
+<section class="panel artifact-panel">
+  <div class="panel-heading">
+    <h2>Criteria</h2>
+    <span class="badge">{{ summary.criteria_count }}</span>
+  </div>
+  {% if summary.criteria %}
+  <ul class="plain-list">
+    {% for criterion in summary.criteria %}
+    <li>{{ criterion }}</li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="empty-state">No criteria listed.</p>
+  {% endif %}
+</section>
+
+<section class="panel artifact-panel">
+  <div class="panel-heading">
+    <h2>Plan Steps</h2>
+    <span class="badge">{{ summary.plan_steps_count }}</span>
+  </div>
+  {% if summary.plan_steps %}
+  {% for step in summary.plan_steps %}
+  <article class="artifact-preview">
+    <h3>{{ step.id }}{% if step.title %}: {{ step.title }}{% endif %}</h3>
+    <p>{{ step.description }}</p>
+    {% if step.criteria %}
+    <ul class="plain-list">
+      {% for criterion in step.criteria %}
+      <li>{{ criterion }}</li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+  </article>
+  {% endfor %}
+  {% else %}
+  <p class="empty-state">No plan steps listed.</p>
+  {% endif %}
+</section>
+
+<section class="panel artifact-panel">
+  <div class="panel-heading">
+    <h2>Prompt Preview</h2>
+    <span class="badge">preview</span>
+  </div>
+  <pre>{{ prompt_preview.content }}</pre>
+  {% if prompt_preview.clipped %}
+  <p class="note">Prompt preview clipped to the first 4000 characters.</p>
+  {% endif %}
+</section>
+{% endblock %}

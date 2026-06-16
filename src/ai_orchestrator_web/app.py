@@ -11,6 +11,7 @@ from fastapi.templating import Jinja2Templates
 
 from .project_status import get_current_project_status
 from .routes.drafts import create_drafts_router
+from .routes.tasks import create_tasks_router
 
 
 PACKAGE_DIR = Path(__file__).resolve().parent
@@ -40,6 +41,7 @@ def create_app(project_root: Path | str | None = None) -> FastAPI:
         )
 
     web_app.include_router(create_drafts_router(project_root=root, templates=templates))
+    web_app.include_router(create_tasks_router(project_root=root, templates=templates))
 
     return web_app
 

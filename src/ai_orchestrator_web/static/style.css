@@ -109,6 +109,11 @@ h1 {
   color: var(--warn);
 }
 
+.badge-clean {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
 .status-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -197,6 +202,15 @@ code {
 
 .empty-state {
   color: var(--muted);
+}
+
+.plain-list {
+  margin: 0;
+  padding-left: 1.2rem;
+}
+
+.plain-list li + li {
+  margin-top: 8px;
 }
 
 .artifact-panel {

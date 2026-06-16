@@ -35,11 +35,14 @@ Current scope:
 - read-only dashboard;
 - read-only drafts list at `/drafts`;
 - read-only draft detail at `/drafts/<draft_id>`;
+- read-only tasks list at `/tasks`;
+- read-only task detail at `/tasks/<task_id>`;
 - no pipeline execution;
 - no Codex execution;
 - no apply/accept/commit.
 
 Draft pages do not validate, revise, promote, run Codex, run pipeline, apply, or commit.
+Task pages do not enable/disable tasks, run doctor, run pipeline, run Codex, apply, accept, or commit.
 
 ## Current capabilities
 

@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="panel">
+  <div class="panel-heading">
+    <h2>Tasks</h2>
+    <span class="badge">read-only</span>
+  </div>
+  <p class="note">Viewing tasks does not enable, disable, run doctor, run pipeline, run Codex, apply, accept, or commit.</p>
+
+  {% if not tasks_file_exists %}
+  <p class="empty-state">tasks.yaml not found</p>
+  <p>Copy tasks.yaml.example to tasks.yaml or promote a validated task draft.</p>
+  {% elif error %}
+  <p class="note">{{ error }}</p>
+  {% elif summaries %}
+  <div class="table-wrap">
+    <table class="draft-table">
+      <thead>
+        <tr>
+          <th>task_id</th>
+          <th>title</th>
+          <th>enabled</th>
+          <th>backend</th>
+          <th>seed_workspace</th>
+          <th>criteria</th>
+          <th>plan_steps</th>
+          <th>structured_report</th>
+          <th>rerun_tests</th>
+          <th>manifest_validation</th>
+          <th>detail</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for task in summaries %}
+        <tr>
+          <td><code>{{ task.task_id }}</code></td>
+          <td>{{ task.title }}</td>
+          <td><span class="badge {{ 'badge-clean' if task.enabled else 'badge-dirty' }}">{{ task.enabled|string|lower }}</span></td>
+          <td><span class="badge">{{ task.backend }}</span></td>
+          <td>{{ task.seed_workspace or "" }}</td>
+          <td>{{ task.criteria_count }}</td>
+          <td>{{ task.plan_steps_count }}</td>
+          <td>{{ task.require_structured_report|string|lower }}</td>
+          <td>{{ task.rerun_report_test_commands|string|lower }}</td>
+          <td>{{ task.validate_workspace_manifest|string|lower }}</td>
+          <td><a href="/tasks/{{ task.task_id }}">Open</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty-state">No tasks found in {{ tasks_file }}</p>
+  {% endif %}
+</section>
+{% endblock %}
