@@ -2282,6 +2282,29 @@ Safety rules:
 - it does not create `.runs`
 - it does not apply or commit changes
 
+### Listing task drafts
+
+`list-task-drafts` is a read-only inspection command for local task draft triage.
+
+It summarizes local drafts and their deterministic next action without opening each draft directory manually.
+
+Examples:
+
+```bash
+python -m ai_orchestrator.cli list-task-drafts
+
+python -m ai_orchestrator.cli list-task-drafts --status valid --format json
+```
+
+Safety rules:
+
+- it does not validate drafts
+- it does not revise drafts
+- it does not promote anything to `tasks.yaml`
+- it does not run Codex or the pipeline
+- it does not create `.runs`
+- it does not apply or commit changes
+
 ### Preparing task draft improvement prompts
 
 `prepare-task-draft-improvement` creates a markdown prompt packet for a future task-authoring agent that may improve a draft later.

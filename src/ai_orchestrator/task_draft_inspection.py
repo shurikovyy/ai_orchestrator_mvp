@@ -6,6 +6,22 @@ from pathlib import Path
 
 from ai_orchestrator.task_drafts import TaskDraftManifest, load_task_draft, load_task_draft_manifest
 
+TASK_DRAFT_INSPECTION_NEXT_ACTIONS = {
+    "inspect_missing_files",
+    "validate_task_draft",
+    "revise_task_draft",
+    "promote_task_draft",
+    "inspect_promoted_task",
+}
+TASK_DRAFT_INSPECTION_VALIDATION_STATUSES = {
+    "missing",
+    "stale",
+    "invalid",
+    "needs_revision",
+    "valid",
+    "unknown",
+}
+
 
 @dataclass(frozen=True)
 class TaskDraftInspectionSummary:
@@ -145,6 +161,57 @@ def build_task_draft_inspection_summary(
     )
 
 
+def _build_unreadable_task_draft_summary(*, draft_id: str, draft_dir: Path) -> TaskDraftInspectionSummary:
+    paths = _draft_artifact_paths(draft_dir)
+    return TaskDraftInspectionSummary(
+        draft_id=draft_id,
+        draft_dir=draft_dir,
+        paths=paths,
+        exists={name: path.exists() for name, path in paths.items()},
+        title="",
+        task_id="",
+        risk_level="",
+        target_enabled=None,
+        validation_status="unknown",
+        valid_for_promotion=None,
+        open_questions_count=0,
+        files_allowed_count=0,
+        required_review_profiles=[],
+        optional_review_profiles=[],
+        next_action="inspect_missing_files",
+    )
+
+
+def _is_task_draft_dir(path: Path) -> bool:
+    return path.is_dir() and ((path / "task_draft.yaml").exists() or (path / "MANIFEST.json").exists())
+
+
+def list_task_draft_summaries(
+    *,
+    drafts_dir: str | Path = ".task_drafts",
+    validation_status: str | None = None,
+    next_action: str | None = None,
+) -> list[TaskDraftInspectionSummary]:
+    drafts_root = Path(drafts_dir)
+    if not drafts_root.exists():
+        return []
+    if not drafts_root.is_dir():
+        raise ValueError(f"drafts path is not a directory: {drafts_root}")
+
+    summaries: list[TaskDraftInspectionSummary] = []
+    for draft_dir in sorted((path for path in drafts_root.iterdir() if _is_task_draft_dir(path)), key=lambda path: path.name):
+        try:
+            summary = build_task_draft_inspection_summary(draft_id=draft_dir.name, drafts_dir=drafts_root)
+        except Exception:  # noqa: BLE001 - list view should still surface drafts needing inspection.
+            summary = _build_unreadable_task_draft_summary(draft_id=draft_dir.name, draft_dir=draft_dir)
+        if validation_status is not None and summary.validation_status != validation_status:
+            continue
+        if next_action is not None and summary.next_action != next_action:
+            continue
+        summaries.append(summary)
+    return summaries
+
+
 def _display_path(path: Path, *, exists: bool, show_paths: bool) -> str:
     if not exists:
         return "missing"
@@ -155,6 +222,10 @@ def _display_bool_or_unknown(value: bool | None) -> str:
     if value is None:
         return "unknown"
     return str(value).lower()
+
+
+def _display_existing_path(path: Path, *, show_paths: bool) -> str:
+    return str(path.resolve() if show_paths else path)
 
 
 def format_task_draft_inspection_text(summary: TaskDraftInspectionSummary, *, show_paths: bool = False) -> str:
@@ -218,5 +289,58 @@ def format_task_draft_inspection_json(summary: TaskDraftInspectionSummary, *, sh
         "required_review_profiles": summary.required_review_profiles,
         "optional_review_profiles": summary.optional_review_profiles,
         "next_action": summary.next_action,
+    }
+    return json.dumps(payload, indent=2, ensure_ascii=False)
+
+
+def _task_draft_list_item(summary: TaskDraftInspectionSummary, *, show_paths: bool) -> dict[str, object]:
+    return {
+        "draft_id": summary.draft_id,
+        "draft_dir": _display_existing_path(summary.draft_dir, show_paths=show_paths),
+        "task_id": summary.task_id,
+        "title": summary.title,
+        "validation_status": summary.validation_status,
+        "valid_for_promotion": summary.valid_for_promotion,
+        "target_enabled": summary.target_enabled,
+        "next_action": summary.next_action,
+    }
+
+
+def format_task_draft_list_text(
+    summaries: list[TaskDraftInspectionSummary],
+    *,
+    drafts_dir: str | Path = ".task_drafts",
+    show_paths: bool = False,
+) -> str:
+    if not summaries:
+        return f"No task drafts found in {_display_existing_path(Path(drafts_dir), show_paths=show_paths)}"
+
+    lines: list[str] = []
+    for summary in summaries:
+        parts = [
+            f"draft_id={summary.draft_id}",
+            f"task_id={summary.task_id}",
+            f"validation_status={summary.validation_status}",
+            f"valid_for_promotion={_display_bool_or_unknown(summary.valid_for_promotion)}",
+            f"target_enabled={_display_bool_or_unknown(summary.target_enabled)}",
+            f"next_action={summary.next_action}",
+        ]
+        if show_paths:
+            parts.append(f"draft_dir={summary.draft_dir.resolve()}")
+        parts.append(f"title={summary.title}")
+        lines.append(" ".join(parts))
+    return "\n".join(lines)
+
+
+def format_task_draft_list_json(
+    summaries: list[TaskDraftInspectionSummary],
+    *,
+    drafts_dir: str | Path = ".task_drafts",
+    show_paths: bool = False,
+) -> str:
+    payload = {
+        "drafts_dir": _display_existing_path(Path(drafts_dir), show_paths=show_paths),
+        "count": len(summaries),
+        "drafts": [_task_draft_list_item(summary, show_paths=show_paths) for summary in summaries],
     }
     return json.dumps(payload, indent=2, ensure_ascii=False)

@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from ai_orchestrator.cli import (
     draft_task_scaffold_main,
+    list_task_drafts_main,
     promote_task_draft_main,
     revise_task_draft_main,
     show_task_draft_main,
@@ -46,6 +47,14 @@ def output_value(output: str, key: str) -> str:
         if line.startswith(prefix):
             return line[len(prefix) :].strip()
     raise AssertionError(f"missing output line for {key!r} in:\n{output}")
+
+
+def output_line_for_draft(output: str, draft_id: str) -> str:
+    prefix = f"draft_id={draft_id} "
+    for line in output.splitlines():
+        if line.startswith(prefix):
+            return line
+    raise AssertionError(f"missing output row for draft {draft_id!r} in:\n{output}")
 
 
 def load_yaml(path: Path) -> object:
@@ -300,6 +309,138 @@ class ShowTaskDraftCliTests(unittest.TestCase):
         self.assertEqual(exit_code, 0, output)
         self.assertEqual(output_value(output, "draft_dir"), str(draft_dir.resolve()))
         self.assertEqual(output_value(output, "task_draft"), str((draft_dir / "task_draft.yaml").resolve()))
+
+
+class ListTaskDraftsCliTests(unittest.TestCase):
+    def test_missing_drafts_dir_returns_empty_text_and_json(self) -> None:
+        with temporary_test_dir() as tmp:
+            drafts_dir = tmp / ".task_drafts"
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                text_exit_code = list_task_drafts_main(["--drafts-dir", str(drafts_dir)])
+            text_output = stdout.getvalue()
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                json_exit_code = list_task_drafts_main(["--drafts-dir", str(drafts_dir), "--format", "json"])
+            payload = json.loads(stdout.getvalue())
+
+        self.assertEqual(text_exit_code, 0, text_output)
+        self.assertIn(f"No task drafts found in {drafts_dir}", text_output)
+        self.assertEqual(json_exit_code, 0)
+        self.assertEqual(payload["count"], 0)
+        self.assertEqual(payload["drafts"], [])
+
+    def test_list_includes_unvalidated_stale_and_valid_drafts(self) -> None:
+        with temporary_test_dir() as tmp:
+            missing_id, _missing_dir = scaffold_draft(tmp, task_id="missing-draft-task")
+            stale_id, _stale_dir = scaffold_draft(tmp, task_id="stale-draft-task")
+            validate_draft(tmp, stale_id)
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                self.assertEqual(
+                    revise_task_draft_main(
+                        [stale_id, "--drafts-dir", str(tmp / ".task_drafts"), "--add-assumption", "Needs revalidation."]
+                    ),
+                    0,
+                )
+            valid_id, _valid_dir = scaffold_draft(tmp, task_id="valid-draft-task")
+            revise_draft_to_valid(tmp, valid_id)
+            validate_draft(tmp, valid_id)
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                exit_code = list_task_drafts_main(["--drafts-dir", str(tmp / ".task_drafts")])
+            output = stdout.getvalue()
+
+        self.assertEqual(exit_code, 0, output)
+        self.assertIn("validation_status=missing", output_line_for_draft(output, missing_id))
+        self.assertIn("next_action=validate_task_draft", output_line_for_draft(output, missing_id))
+        self.assertIn("validation_status=stale", output_line_for_draft(output, stale_id))
+        self.assertIn("next_action=validate_task_draft", output_line_for_draft(output, stale_id))
+        self.assertIn("validation_status=valid", output_line_for_draft(output, valid_id))
+        self.assertIn("valid_for_promotion=true", output_line_for_draft(output, valid_id))
+        self.assertIn("next_action=promote_task_draft", output_line_for_draft(output, valid_id))
+
+    def test_list_filters_by_status_and_next_action(self) -> None:
+        with temporary_test_dir() as tmp:
+            missing_id, _missing_dir = scaffold_draft(tmp, task_id="missing-filter-task")
+            valid_id, _valid_dir = scaffold_draft(tmp, task_id="valid-filter-task")
+            revise_draft_to_valid(tmp, valid_id)
+            validate_draft(tmp, valid_id)
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                status_exit_code = list_task_drafts_main(["--drafts-dir", str(tmp / ".task_drafts"), "--status", "valid"])
+            status_output = stdout.getvalue()
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                action_exit_code = list_task_drafts_main(
+                    ["--drafts-dir", str(tmp / ".task_drafts"), "--next-action", "validate_task_draft"]
+                )
+            action_output = stdout.getvalue()
+
+        self.assertEqual(status_exit_code, 0, status_output)
+        self.assertIn(f"draft_id={valid_id}", status_output)
+        self.assertNotIn(f"draft_id={missing_id}", status_output)
+        self.assertEqual(action_exit_code, 0, action_output)
+        self.assertIn(f"draft_id={missing_id}", action_output)
+        self.assertNotIn(f"draft_id={valid_id}", action_output)
+
+    def test_list_json_output_is_parseable_and_compact(self) -> None:
+        with temporary_test_dir() as tmp:
+            draft_id, _draft_dir = scaffold_draft(tmp, task_id="json-list-task")
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                exit_code = list_task_drafts_main(["--drafts-dir", str(tmp / ".task_drafts"), "--format", "json"])
+            payload = json.loads(stdout.getvalue())
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["count"], 1)
+        self.assertEqual(payload["drafts"][0]["draft_id"], draft_id)
+        self.assertEqual(payload["drafts"][0]["validation_status"], "missing")
+        self.assertEqual(payload["drafts"][0]["next_action"], "validate_task_draft")
+        self.assertNotIn("codex_prompt", payload["drafts"][0])
+
+    def test_list_show_paths_includes_draft_dir(self) -> None:
+        with temporary_test_dir() as tmp:
+            draft_id, draft_dir = scaffold_draft(tmp, task_id="paths-list-task")
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                exit_code = list_task_drafts_main(["--drafts-dir", str(tmp / ".task_drafts"), "--show-paths"])
+            output = stdout.getvalue()
+
+        self.assertEqual(exit_code, 0, output)
+        row = output_line_for_draft(output, draft_id)
+        self.assertIn(f"draft_dir={draft_dir.resolve()}", row)
+
+    def test_list_task_drafts_is_read_only_for_core_artifacts(self) -> None:
+        with temporary_test_dir() as tmp:
+            _draft_id, draft_dir = scaffold_draft(tmp, task_id="readonly-list-task")
+            task_draft_path = draft_dir / "task_draft.yaml"
+            manifest_path = draft_dir / "MANIFEST.json"
+            before_task_draft = task_draft_path.read_text(encoding="utf-8")
+            before_manifest = manifest_path.read_text(encoding="utf-8")
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                exit_code = list_task_drafts_main(["--drafts-dir", str(tmp / ".task_drafts")])
+            output = stdout.getvalue()
+            after_task_draft = task_draft_path.read_text(encoding="utf-8")
+            after_manifest = manifest_path.read_text(encoding="utf-8")
+
+        self.assertEqual(exit_code, 0, output)
+        self.assertEqual(after_task_draft, before_task_draft)
+        self.assertEqual(after_manifest, before_manifest)
+
+    def test_list_ignores_raw_requests_and_other_helper_dirs(self) -> None:
+        with temporary_test_dir() as tmp:
+            drafts_dir = tmp / ".task_drafts"
+            write_text(drafts_dir / "raw_requests" / "request.md", "Raw request only.\n")
+            (drafts_dir / "scratch").mkdir(parents=True)
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                exit_code = list_task_drafts_main(["--drafts-dir", str(drafts_dir)])
+            output = stdout.getvalue()
+
+        self.assertEqual(exit_code, 0, output)
+        self.assertIn(f"No task drafts found in {drafts_dir}", output)
 
 
 class DraftTaskScaffoldCliTests(unittest.TestCase):

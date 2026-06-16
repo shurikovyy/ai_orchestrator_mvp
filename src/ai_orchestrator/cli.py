@@ -30,9 +30,14 @@ from ai_orchestrator.risk_classification import classify_run_risk
 from ai_orchestrator.reviewer_prompts import prepare_review_prompts
 from ai_orchestrator.run_status import build_run_status_summary, format_run_status_json, format_run_status_text
 from ai_orchestrator.task_draft_inspection import (
+    TASK_DRAFT_INSPECTION_NEXT_ACTIONS,
+    TASK_DRAFT_INSPECTION_VALIDATION_STATUSES,
     build_task_draft_inspection_summary,
+    format_task_draft_list_json,
+    format_task_draft_list_text,
     format_task_draft_inspection_json,
     format_task_draft_inspection_text,
+    list_task_draft_summaries,
 )
 from ai_orchestrator.task_drafts import create_task_draft_scaffold, revise_task_draft
 from ai_orchestrator.task_draft_improvement import (
@@ -804,6 +809,42 @@ def build_show_task_draft_parser() -> argparse.ArgumentParser:
         "--show-paths",
         action="store_true",
         help="Show resolved artifact paths.",
+    )
+    return parser
+
+
+def build_list_task_drafts_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="ai-orchestrator list-task-drafts",
+        description="List local task drafts and their deterministic next action without mutating draft state.",
+    )
+    parser.add_argument(
+        "--drafts-dir",
+        default=".task_drafts",
+        help="Directory containing draft folders. Defaults to .task_drafts.",
+    )
+    parser.add_argument(
+        "--format",
+        choices=["text", "json"],
+        default="text",
+        help="Output format. Defaults to text.",
+    )
+    parser.add_argument(
+        "--show-paths",
+        action="store_true",
+        help="Show resolved draft directory paths.",
+    )
+    parser.add_argument(
+        "--status",
+        choices=sorted(TASK_DRAFT_INSPECTION_VALIDATION_STATUSES),
+        default=None,
+        help="Filter by validation_status.",
+    )
+    parser.add_argument(
+        "--next-action",
+        choices=sorted(TASK_DRAFT_INSPECTION_NEXT_ACTIONS),
+        default=None,
+        help="Filter by deterministic next action.",
     )
     return parser
 
@@ -1926,6 +1967,39 @@ def show_task_draft_main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def list_task_drafts_main(argv: list[str] | None = None) -> int:
+    parser = build_list_task_drafts_parser()
+    args = parser.parse_args(argv)
+    try:
+        summaries = list_task_draft_summaries(
+            drafts_dir=args.drafts_dir,
+            validation_status=args.status,
+            next_action=args.next_action,
+        )
+    except Exception as exc:  # noqa: BLE001 - CLI should print deterministic error text.
+        if args.format == "json":
+            print(
+                json.dumps(
+                    {
+                        "status": "failed",
+                        "error": str(exc),
+                    },
+                    indent=2,
+                    ensure_ascii=False,
+                )
+            )
+        else:
+            print("status=failed")
+            print(f"error={exc}")
+        return 1
+
+    if args.format == "json":
+        print(format_task_draft_list_json(summaries, drafts_dir=args.drafts_dir, show_paths=args.show_paths))
+    else:
+        print(format_task_draft_list_text(summaries, drafts_dir=args.drafts_dir, show_paths=args.show_paths))
+    return 0
+
+
 def revise_task_draft_main(argv: list[str] | None = None) -> int:
     parser = build_revise_task_draft_parser()
     args = parser.parse_args(argv)
@@ -2178,6 +2252,8 @@ def main(argv: list[str] | None = None) -> int:
         return revise_task_draft_main(args[1:])
     if args and args[0] == "validate-task-draft":
         return validate_task_draft_main(args[1:])
+    if args and args[0] == "list-task-drafts":
+        return list_task_drafts_main(args[1:])
     if args and args[0] == "show-task-draft":
         return show_task_draft_main(args[1:])
     if args and args[0] == "draft-task-scaffold":
