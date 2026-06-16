@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="panel">
+  <p><a href="/drafts">&larr; Back to drafts</a></p>
+  <div class="panel-heading">
+    <h2>Draft Detail</h2>
+    <span class="badge">{{ summary.next_action }}</span>
+  </div>
+  <dl class="status-grid">
+    <div>
+      <dt>draft_id</dt>
+      <dd><code>{{ summary.draft_id }}</code></dd>
+    </div>
+    <div>
+      <dt>draft_dir</dt>
+      <dd>{{ summary.draft_dir }}</dd>
+    </div>
+    <div>
+      <dt>task_id</dt>
+      <dd><code>{{ summary.task_id }}</code></dd>
+    </div>
+    <div>
+      <dt>title</dt>
+      <dd>{{ summary.title }}</dd>
+    </div>
+    <div>
+      <dt>risk_level</dt>
+      <dd>{{ summary.risk_level }}</dd>
+    </div>
+    <div>
+      <dt>target_enabled</dt>
+      <dd>{{ summary.target_enabled if summary.target_enabled is not none else "unknown" }}</dd>
+    </div>
+    <div>
+      <dt>validation_status</dt>
+      <dd>{{ summary.validation_status }}</dd>
+    </div>
+    <div>
+      <dt>valid_for_promotion</dt>
+      <dd>{{ summary.valid_for_promotion if summary.valid_for_promotion is not none else "unknown" }}</dd>
+    </div>
+    <div>
+      <dt>next_action</dt>
+      <dd>{{ summary.next_action }}</dd>
+    </div>
+    <div>
+      <dt>open_questions_count</dt>
+      <dd>{{ summary.open_questions_count }}</dd>
+    </div>
+    <div>
+      <dt>files_allowed_count</dt>
+      <dd>{{ summary.files_allowed_count }}</dd>
+    </div>
+    <div>
+      <dt>required_review_profiles</dt>
+      <dd>{{ summary.required_review_profiles|join(", ") }}</dd>
+    </div>
+    <div>
+      <dt>optional_review_profiles</dt>
+      <dd>{{ summary.optional_review_profiles|join(", ") }}</dd>
+    </div>
+  </dl>
+</section>
+
+<section class="panel artifact-panel">
+  <div class="panel-heading">
+    <h2>Draft Artifacts</h2>
+    <span class="badge">preview</span>
+  </div>
+  {% for artifact in artifact_previews %}
+  <article class="artifact-preview">
+    <h3>{{ artifact.label }}</h3>
+    <p class="artifact-path">{{ artifact.path if artifact.exists else "missing" }}</p>
+    {% if artifact.exists %}
+    <pre>{{ artifact.content }}</pre>
+    {% if artifact.clipped %}
+    <p class="note">Content clipped to the first 4000 characters.</p>
+    {% endif %}
+    {% else %}
+    <p class="empty-state">Artifact missing.</p>
+    {% endif %}
+  </article>
+  {% endfor %}
+</section>
+{% endblock %}

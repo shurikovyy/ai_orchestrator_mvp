@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="panel">
+  <div class="panel-heading">
+    <h2>Task Drafts</h2>
+    <span class="badge">read-only</span>
+  </div>
+  <p class="note">Draft pages inspect local artifacts only. They do not validate, revise, promote, run Codex, run pipeline, apply, or commit.</p>
+  {% if summaries %}
+  <div class="table-wrap">
+    <table class="draft-table">
+      <thead>
+        <tr>
+          <th>draft_id</th>
+          <th>task_id</th>
+          <th>title</th>
+          <th>validation_status</th>
+          <th>valid_for_promotion</th>
+          <th>target_enabled</th>
+          <th>next_action</th>
+          <th>detail</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for draft in summaries %}
+        <tr>
+          <td><code>{{ draft.draft_id }}</code></td>
+          <td><code>{{ draft.task_id }}</code></td>
+          <td>{{ draft.title }}</td>
+          <td><span class="badge badge-{{ draft.validation_status }}">{{ draft.validation_status }}</span></td>
+          <td>{{ draft.valid_for_promotion if draft.valid_for_promotion is not none else "unknown" }}</td>
+          <td>{{ draft.target_enabled if draft.target_enabled is not none else "unknown" }}</td>
+          <td><span class="badge">{{ draft.next_action }}</span></td>
+          <td><a href="/drafts/{{ draft.draft_id }}">Open</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty-state">No task drafts found in {{ drafts_dir }}</p>
+  {% endif %}
+</section>
+{% endblock %}

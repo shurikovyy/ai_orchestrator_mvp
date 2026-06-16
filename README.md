@@ -33,9 +33,13 @@ http://127.0.0.1:8765
 Current scope:
 
 - read-only dashboard;
+- read-only drafts list at `/drafts`;
+- read-only draft detail at `/drafts/<draft_id>`;
 - no pipeline execution;
 - no Codex execution;
 - no apply/accept/commit.
+
+Draft pages do not validate, revise, promote, run Codex, run pipeline, apply, or commit.
 
 ## Current capabilities
 
