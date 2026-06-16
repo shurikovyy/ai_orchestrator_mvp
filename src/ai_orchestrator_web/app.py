@@ -11,6 +11,7 @@ from fastapi.templating import Jinja2Templates
 
 from .project_status import get_current_project_status
 from .routes.drafts import create_drafts_router
+from .routes.jobs import create_jobs_router
 from .routes.pipelines import create_pipelines_router
 from .routes.runs import create_runs_router
 from .routes.tasks import create_tasks_router
@@ -46,6 +47,7 @@ def create_app(project_root: Path | str | None = None) -> FastAPI:
     web_app.include_router(create_tasks_router(project_root=root, templates=templates))
     web_app.include_router(create_runs_router(project_root=root, templates=templates))
     web_app.include_router(create_pipelines_router(project_root=root, templates=templates))
+    web_app.include_router(create_jobs_router(project_root=root, templates=templates))
 
     return web_app
 

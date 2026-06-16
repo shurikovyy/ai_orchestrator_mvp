@@ -41,6 +41,7 @@ Current scope:
 - read-only run detail at `/runs/<run_id>`;
 - read-only pipelines list at `/pipelines`;
 - read-only pipeline detail at `/pipelines/<pipeline_id>`;
+- local allowlisted jobs at `/jobs`;
 - no pipeline execution;
 - no Codex execution;
 - no apply/accept/commit.
@@ -48,6 +49,7 @@ Current scope:
 Draft pages do not validate, revise, promote, run Codex, run pipeline, apply, or commit.
 Task pages do not enable/disable tasks, run doctor, run pipeline, run Codex, apply, accept, or commit.
 Run and pipeline pages do not classify, run review checks, prepare review, record findings, approve/reject, apply, accept, commit, run Codex, or run pipeline.
+Jobs use allowlisted CLI actions only, never arbitrary shell commands. Job metadata and logs are stored under `.web/jobs/`; no run-pipeline, apply, accept, or Codex actions are exposed yet.
 
 ## Current capabilities
 

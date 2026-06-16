@@ -9,6 +9,7 @@ src/*.egg-info/
 
 # Runtime artifacts
 .runs/
+.web/
 .codex_home/
 .codex_temp/
 codex_smoke_workspace/

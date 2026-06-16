@@ -171,6 +171,46 @@ dd {
   font-weight: 800;
 }
 
+.job-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: end;
+  margin-top: 22px;
+}
+
+.job-form label {
+  width: 100%;
+  color: var(--muted);
+  font-size: 0.77rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.job-form select,
+.job-form button {
+  min-height: 42px;
+  border-radius: 999px;
+  font: inherit;
+}
+
+.job-form select {
+  min-width: min(420px, 100%);
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--ink);
+}
+
+.job-form button {
+  border: 0;
+  padding: 0 18px;
+  background: var(--accent);
+  color: white;
+  font-weight: 800;
+}
+
 .table-wrap {
   overflow-x: auto;
 }

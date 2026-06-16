@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="panel">
+  <p><a href="/jobs">&larr; Back to jobs</a></p>
+  <div class="panel-heading">
+    <h2>Job Detail</h2>
+    <span class="badge">{{ job.status }}</span>
+  </div>
+  <p class="note">This job is constrained to a prebuilt argv list and shell=False. Logs are local files under .web/jobs.</p>
+  <dl class="status-grid">
+    <div><dt>job_id</dt><dd><code>{{ job.job_id }}</code></dd></div>
+    <div><dt>action</dt><dd>{{ job.action }}</dd></div>
+    <div><dt>status</dt><dd>{{ job.status }}</dd></div>
+    <div><dt>project_root</dt><dd>{{ job.project_root }}</dd></div>
+    <div><dt>created_at</dt><dd>{{ job.created_at }}</dd></div>
+    <div><dt>started_at</dt><dd>{{ job.started_at or "" }}</dd></div>
+    <div><dt>finished_at</dt><dd>{{ job.finished_at or "" }}</dd></div>
+    <div><dt>exit_code</dt><dd>{{ job.exit_code if job.exit_code is not none else "" }}</dd></div>
+    <div><dt>stdout_path</dt><dd>{{ job.stdout_path }}</dd></div>
+    <div><dt>stderr_path</dt><dd>{{ job.stderr_path }}</dd></div>
+    <div><dt>error</dt><dd>{{ job.error or "" }}</dd></div>
+    <div><dt>refresh</dt><dd><a href="/jobs/{{ job.job_id }}">Refresh job</a></dd></div>
+  </dl>
+</section>
+
+<section class="panel artifact-panel">
+  <div class="panel-heading">
+    <h2>Command</h2>
+    <span class="badge">argv</span>
+  </div>
+  <pre>{{ job.command|join("\n") }}</pre>
+</section>
+
+<section class="panel artifact-panel">
+  <div class="panel-heading">
+    <h2>stdout</h2>
+    <span class="badge">preview</span>
+  </div>
+  <p class="artifact-path">{{ stdout_preview.path }}</p>
+  {% if stdout_preview.exists %}
+  <pre>{{ stdout_preview.content }}</pre>
+  {% if stdout_preview.clipped %}
+  <p class="note">stdout clipped to the first 8000 characters.</p>
+  {% endif %}
+  {% else %}
+  <p class="empty-state">stdout log not created yet.</p>
+  {% endif %}
+</section>
+
+<section class="panel artifact-panel">
+  <div class="panel-heading">
+    <h2>stderr</h2>
+    <span class="badge">preview</span>
+  </div>
+  <p class="artifact-path">{{ stderr_preview.path }}</p>
+  {% if stderr_preview.exists %}
+  <pre>{{ stderr_preview.content }}</pre>
+  {% if stderr_preview.clipped %}
+  <p class="note">stderr clipped to the first 8000 characters.</p>
+  {% endif %}
+  {% else %}
+  <p class="empty-state">stderr log not created yet.</p>
+  {% endif %}
+</section>
+{% endblock %}

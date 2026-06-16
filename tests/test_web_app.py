@@ -3,13 +3,15 @@ from __future__ import annotations
 from contextlib import redirect_stdout
 import importlib.util
 from io import StringIO
+import json
 from pathlib import Path
 import shutil
 import subprocess
 import sys
 import textwrap
+import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from uuid import uuid4
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -18,6 +20,10 @@ from ai_orchestrator.backends.mock import MockBackend
 from ai_orchestrator.engine import TaskExecutionEngine
 from ai_orchestrator.pipeline import PipelineSelectedTask, PipelineState, PipelineTaskResult
 from ai_orchestrator.schemas import TaskSpec
+from ai_orchestrator_web.jobs.actions import build_action_command
+from ai_orchestrator_web.jobs.models import create_job_record
+from ai_orchestrator_web.jobs.runner import run_job_sync
+from ai_orchestrator_web.jobs.store import load_job, save_job
 from ai_orchestrator_web.project_status import (
     get_current_project_status,
     get_git_status_summary,
@@ -186,6 +192,16 @@ def create_web_pipeline(root: Path, *, run_id: str, run_dir: Path) -> tuple[str,
     return pipeline_id, pipeline_dir
 
 
+def wait_for_job_status(root: Path, job_id: str, *, timeout_seconds: float = 20.0) -> str:
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        job = load_job(root, job_id)
+        if job.status not in {"queued", "running"}:
+            return job.status
+        time.sleep(0.05)
+    return load_job(root, job_id).status
+
+
 class ProjectStatusTests(unittest.TestCase):
     def test_project_status_reports_local_artifact_flags(self) -> None:
         with TemporaryProject() as root:
@@ -284,6 +300,19 @@ class WebAppRouteTests(unittest.TestCase):
             self.assertEqual(response.status_code, 200)
             self.assertIn('href="/runs"', response.text)
             self.assertIn('href="/pipelines"', response.text)
+
+    def test_dashboard_links_to_jobs(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            client = TestClient(create_app(root))
+
+            response = client.get("/")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertIn('href="/jobs"', response.text)
 
     def test_drafts_missing_dir_shows_empty_state(self) -> None:
         from fastapi.testclient import TestClient
@@ -669,6 +698,124 @@ class WebAppRouteTests(unittest.TestCase):
             self.assertTrue(all(response.status_code == 200 for response in responses))
             after = {path: path.read_text(encoding="utf-8") for path in tracked_paths}
             self.assertEqual(after, before)
+
+    def test_jobs_missing_dir_shows_empty_state(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            client = TestClient(create_app(root))
+
+            response = client.get("/jobs")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("No jobs found", response.text)
+            self.assertIn("web_health_cli", response.text)
+
+    def test_start_allowed_job_creates_metadata_and_logs(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            client = TestClient(create_app(root))
+
+            response = client.post("/jobs/start", data={"action": "web_health_cli"}, follow_redirects=False)
+
+            self.assertEqual(response.status_code, 303)
+            location = response.headers["location"]
+            self.assertTrue(location.startswith("/jobs/job_"))
+            job_id = location.rsplit("/", 1)[-1]
+            self.assertEqual(wait_for_job_status(root, job_id), "succeeded")
+            job = load_job(root, job_id)
+            detail = client.get(location)
+
+            self.assertEqual(detail.status_code, 200)
+            self.assertEqual(job.action, "web_health_cli")
+            self.assertEqual(job.status, "succeeded")
+            self.assertEqual(job.exit_code, 0)
+            self.assertTrue(Path(job.stdout_path).exists())
+            self.assertTrue(Path(job.stderr_path).exists())
+            self.assertIn("usage:", Path(job.stdout_path).read_text(encoding="utf-8"))
+            self.assertIn("web_health_cli", detail.text)
+
+    def test_unsupported_job_action_returns_bad_request(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            client = TestClient(create_app(root))
+
+            response = client.post("/jobs/start", data={"action": "run-pipeline"})
+
+            self.assertEqual(response.status_code, 400)
+
+    def test_job_id_path_traversal_returns_not_found(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            client = TestClient(create_app(root))
+
+            response = client.get("/jobs/bad%5Cname")
+
+            self.assertIn(response.status_code, {400, 404})
+
+    def test_one_active_job_rule_refuses_second_job(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            command = build_action_command("web_health_cli", root)
+            job = create_job_record(action="web_health_cli", project_root=root, command=command)
+            job.status = "running"
+            save_job(root, job)
+            client = TestClient(create_app(root))
+
+            response = client.post("/jobs/start", data={"action": "web_health_cli"})
+
+            self.assertEqual(response.status_code, 409)
+
+    def test_job_runner_uses_argv_list_and_shell_false(self) -> None:
+        with TemporaryProject() as root:
+            command = build_action_command("web_health_cli", root)
+            job = create_job_record(action="web_health_cli", project_root=root, command=command)
+            process = Mock()
+            process.wait.return_value = 0
+            with patch("ai_orchestrator_web.jobs.runner.subprocess.Popen", return_value=process) as popen:
+                finished = run_job_sync(job, root)
+
+            args, kwargs = popen.call_args
+            self.assertIsInstance(args[0], list)
+            self.assertEqual(args[0], command)
+            self.assertIs(kwargs["shell"], False)
+            self.assertEqual(finished.status, "succeeded")
+
+    def test_job_json_contains_command_as_list(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            client = TestClient(create_app(root))
+
+            response = client.post("/jobs/start", data={"action": "list_task_drafts"}, follow_redirects=False)
+
+            self.assertEqual(response.status_code, 303)
+            job_id = response.headers["location"].rsplit("/", 1)[-1]
+            wait_for_job_status(root, job_id)
+            payload = json.loads((root / ".web" / "jobs" / f"{job_id}.json").read_text(encoding="utf-8"))
+            self.assertIsInstance(payload["command"], list)
+            self.assertIn("list-task-drafts", payload["command"])
+
+    def test_web_runtime_directory_is_ignored(self) -> None:
+        gitignore = Path(__file__).resolve().parents[1] / ".gitignore"
+
+        self.assertIn(".web/", gitignore.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

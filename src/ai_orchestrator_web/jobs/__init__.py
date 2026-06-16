@@ -1,0 +1,1 @@
+"""Allowlisted local web jobs."""

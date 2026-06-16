@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="panel">
+  <div class="panel-heading">
+    <h2>Jobs</h2>
+    <span class="badge">allowlisted only</span>
+  </div>
+  <p class="note">Jobs run local CLI subprocesses with shell=False and strict action names. No run-pipeline, Codex execution, apply, accept, or commit actions are available in this stage.</p>
+  <form class="job-form" method="post" action="/jobs/start">
+    <label for="action">Allowed action</label>
+    <select id="action" name="action">
+      {% for action in allowed_actions %}
+      <option value="{{ action.name }}">{{ action.name }} - {{ action.label }}</option>
+      {% endfor %}
+    </select>
+    <button type="submit">Start safe job</button>
+  </form>
+</section>
+
+<section class="panel artifact-panel">
+  <div class="panel-heading">
+    <h2>Job History</h2>
+    <span class="badge">{{ jobs|length }}</span>
+  </div>
+  {% if jobs %}
+  <div class="table-wrap">
+    <table class="draft-table">
+      <thead>
+        <tr>
+          <th>job_id</th>
+          <th>action</th>
+          <th>status</th>
+          <th>created_at</th>
+          <th>started_at</th>
+          <th>finished_at</th>
+          <th>exit_code</th>
+          <th>detail</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for job in jobs %}
+        <tr>
+          <td><code>{{ job.job_id }}</code></td>
+          <td>{{ job.action }}</td>
+          <td><span class="badge">{{ job.status }}</span></td>
+          <td>{{ job.created_at }}</td>
+          <td>{{ job.started_at or "" }}</td>
+          <td>{{ job.finished_at or "" }}</td>
+          <td>{{ job.exit_code if job.exit_code is not none else "" }}</td>
+          <td><a href="/jobs/{{ job.job_id }}">Open</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty-state">No jobs found</p>
+  {% endif %}
+</section>
+{% endblock %}
