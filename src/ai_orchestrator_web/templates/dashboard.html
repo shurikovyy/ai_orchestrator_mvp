@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="panel">
+  <div class="panel-heading">
+    <h2>Project Status</h2>
+    <span class="badge badge-{{ status.git.status }}">Git status: {{ status.git.status }}</span>
+  </div>
+  <dl class="status-grid">
+    <div>
+      <dt>Project root</dt>
+      <dd>{{ status.project_root }}</dd>
+    </div>
+    <div>
+      <dt>ai_orchestrator version</dt>
+      <dd>{{ status.ai_orchestrator_version }}</dd>
+    </div>
+    <div>
+      <dt>Tracked changes</dt>
+      <dd>{{ status.git.tracked_changes }}</dd>
+    </div>
+    <div>
+      <dt>Untracked changes</dt>
+      <dd>{{ status.git.untracked_changes }}</dd>
+    </div>
+    <div>
+      <dt>tasks.yaml</dt>
+      <dd>{{ "exists" if status.tasks_yaml_exists else "missing" }}</dd>
+    </div>
+    <div>
+      <dt>.task_drafts</dt>
+      <dd>{{ "exists" if status.task_drafts_exists else "missing" }}</dd>
+    </div>
+    <div>
+      <dt>.runs</dt>
+      <dd>{{ "exists" if status.runs_exists else "missing" }}</dd>
+    </div>
+  </dl>
+  {% if status.git.message %}
+  <p class="note">{{ status.git.message }}</p>
+  {% endif %}
+</section>
+
+<section class="cards" aria-label="Future dashboard sections">
+  <article class="card">
+    <h2>Drafts</h2>
+    <p>Coming next: read-only task draft triage from local `.task_drafts`.</p>
+  </article>
+  <article class="card">
+    <h2>Tasks</h2>
+    <p>Coming next: read-only task queue inspection from local `tasks.yaml`.</p>
+  </article>
+  <article class="card">
+    <h2>Runs</h2>
+    <p>Coming next: read-only run and review lifecycle status from local `.runs`.</p>
+  </article>
+</section>
+{% endblock %}

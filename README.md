@@ -16,6 +16,27 @@ task intake -> isolated execution -> deterministic validation -> review findings
 - recommended path после approval: `apply-run`, затем ручной `git diff`, тесты, `git add` и `git commit`;
 - `accept-run` остается advanced explicit path для случаев, когда оператор осознанно хочет delegated apply + git commit.
 
+## Local web MVP
+
+Run:
+
+```bash
+python -m ai_orchestrator_web
+```
+
+Open:
+
+```text
+http://127.0.0.1:8765
+```
+
+Current scope:
+
+- read-only dashboard;
+- no pipeline execution;
+- no Codex execution;
+- no apply/accept/commit.
+
 ## Current capabilities
 
 - хранит состояние запуска в `.runs/<run_id>/state.json`;

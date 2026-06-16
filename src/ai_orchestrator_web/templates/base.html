@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>AI Orchestrator Web MVP</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='/style.css') }}">
+  </head>
+  <body>
+    <header class="hero">
+      <p class="eyebrow">local read-only dashboard</p>
+      <h1>AI Orchestrator Web MVP</h1>
+      <p class="lede">Inspect project state without running Codex, pipelines, apply, accept, or commits.</p>
+    </header>
+    <main class="page">
+      {% block content %}{% endblock %}
+    </main>
+  </body>
+</html>
