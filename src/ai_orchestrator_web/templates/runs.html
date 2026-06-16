@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="panel">
+  <div class="panel-heading">
+    <h2>Runs</h2>
+    <span class="badge">read-only</span>
+  </div>
+  <p class="note">Viewing runs does not classify, run review checks, approve, apply, accept, commit, run Codex, or run pipeline.</p>
+  {% if summaries %}
+  <div class="table-wrap">
+    <table class="draft-table">
+      <thead>
+        <tr>
+          <th>run_id</th>
+          <th>validator_status</th>
+          <th>backend</th>
+          <th>human_review_decision</th>
+          <th>risk_level</th>
+          <th>change_type</th>
+          <th>blocking_findings</th>
+          <th>arbitration_stale</th>
+          <th>application_status</th>
+          <th>acceptance_status</th>
+          <th>next_action</th>
+          <th>detail</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for run in summaries %}
+        <tr>
+          <td><code>{{ run.run_id }}</code></td>
+          <td><span class="badge">{{ run.validator_status }}</span></td>
+          <td>{{ run.backend or "" }}</td>
+          <td>{{ run.human_review_decision or "" }}</td>
+          <td>{{ run.risk_level or "" }}</td>
+          <td>{{ run.change_type or "" }}</td>
+          <td>{{ run.blocking_findings }}</td>
+          <td>{{ run.arbitration_stale|string|lower }}</td>
+          <td>{{ run.application_status }}</td>
+          <td>{{ run.acceptance_status }}</td>
+          <td><span class="badge">{{ run.next_action }}</span></td>
+          <td><a href="/runs/{{ run.run_id }}">Open</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty-state">No runs found in {{ runs_dir }}</p>
+  {% endif %}
+</section>
+{% endblock %}

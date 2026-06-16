@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="panel">
+  <div class="panel-heading">
+    <h2>Pipelines</h2>
+    <span class="badge">read-only</span>
+  </div>
+  <p class="note">Viewing pipelines does not run pipeline, run Codex, approve, apply, accept, or commit.</p>
+  {% if summaries %}
+  <div class="table-wrap">
+    <table class="draft-table">
+      <thead>
+        <tr>
+          <th>pipeline_id</th>
+          <th>pipeline_status</th>
+          <th>tasks_total</th>
+          <th>validator_approved</th>
+          <th>validator_failed</th>
+          <th>waiting_review</th>
+          <th>blocking_findings</th>
+          <th>waiting_apply</th>
+          <th>manual_commit</th>
+          <th>next_action</th>
+          <th>detail</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for pipeline in summaries %}
+        <tr>
+          <td><code>{{ pipeline.pipeline_id }}</code></td>
+          <td><span class="badge">{{ pipeline.pipeline_status }}</span></td>
+          <td>{{ pipeline.counts.tasks_total }}</td>
+          <td>{{ pipeline.counts.tasks_validator_approved }}</td>
+          <td>{{ pipeline.counts.tasks_validator_failed }}</td>
+          <td>{{ pipeline.counts.tasks_waiting_review }}</td>
+          <td>{{ pipeline.counts.tasks_with_blocking_findings }}</td>
+          <td>{{ pipeline.counts.tasks_waiting_apply }}</td>
+          <td>{{ pipeline.counts.tasks_waiting_manual_commit }}</td>
+          <td><span class="badge">{{ pipeline.next_action }}</span></td>
+          <td><a href="/pipelines/{{ pipeline.pipeline_id }}">Open</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty-state">No pipelines found in {{ pipelines_dir }}</p>
+  {% endif %}
+</section>
+{% endblock %}

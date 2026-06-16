@@ -14,6 +14,10 @@ from uuid import uuid4
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from ai_orchestrator.backends.mock import MockBackend
+from ai_orchestrator.engine import TaskExecutionEngine
+from ai_orchestrator.pipeline import PipelineSelectedTask, PipelineState, PipelineTaskResult
+from ai_orchestrator.schemas import TaskSpec
 from ai_orchestrator_web.project_status import (
     get_current_project_status,
     get_git_status_summary,
@@ -141,6 +145,47 @@ def write_tasks_yaml(root: Path, *, long_prompt: bool = False) -> Path:
     return tasks_file
 
 
+def create_web_run(root: Path, *, long_review_packet: bool = False) -> tuple[str, Path]:
+    runs_dir = root / ".runs"
+    task = TaskSpec(
+        description="Create deterministic web run fixture",
+        acceptance_criteria=["deterministic demo artifact"],
+        max_retries=1,
+    )
+    state = TaskExecutionEngine(MockBackend(), runs_dir).run(task)
+    run_dir = runs_dir / state.run_id
+    review_packet = "# REVIEW_PACKET\n\n" + ("R" * 4500 if long_review_packet else "Synthetic review packet preview.\n")
+    (run_dir / "REVIEW_PACKET.md").write_text(review_packet, encoding="utf-8")
+    return state.run_id, run_dir
+
+
+def create_web_pipeline(root: Path, *, run_id: str, run_dir: Path) -> tuple[str, Path]:
+    pipeline_id = "pipeline_web_fixture"
+    pipeline_dir = root / ".runs" / "pipelines" / pipeline_id
+    pipeline_dir.mkdir(parents=True, exist_ok=True)
+    state = PipelineState(
+        pipeline_id=pipeline_id,
+        tasks_file=str((root / "tasks.yaml").resolve()),
+        status="approved",
+        selected_tasks=[PipelineSelectedTask(task_id="web-task", title="Web Task", enabled=True)],
+        tasks=[
+            PipelineTaskResult(
+                task_id="web-task",
+                title="Web Task",
+                status="approved",
+                run_id=run_id,
+                final_report=str((run_dir / "final_report.md").resolve()),
+                review_packet=str((run_dir / "REVIEW_PACKET.md").resolve()),
+                state=str((run_dir / "state.json").resolve()),
+            )
+        ],
+    )
+    state_path = pipeline_dir / "pipeline_state.json"
+    state.save_json(state_path)
+    (pipeline_dir / "PIPELINE_REPORT.md").write_text("# Pipeline Report\n\nSynthetic pipeline preview.\n", encoding="utf-8")
+    return pipeline_id, pipeline_dir
+
+
 class ProjectStatusTests(unittest.TestCase):
     def test_project_status_reports_local_artifact_flags(self) -> None:
         with TemporaryProject() as root:
@@ -225,6 +270,20 @@ class WebAppRouteTests(unittest.TestCase):
 
             self.assertEqual(response.status_code, 200)
             self.assertIn('href="/tasks"', response.text)
+
+    def test_dashboard_links_to_runs_and_pipelines(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            client = TestClient(create_app(root))
+
+            response = client.get("/")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertIn('href="/runs"', response.text)
+            self.assertIn('href="/pipelines"', response.text)
 
     def test_drafts_missing_dir_shows_empty_state(self) -> None:
         from fastapi.testclient import TestClient
@@ -436,6 +495,180 @@ class WebAppRouteTests(unittest.TestCase):
             self.assertEqual(list_response.status_code, 200)
             self.assertEqual(detail_response.status_code, 200)
             self.assertEqual(tasks_file.read_text(encoding="utf-8"), before)
+
+    def test_runs_missing_dir_shows_empty_state(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            client = TestClient(create_app(root))
+
+            response = client.get("/runs")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("No runs found", response.text)
+
+    def test_runs_lists_run_dirs_with_state_json(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, _run_dir = create_web_run(root)
+            client = TestClient(create_app(root))
+
+            response = client.get("/runs")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertIn(run_id, response.text)
+            self.assertIn("validator_status", response.text)
+            self.assertIn("next_action", response.text)
+            self.assertIn("classify_run", response.text)
+
+    def test_run_detail_shows_lifecycle_status_and_artifact_preview(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, _run_dir = create_web_run(root, long_review_packet=True)
+            client = TestClient(create_app(root))
+
+            response = client.get(f"/runs/{run_id}")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertIn(run_id, response.text)
+            self.assertIn("validator_status", response.text)
+            self.assertIn("next_action", response.text)
+            self.assertIn("classify_run", response.text)
+            self.assertIn("REVIEW_PACKET.md", response.text)
+            self.assertIn("Content clipped to the first 4000 characters.", response.text)
+
+    def test_unknown_run_id_returns_not_found(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            client = TestClient(create_app(root))
+
+            response = client.get("/runs/missing-run")
+
+            self.assertEqual(response.status_code, 404)
+
+    def test_path_traversal_run_id_returns_not_found(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            client = TestClient(create_app(root))
+
+            response = client.get("/runs/bad%5Cname")
+
+            self.assertIn(response.status_code, {400, 404})
+
+    def test_pipelines_missing_dir_shows_empty_state(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            client = TestClient(create_app(root))
+
+            response = client.get("/pipelines")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("No pipelines found", response.text)
+
+    def test_pipelines_lists_pipeline_dirs_with_state_json(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            pipeline_id, _pipeline_dir = create_web_pipeline(root, run_id=run_id, run_dir=run_dir)
+            client = TestClient(create_app(root))
+
+            response = client.get("/pipelines")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertIn(pipeline_id, response.text)
+            self.assertIn("tasks_total", response.text)
+            self.assertIn("classify_runs", response.text)
+
+    def test_pipeline_detail_shows_task_run_link(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            pipeline_id, _pipeline_dir = create_web_pipeline(root, run_id=run_id, run_dir=run_dir)
+            client = TestClient(create_app(root))
+
+            response = client.get(f"/pipelines/{pipeline_id}")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertIn(pipeline_id, response.text)
+            self.assertIn("pipeline_status", response.text)
+            self.assertIn("tasks_total", response.text)
+            self.assertIn(f'href="/runs/{run_id}"', response.text)
+            self.assertIn("Pipeline Report", response.text)
+
+    def test_unknown_pipeline_id_returns_not_found(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            client = TestClient(create_app(root))
+
+            response = client.get("/pipelines/missing-pipeline")
+
+            self.assertEqual(response.status_code, 404)
+
+    def test_path_traversal_pipeline_id_returns_not_found(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            client = TestClient(create_app(root))
+
+            response = client.get("/pipelines/bad%5Cname")
+
+            self.assertIn(response.status_code, {400, 404})
+
+    def test_run_and_pipeline_pages_are_read_only_for_state_and_reports(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            pipeline_id, pipeline_dir = create_web_pipeline(root, run_id=run_id, run_dir=run_dir)
+            tracked_paths = [
+                run_dir / "state.json",
+                run_dir / "REVIEW_PACKET.md",
+                pipeline_dir / "pipeline_state.json",
+                pipeline_dir / "PIPELINE_REPORT.md",
+            ]
+            before = {path: path.read_text(encoding="utf-8") for path in tracked_paths}
+            client = TestClient(create_app(root))
+
+            responses = [
+                client.get("/runs"),
+                client.get(f"/runs/{run_id}"),
+                client.get("/pipelines"),
+                client.get(f"/pipelines/{pipeline_id}"),
+            ]
+
+            self.assertTrue(all(response.status_code == 200 for response in responses))
+            after = {path: path.read_text(encoding="utf-8") for path in tracked_paths}
+            self.assertEqual(after, before)
 
 
 if __name__ == "__main__":

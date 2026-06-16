@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="panel">
+  <p><a href="/pipelines">&larr; Back to pipelines</a></p>
+  <div class="panel-heading">
+    <h2>Pipeline Detail</h2>
+    <span class="badge">{{ summary.next_action }}</span>
+  </div>
+  <p class="note">This page is read-only. It does not run pipeline, run Codex, approve, apply, accept, or commit.</p>
+  <dl class="status-grid">
+    <div><dt>pipeline_id</dt><dd><code>{{ summary.pipeline_id }}</code></dd></div>
+    <div><dt>pipeline_status</dt><dd>{{ summary.pipeline_status }}</dd></div>
+    <div><dt>tasks_file</dt><dd>{{ summary.tasks_file }}</dd></div>
+    <div><dt>tasks_total</dt><dd>{{ summary.counts.tasks_total }}</dd></div>
+    <div><dt>tasks_validator_approved</dt><dd>{{ summary.counts.tasks_validator_approved }}</dd></div>
+    <div><dt>tasks_validator_failed</dt><dd>{{ summary.counts.tasks_validator_failed }}</dd></div>
+    <div><dt>tasks_waiting_review</dt><dd>{{ summary.counts.tasks_waiting_review }}</dd></div>
+    <div><dt>tasks_with_findings</dt><dd>{{ summary.counts.tasks_with_findings }}</dd></div>
+    <div><dt>tasks_with_blocking_findings</dt><dd>{{ summary.counts.tasks_with_blocking_findings }}</dd></div>
+    <div><dt>tasks_risk_unclassified</dt><dd>{{ summary.counts.tasks_risk_unclassified }}</dd></div>
+    <div><dt>tasks_waiting_review_checks</dt><dd>{{ summary.counts.tasks_waiting_review_checks }}</dd></div>
+    <div><dt>tasks_waiting_required_review_prompts</dt><dd>{{ summary.counts.tasks_waiting_required_review_prompts }}</dd></div>
+    <div><dt>tasks_waiting_external_review_findings</dt><dd>{{ summary.counts.tasks_waiting_external_review_findings }}</dd></div>
+    <div><dt>tasks_waiting_apply</dt><dd>{{ summary.counts.tasks_waiting_apply }}</dd></div>
+    <div><dt>tasks_waiting_manual_commit</dt><dd>{{ summary.counts.tasks_waiting_manual_commit }}</dd></div>
+    <div><dt>next_action</dt><dd>{{ summary.next_action }}</dd></div>
+    <div><dt>pipeline_state</dt><dd>{{ summary.artifacts.pipeline_state }}</dd></div>
+    <div><dt>pipeline_report</dt><dd>{{ summary.artifacts.pipeline_report }}</dd></div>
+  </dl>
+</section>
+
+<section class="panel artifact-panel">
+  <div class="panel-heading">
+    <h2>Task Runs</h2>
+    <span class="badge">{{ summary.counts.tasks_total }}</span>
+  </div>
+  <div class="table-wrap">
+    <table class="draft-table">
+      <thead>
+        <tr>
+          <th>task_id</th>
+          <th>run_id</th>
+          <th>backend</th>
+          <th>validator_status</th>
+          <th>human_review_decision</th>
+          <th>risk_level</th>
+          <th>blocking_findings</th>
+          <th>arbitration_stale</th>
+          <th>application_status</th>
+          <th>acceptance_status</th>
+          <th>next_action</th>
+          <th>run</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for task in summary.tasks %}
+        <tr>
+          <td><code>{{ task.task_id }}</code></td>
+          <td><code>{{ task.run_id }}</code></td>
+          <td>{{ task.backend or "" }}</td>
+          <td>{{ task.validator_status }}</td>
+          <td>{{ task.human_review_decision or "" }}</td>
+          <td>{{ task.risk_level or "" }}</td>
+          <td>{{ task.blocking_findings }}</td>
+          <td>{{ task.arbitration_stale|string|lower }}</td>
+          <td>{{ task.application_status }}</td>
+          <td>{{ task.acceptance_status }}</td>
+          <td>{{ task.next_action }}</td>
+          <td><a href="/runs/{{ task.run_id }}">Open run</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="panel artifact-panel">
+  <div class="panel-heading">
+    <h2>PIPELINE_REPORT.md</h2>
+    <span class="badge">preview</span>
+  </div>
+  <p class="artifact-path">{{ pipeline_report_preview.path if pipeline_report_preview.exists else "missing" }}</p>
+  {% if pipeline_report_preview.exists %}
+  <pre>{{ pipeline_report_preview.content }}</pre>
+  {% if pipeline_report_preview.clipped %}
+  <p class="note">Content clipped to the first 4000 characters.</p>
+  {% endif %}
+  {% else %}
+  <p class="empty-state">Pipeline report missing.</p>
+  {% endif %}
+</section>
+{% endblock %}
