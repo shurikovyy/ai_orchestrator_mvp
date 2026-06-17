@@ -75,6 +75,12 @@ ALLOWED_ACTIONS: dict[str, AllowedJobAction] = {
         description="Run real-run readiness diagnostics for one task with configured Codex command.",
         show_in_jobs_form=False,
     ),
+    "run_pipeline_real": AllowedJobAction(
+        name="run_pipeline_real",
+        label="Run real pipeline",
+        description="Run the orchestrator pipeline for one task with configured Codex command.",
+        show_in_jobs_form=False,
+    ),
 }
 
 
@@ -190,6 +196,25 @@ def build_action_command(action: str, project_root: Path, params: dict[str, str]
             "real-run",
             "--codex-cmd",
             codex_cmd,
+        ]
+    if action == "run_pipeline_real":
+        task_id = _safe_existing_task_id(project_root, _required_param(values, "task_id"))
+        codex_cmd = _required_param(values, "codex_cmd").strip()
+        if not codex_cmd:
+            raise UnsupportedJobAction("missing required parameter for job action: codex_cmd")
+        return [
+            sys.executable,
+            "-m",
+            "ai_orchestrator.cli",
+            "run-pipeline",
+            "--tasks-file",
+            str((project_root / "tasks.yaml").resolve()),
+            "--only",
+            task_id,
+            "--codex-cmd",
+            codex_cmd,
+            "--verbose",
+            "--stream-codex-output",
         ]
     raise UnsupportedJobAction(f"unsupported job action: {action}")
 

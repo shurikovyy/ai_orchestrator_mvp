@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path, PurePath
 import re
+from urllib.parse import parse_qs
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -161,6 +162,46 @@ def create_tasks_router(*, project_root: Path, templates: Jinja2Templates) -> AP
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return RedirectResponse(url=f"/jobs/{job.job_id}", status_code=303)
 
+    @router.post("/tasks/{task_id}/run-pipeline")
+    async def run_pipeline(task_id: str, request: Request) -> RedirectResponse:
+        safe_task_id = _validate_task_id(task_id)
+        if not tasks_file.exists():
+            raise HTTPException(status_code=404, detail="tasks.yaml not found")
+        try:
+            summary = build_task_inspection_summary(tasks_file=tasks_file, task_id=safe_task_id)
+        except TaskQueueConfigError as exc:
+            message = str(exc)
+            status_code = 404 if "task id not found" in message else 400
+            raise HTTPException(status_code=status_code, detail=message) from exc
+        if not summary.enabled:
+            raise HTTPException(status_code=400, detail="Task is disabled. Enable it before real pipeline execution.")
+        codex_cmd = get_configured_codex_cmd()
+        if codex_cmd is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Set CODEX_CMD or AI_ORCHESTRATOR_CODEX_CMD before starting the web app.",
+            )
+        if await _form_value(request, "confirm_real_pipeline") != "yes":
+            raise HTTPException(status_code=400, detail="Explicit real pipeline confirmation is required.")
+        try:
+            job = start_background_job(
+                project_root=project_root,
+                action="run_pipeline_real",
+                params={"task_id": safe_task_id, "codex_cmd": codex_cmd},
+                result_refs={
+                    "task_id": safe_task_id,
+                    "task_url": f"/tasks/{safe_task_id}",
+                    "tasks_url": "/tasks",
+                    "pipelines_url": "/pipelines",
+                    "runs_url": "/runs",
+                },
+            )
+        except ActiveJobExists as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except UnsupportedJobAction as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return RedirectResponse(url=f"/jobs/{job.job_id}", status_code=303)
+
     @router.post("/tasks/{task_id}/enable")
     def enable_task(task_id: str) -> RedirectResponse:
         safe_task_id = _validate_task_id(task_id)
@@ -208,3 +249,12 @@ def _prompt_preview(prompt: str) -> dict[str, object]:
         "content": prompt[:PROMPT_PREVIEW_LIMIT],
         "clipped": clipped,
     }
+
+
+async def _form_value(request: Request, key: str) -> str:
+    body = (await request.body()).decode("utf-8")
+    values = parse_qs(body)
+    items = values.get(key)
+    if items:
+        return items[0]
+    return ""

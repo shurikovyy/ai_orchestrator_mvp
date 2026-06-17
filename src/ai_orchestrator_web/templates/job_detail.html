@@ -32,6 +32,12 @@
     {% if job.result_refs.tasks_url %}
     <div><dt>open tasks</dt><dd><a href="{{ job.result_refs.tasks_url }}">Tasks</a></dd></div>
     {% endif %}
+    {% if job.result_refs.pipelines_url %}
+    <div><dt>open pipelines</dt><dd><a href="{{ job.result_refs.pipelines_url }}">Pipelines</a></dd></div>
+    {% endif %}
+    {% if job.result_refs.runs_url %}
+    <div><dt>open runs</dt><dd><a href="{{ job.result_refs.runs_url }}">Runs</a></dd></div>
+    {% endif %}
   </dl>
 </section>
 

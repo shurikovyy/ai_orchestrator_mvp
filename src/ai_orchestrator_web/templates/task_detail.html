@@ -7,7 +7,7 @@
     <h2>Task Detail</h2>
     <span class="badge {{ 'badge-clean' if summary.enabled else 'badge-dirty' }}">enabled={{ summary.enabled|string|lower }}</span>
   </div>
-  <p class="note">Viewing this page is read-only. Enable/disable changes only this task's enabled flag; doctor and pipeline dry-run actions write only job metadata/logs and do not run Codex, apply, accept, or commit.</p>
+  <p class="note">Viewing this page is read-only. Enable/disable changes only this task's enabled flag; diagnostic/planning jobs write job metadata/logs, and real pipeline execution creates .runs artifacts without apply, accept, or commit.</p>
   <dl class="status-grid">
     <div>
       <dt>task_id</dt>
@@ -139,6 +139,27 @@
   </form>
   {% else %}
   <p class="note">Codex command: not configured. Set CODEX_CMD or AI_ORCHESTRATOR_CODEX_CMD before starting the web app.</p>
+  {% endif %}
+</section>
+
+<section class="panel artifact-panel">
+  <div class="panel-heading">
+    <h2>Real Execution</h2>
+    <span class="badge badge-dirty">requires confirmation</span>
+  </div>
+  <p>This runs Codex through the orchestrator and creates .runs artifacts. It does not apply changes to the target repo and does not commit.</p>
+  {% if not summary.enabled %}
+  <p class="note">Task is disabled. Enable it before real pipeline execution.</p>
+  {% elif not codex_cmd_configured %}
+  <p class="note">Codex command is not configured. Set CODEX_CMD or AI_ORCHESTRATOR_CODEX_CMD before starting the web app.</p>
+  {% else %}
+  <form class="inline-action-form" method="post" action="/tasks/{{ summary.task_id }}/run-pipeline">
+    <label>
+      <input type="checkbox" name="confirm_real_pipeline" value="yes">
+      I understand this will run Codex in an isolated workspace.
+    </label>
+    <button type="submit">Run real pipeline</button>
+  </form>
   {% endif %}
 </section>
 

@@ -6,7 +6,7 @@
     <h2>Jobs</h2>
     <span class="badge">allowlisted only</span>
   </div>
-  <p class="note">Jobs run local CLI subprocesses with shell=False and strict action names. Only allowlisted jobs are available. No real pipeline execution, Codex execution, apply, accept, or commit actions are available. Pipeline dry-run is planning-only and always uses --dry-run.</p>
+  <p class="note">Jobs run local CLI subprocesses with shell=False and strict action names. This generic form exposes only safe allowlisted actions. Pipeline dry-run is planning-only and always uses --dry-run. Real pipeline execution is available only from task detail, and requires an enabled task, configured CODEX_CMD or AI_ORCHESTRATOR_CODEX_CMD, and explicit confirmation.</p>
   <form class="job-form" method="post" action="/jobs/start">
     <label for="action">Allowed action</label>
     <select id="action" name="action">

@@ -245,6 +245,24 @@ def wait_for_job_status(root: Path, job_id: str, *, timeout_seconds: float = 20.
     return load_job(root, job_id).status
 
 
+def create_job_without_starting_subprocess(
+    *,
+    project_root: Path,
+    action: str,
+    params: dict[str, str] | None = None,
+    result_refs: dict[str, str] | None = None,
+):
+    command = build_action_command(action, project_root.resolve(), params=params)
+    job = create_job_record(
+        action=action,
+        project_root=project_root.resolve(),
+        command=command,
+        result_refs=result_refs,
+    )
+    save_job(project_root.resolve(), job)
+    return job
+
+
 class ProjectStatusTests(unittest.TestCase):
     def test_project_status_reports_local_artifact_flags(self) -> None:
         with TemporaryProject() as root:
@@ -909,6 +927,9 @@ class WebAppRouteTests(unittest.TestCase):
             self.assertIn("codex_cmd=not_configured", response.text)
             self.assertIn("Set CODEX_CMD or AI_ORCHESTRATOR_CODEX_CMD", response.text)
             self.assertNotIn('action="/tasks/web-enabled-task/doctor-real-run"', response.text)
+            self.assertIn("Real Execution", response.text)
+            self.assertIn("Codex command is not configured", response.text)
+            self.assertNotIn('action="/tasks/web-enabled-task/run-pipeline"', response.text)
 
     def test_task_detail_shows_real_run_readiness_button_when_codex_configured(self) -> None:
         from fastapi.testclient import TestClient
@@ -926,6 +947,11 @@ class WebAppRouteTests(unittest.TestCase):
             self.assertIn("codex_cmd=configured", response.text)
             self.assertIn("Doctor real-run", response.text)
             self.assertIn('action="/tasks/web-enabled-task/doctor-real-run"', response.text)
+            self.assertIn("Real Execution", response.text)
+            self.assertIn("confirm_real_pipeline", response.text)
+            self.assertIn("I understand this will run Codex in an isolated workspace.", response.text)
+            self.assertIn("Run real pipeline", response.text)
+            self.assertIn('action="/tasks/web-enabled-task/run-pipeline"', response.text)
 
     def test_disabled_task_is_visibly_marked_disabled(self) -> None:
         from fastapi.testclient import TestClient
@@ -950,6 +976,8 @@ class WebAppRouteTests(unittest.TestCase):
             self.assertIn('action="/tasks/web-disabled-task/enable"', response.text)
             self.assertNotIn('action="/tasks/web-disabled-task/disable"', response.text)
             self.assertIn("Task is disabled. Doctor real-run is expected to report", response.text)
+            self.assertIn("Task is disabled. Enable it before real pipeline execution.", response.text)
+            self.assertNotIn('action="/tasks/web-disabled-task/run-pipeline"', response.text)
 
     def test_enable_task_sets_enabled_true_without_execution_artifacts(self) -> None:
         from fastapi.testclient import TestClient
@@ -1381,6 +1409,183 @@ class WebAppRouteTests(unittest.TestCase):
             self.assertEqual(tasks_file.read_text(encoding="utf-8"), before_tasks)
             self.assertFalse((root / ".runs").exists())
 
+    def test_run_pipeline_missing_codex_env_returns_bad_request_without_job(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root, patch.dict(
+            "os.environ", {"CODEX_CMD": "", "AI_ORCHESTRATOR_CODEX_CMD": ""}
+        ):
+            tasks_file = write_tasks_yaml(root)
+            before_tasks = tasks_file.read_text(encoding="utf-8")
+            client = TestClient(create_app(root))
+
+            response = client.post(
+                "/tasks/web-enabled-task/run-pipeline",
+                data={"confirm_real_pipeline": "yes"},
+            )
+
+            self.assertEqual(response.status_code, 400)
+            self.assertIn("Set CODEX_CMD or AI_ORCHESTRATOR_CODEX_CMD", response.text)
+            self.assertFalse((root / ".web" / "jobs").exists())
+            self.assertFalse((root / ".runs").exists())
+            self.assertEqual(tasks_file.read_text(encoding="utf-8"), before_tasks)
+
+    def test_run_pipeline_missing_confirmation_returns_bad_request_without_job(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root, patch.dict("os.environ", {"CODEX_CMD": sys.executable}):
+            tasks_file = write_tasks_yaml(root)
+            before_tasks = tasks_file.read_text(encoding="utf-8")
+            client = TestClient(create_app(root))
+
+            response = client.post("/tasks/web-enabled-task/run-pipeline")
+
+            self.assertEqual(response.status_code, 400)
+            self.assertIn("Explicit real pipeline confirmation is required", response.text)
+            self.assertFalse((root / ".web" / "jobs").exists())
+            self.assertFalse((root / ".runs").exists())
+            self.assertEqual(tasks_file.read_text(encoding="utf-8"), before_tasks)
+
+    def test_run_pipeline_disabled_task_returns_bad_request_without_job(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root, patch.dict("os.environ", {"CODEX_CMD": sys.executable}):
+            tasks_file = write_tasks_yaml(root)
+            before_tasks = tasks_file.read_text(encoding="utf-8")
+            client = TestClient(create_app(root))
+
+            response = client.post(
+                "/tasks/web-disabled-task/run-pipeline",
+                data={"confirm_real_pipeline": "yes"},
+            )
+
+            self.assertEqual(response.status_code, 400)
+            self.assertIn("Task is disabled", response.text)
+            self.assertFalse((root / ".web" / "jobs").exists())
+            self.assertFalse((root / ".runs").exists())
+            self.assertEqual(tasks_file.read_text(encoding="utf-8"), before_tasks)
+
+    def test_run_pipeline_post_creates_real_pipeline_job_without_starting_pipeline_in_test(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root, patch.dict("os.environ", {"CODEX_CMD": sys.executable}):
+            tasks_file = write_tasks_yaml(root)
+            before_tasks = tasks_file.read_text(encoding="utf-8")
+            client = TestClient(create_app(root))
+
+            with patch(
+                "ai_orchestrator_web.routes.tasks.start_background_job",
+                side_effect=create_job_without_starting_subprocess,
+            ) as start_job:
+                response = client.post(
+                    "/tasks/web-enabled-task/run-pipeline",
+                    data={"confirm_real_pipeline": "yes"},
+                    follow_redirects=False,
+                )
+
+            self.assertEqual(response.status_code, 303)
+            location = response.headers["location"]
+            self.assertTrue(location.startswith("/jobs/job_"))
+            start_job.assert_called_once()
+            job_id = location.rsplit("/", 1)[-1]
+            job = load_job(root, job_id)
+            self.assertEqual(job.action, "run_pipeline_real")
+            self.assertEqual(
+                job.result_refs,
+                {
+                    "task_id": "web-enabled-task",
+                    "task_url": "/tasks/web-enabled-task",
+                    "tasks_url": "/tasks",
+                    "pipelines_url": "/pipelines",
+                    "runs_url": "/runs",
+                },
+            )
+            self.assertIsInstance(job.command, list)
+            self.assertIn("run-pipeline", job.command)
+            self.assertIn("--tasks-file", job.command)
+            self.assertIn(str(tasks_file.resolve()), job.command)
+            self.assertIn("--only", job.command)
+            self.assertIn("web-enabled-task", job.command)
+            self.assertIn("--codex-cmd", job.command)
+            self.assertIn(sys.executable, job.command)
+            self.assertIn("--verbose", job.command)
+            self.assertIn("--stream-codex-output", job.command)
+            self.assertNotIn("--dry-run", job.command)
+            self.assertFalse((root / ".runs").exists())
+            self.assertFalse((root / ".task_drafts").exists())
+            self.assertEqual(tasks_file.read_text(encoding="utf-8"), before_tasks)
+
+            detail = client.get(location)
+
+            self.assertEqual(detail.status_code, 200)
+            self.assertIn('href="/tasks/web-enabled-task"', detail.text)
+            self.assertIn('href="/tasks"', detail.text)
+            self.assertIn('href="/pipelines"', detail.text)
+            self.assertIn('href="/runs"', detail.text)
+
+    def test_run_pipeline_missing_task_returns_not_found(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root, patch.dict("os.environ", {"CODEX_CMD": sys.executable}):
+            write_tasks_yaml(root)
+            client = TestClient(create_app(root))
+
+            response = client.post(
+                "/tasks/missing-task/run-pipeline",
+                data={"confirm_real_pipeline": "yes"},
+            )
+
+            self.assertEqual(response.status_code, 404)
+
+    def test_run_pipeline_path_traversal_task_id_returns_not_found(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root, patch.dict("os.environ", {"CODEX_CMD": sys.executable}):
+            write_tasks_yaml(root)
+            client = TestClient(create_app(root))
+
+            response = client.post(
+                "/tasks/bad%5Cname/run-pipeline",
+                data={"confirm_real_pipeline": "yes"},
+            )
+
+            self.assertIn(response.status_code, {400, 404})
+
+    def test_one_active_job_rule_blocks_run_pipeline_job(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root, patch.dict("os.environ", {"CODEX_CMD": sys.executable}):
+            tasks_file = write_tasks_yaml(root)
+            before_tasks = tasks_file.read_text(encoding="utf-8")
+            command = build_action_command("web_health_cli", root)
+            job = create_job_record(action="web_health_cli", project_root=root, command=command)
+            job.status = "running"
+            save_job(root, job)
+            client = TestClient(create_app(root))
+
+            response = client.post(
+                "/tasks/web-enabled-task/run-pipeline",
+                data={"confirm_real_pipeline": "yes"},
+            )
+
+            self.assertEqual(response.status_code, 409)
+            self.assertEqual(tasks_file.read_text(encoding="utf-8"), before_tasks)
+            self.assertFalse((root / ".runs").exists())
+
     def test_task_prompt_preview_is_clipped_when_long(self) -> None:
         from fastapi.testclient import TestClient
 
@@ -1626,14 +1831,20 @@ class WebAppRouteTests(unittest.TestCase):
             self.assertIn("No jobs found", response.text)
             self.assertIn("web_health_cli", response.text)
             self.assertNotIn("No run-pipeline", response.text)
-            self.assertIn("Only allowlisted jobs are available", response.text)
+            self.assertNotIn("No real pipeline execution", response.text)
+            self.assertNotIn("Codex actions are exposed", response.text)
+            self.assertIn("generic form exposes only safe allowlisted actions", response.text)
             self.assertIn("Pipeline dry-run is planning-only", response.text)
             self.assertIn("--dry-run", response.text)
+            self.assertIn("Real pipeline execution is available only from task detail", response.text)
+            self.assertIn("requires an enabled task", response.text)
+            self.assertIn("explicit confirmation", response.text)
             self.assertNotIn("validate_task_draft", response.text)
             self.assertNotIn("promote_task_draft_disabled", response.text)
             self.assertNotIn("doctor_dry_run", response.text)
             self.assertNotIn("doctor_real_run", response.text)
             self.assertNotIn("pipeline_dry_run", response.text)
+            self.assertNotIn("run_pipeline_real", response.text)
             self.assertNotIn("enable_task", response.text)
             self.assertNotIn("disable_task", response.text)
 
@@ -1986,6 +2197,61 @@ class WebAppRouteTests(unittest.TestCase):
                     "pipeline_dry_run",
                     root,
                     params={"task_id": "..\\bad"},
+                )
+
+    def test_run_pipeline_real_action_builds_safe_argv(self) -> None:
+        with TemporaryProject() as root:
+            tasks_file = write_tasks_yaml(root)
+
+            command = build_action_command(
+                "run_pipeline_real",
+                root,
+                params={"task_id": "web-enabled-task", "codex_cmd": sys.executable},
+            )
+
+            self.assertIsInstance(command, list)
+            self.assertIn("run-pipeline", command)
+            self.assertIn("--tasks-file", command)
+            self.assertIn(str(tasks_file.resolve()), command)
+            self.assertIn("--only", command)
+            self.assertIn("web-enabled-task", command)
+            self.assertIn("--codex-cmd", command)
+            self.assertIn(sys.executable, command)
+            self.assertIn("--verbose", command)
+            self.assertIn("--stream-codex-output", command)
+            self.assertNotIn("--dry-run", command)
+
+    def test_run_pipeline_real_action_rejects_missing_codex_cmd(self) -> None:
+        with TemporaryProject() as root:
+            write_tasks_yaml(root)
+
+            with self.assertRaises(ValueError):
+                build_action_command(
+                    "run_pipeline_real",
+                    root,
+                    params={"task_id": "web-enabled-task"},
+                )
+
+    def test_run_pipeline_real_action_rejects_missing_task(self) -> None:
+        with TemporaryProject() as root:
+            write_tasks_yaml(root)
+
+            with self.assertRaises(ValueError):
+                build_action_command(
+                    "run_pipeline_real",
+                    root,
+                    params={"task_id": "missing-task", "codex_cmd": sys.executable},
+                )
+
+    def test_run_pipeline_real_action_rejects_unsafe_task_id(self) -> None:
+        with TemporaryProject() as root:
+            write_tasks_yaml(root)
+
+            with self.assertRaises(ValueError):
+                build_action_command(
+                    "run_pipeline_real",
+                    root,
+                    params={"task_id": "..\\bad", "codex_cmd": sys.executable},
                 )
 
     def test_job_json_contains_command_as_list(self) -> None:
