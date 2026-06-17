@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from pathlib import Path, PurePath
+import re
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from ai_orchestrator.task_inspection import (
@@ -13,10 +14,13 @@ from ai_orchestrator.task_inspection import (
     build_task_inspection_summary,
     list_task_inspection_summaries,
 )
+from ai_orchestrator_web.jobs.actions import UnsupportedJobAction
+from ai_orchestrator_web.jobs.runner import ActiveJobExists, start_background_job
 from ai_orchestrator.task_queue import TaskQueueConfigError
 
 
 PROMPT_PREVIEW_LIMIT = 4000
+TASK_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
 def create_tasks_router(*, project_root: Path, templates: Jinja2Templates) -> APIRouter:
@@ -64,6 +68,34 @@ def create_tasks_router(*, project_root: Path, templates: Jinja2Templates) -> AP
             },
         )
 
+    @router.post("/tasks/{task_id}/doctor-dry-run")
+    def doctor_dry_run(task_id: str) -> RedirectResponse:
+        safe_task_id = _validate_task_id(task_id)
+        if not tasks_file.exists():
+            raise HTTPException(status_code=404, detail="tasks.yaml not found")
+        try:
+            build_task_inspection_summary(tasks_file=tasks_file, task_id=safe_task_id)
+        except TaskQueueConfigError as exc:
+            message = str(exc)
+            status_code = 404 if "task id not found" in message else 400
+            raise HTTPException(status_code=status_code, detail=message) from exc
+        try:
+            job = start_background_job(
+                project_root=project_root,
+                action="doctor_dry_run",
+                params={"task_id": safe_task_id},
+                result_refs={
+                    "task_id": safe_task_id,
+                    "task_url": f"/tasks/{safe_task_id}",
+                    "tasks_url": "/tasks",
+                },
+            )
+        except ActiveJobExists as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except UnsupportedJobAction as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return RedirectResponse(url=f"/jobs/{job.job_id}", status_code=303)
+
     return router
 
 
@@ -73,6 +105,8 @@ def _validate_task_id(task_id: str) -> str:
     if "/" in task_id or "\\" in task_id:
         raise HTTPException(status_code=404, detail="task not found")
     if Path(task_id).is_absolute() or ".." in PurePath(task_id).parts:
+        raise HTTPException(status_code=404, detail="task not found")
+    if not TASK_ID_PATTERN.fullmatch(task_id):
         raise HTTPException(status_code=404, detail="task not found")
     return task_id
 

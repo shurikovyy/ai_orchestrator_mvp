@@ -7,6 +7,9 @@ from pathlib import Path, PurePath
 import re
 import sys
 
+from ai_orchestrator.task_inspection import build_task_inspection_summary
+from ai_orchestrator.task_queue import TaskQueueConfigError
+
 
 class UnsupportedJobAction(ValueError):
     """Raised when a web request asks for a non-allowlisted action."""
@@ -52,6 +55,12 @@ ALLOWED_ACTIONS: dict[str, AllowedJobAction] = {
         name="promote_task_draft_disabled",
         label="Promote task draft disabled",
         description="Promote one validated task draft into tasks.yaml with enabled=false.",
+        show_in_jobs_form=False,
+    ),
+    "doctor_dry_run": AllowedJobAction(
+        name="doctor_dry_run",
+        label="Doctor dry-run",
+        description="Run read-only doctor diagnostics for one task with dry-run intent.",
         show_in_jobs_form=False,
     ),
 }
@@ -124,6 +133,20 @@ def build_action_command(action: str, project_root: Path, params: dict[str, str]
             "--tasks-file",
             str((project_root / "tasks.yaml").resolve()),
         ]
+    if action == "doctor_dry_run":
+        task_id = _safe_existing_task_id(project_root, _required_param(values, "task_id"))
+        return [
+            sys.executable,
+            "-m",
+            "ai_orchestrator.cli",
+            "doctor",
+            "--tasks-file",
+            str((project_root / "tasks.yaml").resolve()),
+            "--task-id",
+            task_id,
+            "--intent",
+            "dry-run",
+        ]
     raise UnsupportedJobAction(f"unsupported job action: {action}")
 
 
@@ -165,6 +188,22 @@ def _safe_existing_draft_id(project_root: Path, value: str) -> str:
     if not draft_dir.is_dir():
         raise UnsupportedJobAction(f"task draft not found: {draft_id}")
     return draft_id
+
+
+def _safe_existing_task_id(project_root: Path, value: str) -> str:
+    task_id = value.strip()
+    if value != task_id:
+        raise UnsupportedJobAction("task id must not contain leading or trailing whitespace")
+    if not _is_safe_identifier(task_id):
+        raise UnsupportedJobAction("task id is not safe")
+    tasks_file = (project_root / "tasks.yaml").resolve()
+    if not tasks_file.is_file():
+        raise UnsupportedJobAction("tasks.yaml not found")
+    try:
+        build_task_inspection_summary(tasks_file=tasks_file, task_id=task_id)
+    except (FileNotFoundError, TaskQueueConfigError) as exc:
+        raise UnsupportedJobAction(str(exc)) from exc
+    return task_id
 
 
 def _is_safe_identifier(value: str) -> bool:

@@ -7,7 +7,7 @@
     <h2>Task Detail</h2>
     <span class="badge {{ 'badge-clean' if summary.enabled else 'badge-dirty' }}">enabled={{ summary.enabled|string|lower }}</span>
   </div>
-  <p class="note">This page is read-only. It does not run doctor, run pipeline, run Codex, apply, accept, or commit.</p>
+  <p class="note">Viewing this page is read-only. Doctor dry-run writes only job metadata/logs and does not run pipeline, run Codex, apply, accept, or commit.</p>
   <dl class="status-grid">
     <div>
       <dt>task_id</dt>
@@ -74,6 +74,20 @@
       <dd>{{ summary.commit_message or "" }}</dd>
     </div>
   </dl>
+</section>
+
+<section class="panel artifact-panel">
+  <div class="panel-heading">
+    <h2>Diagnostic Action</h2>
+    <span class="badge">Doctor dry-run</span>
+  </div>
+  <p>This checks dry-run readiness only. It does not run Codex, run pipeline, apply, accept, or commit.</p>
+  {% if not summary.enabled %}
+  <p class="note">Task is disabled. Doctor dry-run is expected to report that it is not ready to run until explicitly enabled.</p>
+  {% endif %}
+  <form class="inline-action-form" method="post" action="/tasks/{{ summary.task_id }}/doctor-dry-run">
+    <button type="submit">Doctor dry-run</button>
+  </form>
 </section>
 
 <section class="panel artifact-panel">

@@ -54,6 +54,7 @@ Jobs use allowlisted CLI actions only, never arbitrary shell commands. Job metad
 New Task Request at `/drafts/new` is a write-capable but safe scaffold flow: it creates a local raw request and task draft scaffold only. It does not run Codex, run pipeline, validate, promote, apply, accept, or commit.
 Validate draft is available from `/drafts/<draft_id>` when the deterministic next action is `validate_task_draft`. It writes only draft-local validator reports and manifest validation metadata; it does not run Codex, run pipeline, promote, apply, accept, or commit.
 Promote disabled is available from `/drafts/<draft_id>` when the deterministic next action is `promote_task_draft`. It writes to `tasks.yaml` with `enabled=false`; it does not enable the task, run doctor, run pipeline, run Codex, apply, accept, or commit.
+Doctor dry-run is available from `/tasks/<task_id>`. It checks readiness for `run-pipeline --dry-run`; it does not run Codex, run pipeline, apply, accept, or commit.
 Main web pages include Home navigation plus Drafts, Tasks, Runs, Pipelines, and Jobs links.
 
 ## Current capabilities

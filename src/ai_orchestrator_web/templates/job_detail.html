@@ -26,6 +26,9 @@
     {% if job.result_refs.draft_id %}
     <div><dt>open draft</dt><dd><a href="/drafts/{{ job.result_refs.draft_id }}">{{ job.result_refs.draft_id }}</a></dd></div>
     {% endif %}
+    {% if job.result_refs.task_url %}
+    <div><dt>open task</dt><dd><a href="{{ job.result_refs.task_url }}">{{ job.result_refs.task_id or "Task" }}</a></dd></div>
+    {% endif %}
     {% if job.result_refs.tasks_url %}
     <div><dt>open tasks</dt><dd><a href="{{ job.result_refs.tasks_url }}">Tasks</a></dd></div>
     {% endif %}
