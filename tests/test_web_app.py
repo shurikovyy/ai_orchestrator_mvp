@@ -13,6 +13,7 @@ import time
 import unittest
 from unittest.mock import Mock, patch
 from uuid import uuid4
+import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -28,7 +29,7 @@ from ai_orchestrator_web.project_status import (
     get_current_project_status,
     get_git_status_summary,
 )
-from ai_orchestrator.cli import draft_task_scaffold_main
+from ai_orchestrator.cli import draft_task_scaffold_main, revise_task_draft_main, validate_task_draft_main
 
 
 WEB_DEPS_AVAILABLE = all(
@@ -94,6 +95,34 @@ def scaffold_web_draft(root: Path, *, task_id: str = "web-draft-task") -> tuple[
     if exit_code != 0:
         raise AssertionError(output)
     return output_value(output, "draft_id"), Path(output_value(output, "draft_dir"))
+
+
+def revise_web_draft_to_valid(root: Path, draft_id: str) -> None:
+    stdout = StringIO()
+    with redirect_stdout(stdout):
+        exit_code = revise_task_draft_main(
+            [
+                draft_id,
+                "--drafts-dir",
+                str(root / ".task_drafts"),
+                "--risk-level",
+                "low",
+                "--clear-files-allowed",
+                "--allow-file",
+                "docs/web_promote_draft.md",
+                "--clear-open-questions",
+            ]
+        )
+    if exit_code != 0:
+        raise AssertionError(stdout.getvalue())
+
+
+def validate_web_draft(root: Path, draft_id: str, *extra_args: str) -> None:
+    stdout = StringIO()
+    with redirect_stdout(stdout):
+        exit_code = validate_task_draft_main([draft_id, "--drafts-dir", str(root / ".task_drafts"), *extra_args])
+    if exit_code != 0:
+        raise AssertionError(stdout.getvalue())
 
 
 def write_tasks_yaml(root: Path, *, long_prompt: bool = False) -> Path:
@@ -626,6 +655,132 @@ class WebAppRouteTests(unittest.TestCase):
 
             self.assertEqual(response.status_code, 409)
 
+    def test_draft_detail_shows_promote_disabled_button_for_promotable_draft(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            draft_id, _draft_dir = scaffold_web_draft(root, task_id="web-promotable-draft")
+            revise_web_draft_to_valid(root, draft_id)
+            validate_web_draft(root, draft_id)
+            client = TestClient(create_app(root))
+
+            response = client.get(f"/drafts/{draft_id}")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("promote_task_draft", response.text)
+            self.assertIn("Promote disabled", response.text)
+            self.assertIn(f'action="/drafts/{draft_id}/promote"', response.text)
+            self.assertIn("enabled=false", response.text)
+
+    def test_promote_draft_post_creates_disabled_promotion_job(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            draft_id, _draft_dir = scaffold_web_draft(root, task_id="web-promoted-disabled-task")
+            revise_web_draft_to_valid(root, draft_id)
+            validate_web_draft(root, draft_id)
+            client = TestClient(create_app(root))
+
+            response = client.post(f"/drafts/{draft_id}/promote", follow_redirects=False)
+
+            self.assertEqual(response.status_code, 303)
+            location = response.headers["location"]
+            self.assertTrue(location.startswith("/jobs/job_"))
+            job_id = location.rsplit("/", 1)[-1]
+            job = load_job(root, job_id)
+            self.assertEqual(job.action, "promote_task_draft_disabled")
+            self.assertEqual(job.result_refs, {"draft_id": draft_id, "tasks_url": "/tasks"})
+            self.assertIsInstance(job.command, list)
+            self.assertIn("promote-task-draft", job.command)
+            self.assertIn(draft_id, job.command)
+            self.assertIn("--drafts-dir", job.command)
+            self.assertIn("--tasks-file", job.command)
+            self.assertNotIn("--enable", job.command)
+            self.assertNotIn("--replace", job.command)
+
+            self.assertEqual(wait_for_job_status(root, job_id), "succeeded")
+            finished = load_job(root, job_id)
+            self.assertEqual(finished.exit_code, 0)
+            self.assertFalse((root / ".runs").exists())
+            tasks_file = root / "tasks.yaml"
+            self.assertTrue(tasks_file.exists())
+            payload = yaml.safe_load(tasks_file.read_text(encoding="utf-8"))
+            promoted_task = next(task for task in payload["tasks"] if task["id"] == "web-promoted-disabled-task")
+            self.assertIs(promoted_task["enabled"], False)
+
+            tasks_response = client.get("/tasks")
+            job_response = client.get(location)
+
+            self.assertEqual(tasks_response.status_code, 200)
+            self.assertIn("web-promoted-disabled-task", tasks_response.text)
+            self.assertIn("false", tasks_response.text)
+            self.assertEqual(job_response.status_code, 200)
+            self.assertIn(f'href="/drafts/{draft_id}"', job_response.text)
+            self.assertIn('href="/tasks"', job_response.text)
+
+    def test_promote_missing_draft_returns_not_found(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            client = TestClient(create_app(root))
+
+            response = client.post("/drafts/missing-draft/promote")
+
+            self.assertEqual(response.status_code, 404)
+
+    def test_promote_path_traversal_draft_id_returns_not_found(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            client = TestClient(create_app(root))
+
+            response = client.post("/drafts/bad%5Cname/promote")
+
+            self.assertIn(response.status_code, {400, 404})
+
+    def test_promote_not_ready_draft_returns_bad_request_without_job(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            draft_id, _draft_dir = scaffold_web_draft(root, task_id="web-not-ready-promote")
+            client = TestClient(create_app(root))
+
+            response = client.post(f"/drafts/{draft_id}/promote")
+
+            self.assertEqual(response.status_code, 400)
+            self.assertFalse((root / ".web" / "jobs").exists())
+            self.assertFalse((root / "tasks.yaml").exists())
+
+    def test_one_active_job_rule_blocks_promote_job(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            draft_id, _draft_dir = scaffold_web_draft(root, task_id="web-active-promote-draft")
+            revise_web_draft_to_valid(root, draft_id)
+            validate_web_draft(root, draft_id)
+            command = build_action_command("web_health_cli", root)
+            job = create_job_record(action="web_health_cli", project_root=root, command=command)
+            job.status = "running"
+            save_job(root, job)
+            client = TestClient(create_app(root))
+
+            response = client.post(f"/drafts/{draft_id}/promote")
+
+            self.assertEqual(response.status_code, 409)
+            self.assertFalse((root / "tasks.yaml").exists())
+
     def test_invalid_draft_id_returns_not_found(self) -> None:
         from fastapi.testclient import TestClient
 
@@ -974,6 +1129,7 @@ class WebAppRouteTests(unittest.TestCase):
             self.assertIn("No jobs found", response.text)
             self.assertIn("web_health_cli", response.text)
             self.assertNotIn("validate_task_draft", response.text)
+            self.assertNotIn("promote_task_draft_disabled", response.text)
 
     def test_start_allowed_job_creates_metadata_and_logs(self) -> None:
         from fastapi.testclient import TestClient
@@ -1125,6 +1281,45 @@ class WebAppRouteTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 build_action_command(
                     "validate_task_draft",
+                    root,
+                    params={"draft_id": "..\\bad"},
+                )
+
+    def test_promote_task_draft_disabled_action_builds_safe_argv(self) -> None:
+        with TemporaryProject() as root:
+            draft_dir = root / ".task_drafts" / "safe-draft"
+            draft_dir.mkdir(parents=True)
+
+            command = build_action_command(
+                "promote_task_draft_disabled",
+                root,
+                params={"draft_id": "safe-draft"},
+            )
+
+            self.assertIsInstance(command, list)
+            self.assertIn("promote-task-draft", command)
+            self.assertIn("safe-draft", command)
+            self.assertIn("--drafts-dir", command)
+            self.assertIn(str((root / ".task_drafts").resolve()), command)
+            self.assertIn("--tasks-file", command)
+            self.assertIn(str((root / "tasks.yaml").resolve()), command)
+            self.assertNotIn("--enable", command)
+            self.assertNotIn("--replace", command)
+
+    def test_promote_task_draft_disabled_action_rejects_missing_draft(self) -> None:
+        with TemporaryProject() as root:
+            with self.assertRaises(ValueError):
+                build_action_command(
+                    "promote_task_draft_disabled",
+                    root,
+                    params={"draft_id": "missing-draft"},
+                )
+
+    def test_promote_task_draft_disabled_action_rejects_unsafe_draft_id(self) -> None:
+        with TemporaryProject() as root:
+            with self.assertRaises(ValueError):
+                build_action_command(
+                    "promote_task_draft_disabled",
                     root,
                     params={"draft_id": "..\\bad"},
                 )

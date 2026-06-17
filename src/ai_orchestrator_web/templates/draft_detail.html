@@ -74,6 +74,11 @@
   <form class="inline-action-form" method="post" action="/drafts/{{ summary.draft_id }}/validate">
     <button type="submit">Validate draft</button>
   </form>
+  {% elif summary.next_action == "promote_task_draft" %}
+  <p class="note">This adds the task to tasks.yaml with enabled=false. It does not run or enable the task.</p>
+  <form class="inline-action-form" method="post" action="/drafts/{{ summary.draft_id }}/promote">
+    <button type="submit">Promote disabled</button>
+  </form>
   {% else %}
   <p class="empty-state">This action is not available in the web UI yet.</p>
   {% endif %}

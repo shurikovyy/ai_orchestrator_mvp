@@ -109,6 +109,36 @@ def create_drafts_router(*, project_root: Path, templates: Jinja2Templates) -> A
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return RedirectResponse(url=f"/jobs/{job.job_id}", status_code=303)
 
+    @router.post("/drafts/{draft_id}/promote")
+    def promote_draft_disabled(draft_id: str) -> RedirectResponse:
+        safe_draft_id = _validate_draft_id(draft_id)
+        draft_dir = drafts_dir / safe_draft_id
+        if not draft_dir.is_dir():
+            raise HTTPException(status_code=404, detail=f"task draft not found: {safe_draft_id}")
+        try:
+            summary = build_task_draft_inspection_summary(
+                draft_id=safe_draft_id,
+                drafts_dir=drafts_dir,
+            )
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if summary.next_action != "promote_task_draft":
+            raise HTTPException(status_code=400, detail="task draft is not ready for promotion")
+        try:
+            job = start_background_job(
+                project_root=project_root,
+                action="promote_task_draft_disabled",
+                params={"draft_id": safe_draft_id},
+                result_refs={"draft_id": safe_draft_id, "tasks_url": "/tasks"},
+            )
+        except ActiveJobExists as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except UnsupportedJobAction as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return RedirectResponse(url=f"/jobs/{job.job_id}", status_code=303)
+
     @router.get("/drafts/{draft_id}", response_class=HTMLResponse)
     def draft_detail(request: Request, draft_id: str) -> HTMLResponse:
         safe_draft_id = _validate_draft_id(draft_id)

@@ -48,6 +48,12 @@ ALLOWED_ACTIONS: dict[str, AllowedJobAction] = {
         description="Run deterministic validation for one existing local task draft.",
         show_in_jobs_form=False,
     ),
+    "promote_task_draft_disabled": AllowedJobAction(
+        name="promote_task_draft_disabled",
+        label="Promote task draft disabled",
+        description="Promote one validated task draft into tasks.yaml with enabled=false.",
+        show_in_jobs_form=False,
+    ),
 }
 
 
@@ -104,6 +110,19 @@ def build_action_command(action: str, project_root: Path, params: dict[str, str]
             "--drafts-dir",
             str((project_root / ".task_drafts").resolve()),
             "--force",
+        ]
+    if action == "promote_task_draft_disabled":
+        draft_id = _safe_existing_draft_id(project_root, _required_param(values, "draft_id"))
+        return [
+            sys.executable,
+            "-m",
+            "ai_orchestrator.cli",
+            "promote-task-draft",
+            draft_id,
+            "--drafts-dir",
+            str((project_root / ".task_drafts").resolve()),
+            "--tasks-file",
+            str((project_root / "tasks.yaml").resolve()),
         ]
     raise UnsupportedJobAction(f"unsupported job action: {action}")
 
