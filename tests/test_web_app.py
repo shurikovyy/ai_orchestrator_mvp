@@ -314,6 +314,19 @@ class WebAppRouteTests(unittest.TestCase):
             self.assertEqual(response.status_code, 200)
             self.assertIn('href="/jobs"', response.text)
 
+    def test_dashboard_links_to_new_task_request(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            client = TestClient(create_app(root))
+
+            response = client.get("/")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertIn('href="/drafts/new"', response.text)
+
     def test_drafts_missing_dir_shows_empty_state(self) -> None:
         from fastapi.testclient import TestClient
 
@@ -326,6 +339,142 @@ class WebAppRouteTests(unittest.TestCase):
 
             self.assertEqual(response.status_code, 200)
             self.assertIn("No task drafts found", response.text)
+
+    def test_drafts_page_links_to_new_task_request(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            client = TestClient(create_app(root))
+
+            response = client.get("/drafts")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertIn('href="/drafts/new"', response.text)
+
+    def test_new_draft_form_returns_200(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            client = TestClient(create_app(root))
+
+            response = client.get("/drafts/new")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("New Task Request", response.text)
+            self.assertIn('name="title"', response.text)
+            self.assertIn('name="task_id"', response.text)
+            self.assertIn('name="risk_level"', response.text)
+            self.assertIn('name="prompt_language"', response.text)
+            self.assertIn('name="raw_request"', response.text)
+            self.assertIn("does not run Codex", response.text)
+
+    def test_create_draft_empty_raw_request_returns_validation_error(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            client = TestClient(create_app(root))
+
+            response = client.post("/drafts/create", data={"raw_request": "   "})
+
+            self.assertEqual(response.status_code, 400)
+            self.assertIn("Raw request is required", response.text)
+            self.assertFalse((root / ".task_drafts").exists())
+
+    def test_create_draft_rejects_task_id_path_traversal(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            client = TestClient(create_app(root))
+
+            response = client.post(
+                "/drafts/create",
+                data={
+                    "raw_request": "Create a safe docs-only draft.",
+                    "task_id": "..\\bad",
+                },
+            )
+
+            self.assertEqual(response.status_code, 400)
+            self.assertIn("Task ID may contain only", response.text)
+            self.assertFalse((root / ".task_drafts").exists())
+
+    def test_create_draft_title_length_validation(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            client = TestClient(create_app(root))
+
+            response = client.post(
+                "/drafts/create",
+                data={
+                    "raw_request": "Create a safe docs-only draft.",
+                    "title": "T" * 201,
+                },
+            )
+
+            self.assertEqual(response.status_code, 400)
+            self.assertIn("Title must be", response.text)
+            self.assertFalse((root / ".task_drafts").exists())
+
+    def test_create_draft_valid_request_creates_scaffold_job(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            client = TestClient(create_app(root))
+
+            response = client.post(
+                "/drafts/create",
+                data={
+                    "raw_request": "Create a short docs-only task draft from the web form.",
+                    "title": "Web Form Draft",
+                    "task_id": "0.1.51-web-form-draft",
+                    "risk_level": "low",
+                    "prompt_language": "ru",
+                },
+                follow_redirects=False,
+            )
+
+            self.assertEqual(response.status_code, 303)
+            location = response.headers["location"]
+            self.assertTrue(location.startswith("/jobs/job_"))
+            job_id = location.rsplit("/", 1)[-1]
+            job = load_job(root, job_id)
+            self.assertEqual(job.action, "draft_task_scaffold")
+            self.assertIsInstance(job.command, list)
+            self.assertIn("draft-task-scaffold", job.command)
+            self.assertIn("--request", job.command)
+            request_path = Path(job.command[job.command.index("--request") + 1])
+            self.assertEqual(request_path.parent, (root / ".task_drafts" / "raw_requests").resolve())
+            self.assertTrue(request_path.name.startswith("web_request_"))
+            self.assertTrue(request_path.name.endswith(".md"))
+            self.assertNotIn("0.1.51-web-form-draft", request_path.name)
+            self.assertEqual(request_path.read_text(encoding="utf-8"), "Create a short docs-only task draft from the web form.")
+
+            self.assertEqual(wait_for_job_status(root, job_id), "succeeded")
+            finished = load_job(root, job_id)
+            self.assertEqual(finished.exit_code, 0)
+            self.assertFalse((root / "tasks.yaml").exists())
+            self.assertFalse((root / ".runs").exists())
+
+            drafts_response = client.get("/drafts")
+            detail_response = client.get(location)
+
+            self.assertEqual(drafts_response.status_code, 200)
+            self.assertIn("0.1.51-web-form-draft", drafts_response.text)
+            self.assertEqual(detail_response.status_code, 200)
+            self.assertIn("draft_task_scaffold", detail_response.text)
 
     def test_drafts_lists_scaffolded_draft(self) -> None:
         from fastapi.testclient import TestClient
@@ -794,6 +943,42 @@ class WebAppRouteTests(unittest.TestCase):
             self.assertEqual(args[0], command)
             self.assertIs(kwargs["shell"], False)
             self.assertEqual(finished.status, "succeeded")
+
+    def test_draft_scaffold_action_builds_safe_argv(self) -> None:
+        with TemporaryProject() as root:
+            request_path = root / ".task_drafts" / "raw_requests" / "web_request_fixture.md"
+            write_text(request_path, "Create a safe draft.")
+
+            command = build_action_command(
+                "draft_task_scaffold",
+                root,
+                params={
+                    "request_path": str(request_path),
+                    "title": "Safe Draft",
+                    "task_id": "safe-draft",
+                    "risk_level": "unknown",
+                    "prompt_language": "ru",
+                },
+            )
+
+            self.assertIsInstance(command, list)
+            self.assertIn("draft-task-scaffold", command)
+            self.assertIn("--request", command)
+            self.assertIn(str(request_path.resolve()), command)
+            self.assertIn("--task-id", command)
+            self.assertIn("safe-draft", command)
+
+    def test_draft_scaffold_action_rejects_request_path_outside_raw_requests(self) -> None:
+        with TemporaryProject() as root:
+            request_path = root / "unsafe_request.md"
+            write_text(request_path, "Create a safe draft.")
+
+            with self.assertRaises(ValueError):
+                build_action_command(
+                    "draft_task_scaffold",
+                    root,
+                    params={"request_path": str(request_path)},
+                )
 
     def test_job_json_contains_command_as_list(self) -> None:
         from fastapi.testclient import TestClient

@@ -15,11 +15,11 @@ class ActiveJobExists(RuntimeError):
     """Raised when the project already has a queued/running job."""
 
 
-def start_background_job(*, project_root: Path, action: str) -> JobRecord:
+def start_background_job(*, project_root: Path, action: str, params: dict[str, str] | None = None) -> JobRecord:
     root = project_root.resolve()
     if has_active_job(root):
         raise ActiveJobExists("another job is already queued or running")
-    command = build_action_command(action, root)
+    command = build_action_command(action, root, params=params)
     job = create_job_record(action=action, project_root=root, command=command)
     save_job(root, job)
     thread = threading.Thread(target=run_job_sync, args=(job, root), daemon=True)

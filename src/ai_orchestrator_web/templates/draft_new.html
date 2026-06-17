@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="panel">
+  <p><a href="/drafts">&larr; Back to drafts</a></p>
+  <div class="panel-heading">
+    <h2>New Task Request</h2>
+    <span class="badge">safe scaffold</span>
+  </div>
+  <p class="note">This creates a local task draft scaffold only. It does not run Codex, run pipeline, validate, promote, apply, accept, or commit.</p>
+  {% if error %}
+  <p class="form-error">{{ error }}</p>
+  {% endif %}
+  <form class="draft-request-form" method="post" action="/drafts/create">
+    <label for="title">Title</label>
+    <input id="title" name="title" maxlength="{{ max_title_chars }}" value="{{ values.title }}" placeholder="Optional human-readable title">
+
+    <label for="task_id">Task ID</label>
+    <input id="task_id" name="task_id" value="{{ values.task_id }}" placeholder="Optional-safe-id">
+
+    <label for="risk_level">Risk level</label>
+    <select id="risk_level" name="risk_level">
+      {% for risk_level in risk_levels %}
+      <option value="{{ risk_level }}" {% if values.risk_level == risk_level %}selected{% endif %}>{{ risk_level }}</option>
+      {% endfor %}
+    </select>
+
+    <label for="prompt_language">Prompt language</label>
+    <select id="prompt_language" name="prompt_language">
+      {% for prompt_language in prompt_languages %}
+      <option value="{{ prompt_language }}" {% if values.prompt_language == prompt_language %}selected{% endif %}>{{ prompt_language }}</option>
+      {% endfor %}
+    </select>
+
+    <label for="raw_request">Raw request</label>
+    <textarea id="raw_request" name="raw_request" rows="14" maxlength="{{ max_raw_request_chars }}" required>{{ values.raw_request }}</textarea>
+
+    <button type="submit">Create draft scaffold</button>
+  </form>
+</section>
+{% endblock %}

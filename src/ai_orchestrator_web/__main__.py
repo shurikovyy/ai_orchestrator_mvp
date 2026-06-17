@@ -1,4 +1,4 @@
-"""Launch the local read-only web dashboard."""
+"""Launch the local AI Orchestrator web dashboard."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from .config import WebConfig
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m ai_orchestrator_web",
-        description="Run the local read-only AI Orchestrator web dashboard.",
+        description="Run the local AI Orchestrator web dashboard.",
     )
     parser.add_argument("--host", default="127.0.0.1", help="Host to bind.")
     parser.add_argument("--port", type=int, default=8765, help="Port to bind.")

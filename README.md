@@ -42,6 +42,7 @@ Current scope:
 - read-only pipelines list at `/pipelines`;
 - read-only pipeline detail at `/pipelines/<pipeline_id>`;
 - local allowlisted jobs at `/jobs`;
+- safe task request form at `/drafts/new`;
 - no pipeline execution;
 - no Codex execution;
 - no apply/accept/commit.
@@ -50,6 +51,7 @@ Draft pages do not validate, revise, promote, run Codex, run pipeline, apply, or
 Task pages do not enable/disable tasks, run doctor, run pipeline, run Codex, apply, accept, or commit.
 Run and pipeline pages do not classify, run review checks, prepare review, record findings, approve/reject, apply, accept, commit, run Codex, or run pipeline.
 Jobs use allowlisted CLI actions only, never arbitrary shell commands. Job metadata and logs are stored under `.web/jobs/`; no run-pipeline, apply, accept, or Codex actions are exposed yet.
+New Task Request at `/drafts/new` is a write-capable but safe scaffold flow: it creates a local raw request and task draft scaffold only. It does not run Codex, run pipeline, validate, promote, apply, accept, or commit.
 
 ## Current capabilities
 

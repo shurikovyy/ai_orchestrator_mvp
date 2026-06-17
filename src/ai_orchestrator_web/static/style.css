@@ -211,6 +211,64 @@ dd {
   font-weight: 800;
 }
 
+.draft-request-form {
+  display: grid;
+  gap: 12px;
+  margin-top: 24px;
+}
+
+.draft-request-form label {
+  color: var(--muted);
+  font-size: 0.77rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.draft-request-form input,
+.draft-request-form select,
+.draft-request-form textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--panel);
+  color: var(--ink);
+  font: inherit;
+}
+
+.draft-request-form input,
+.draft-request-form select {
+  min-height: 44px;
+  padding: 0 14px;
+}
+
+.draft-request-form textarea {
+  min-height: 260px;
+  padding: 14px;
+  resize: vertical;
+}
+
+.draft-request-form button {
+  justify-self: start;
+  min-height: 44px;
+  border: 0;
+  border-radius: 999px;
+  padding: 0 18px;
+  background: var(--accent);
+  color: white;
+  font: inherit;
+  font-weight: 800;
+}
+
+.form-error {
+  padding: 14px 16px;
+  border: 1px solid #e4b086;
+  border-radius: 16px;
+  background: #f7dfc7;
+  color: var(--warn);
+  font-weight: 800;
+}
+
 .table-wrap {
   overflow-x: auto;
 }
