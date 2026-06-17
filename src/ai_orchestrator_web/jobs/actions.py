@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePath
+import re
 import sys
 
 
@@ -41,7 +42,16 @@ ALLOWED_ACTIONS: dict[str, AllowedJobAction] = {
         description="Create a deterministic local task draft scaffold from a backend-generated raw request file.",
         show_in_jobs_form=False,
     ),
+    "validate_task_draft": AllowedJobAction(
+        name="validate_task_draft",
+        label="Validate task draft",
+        description="Run deterministic validation for one existing local task draft.",
+        show_in_jobs_form=False,
+    ),
 }
+
+
+SAFE_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
 def list_allowed_actions(*, include_parameterized: bool = False) -> list[AllowedJobAction]:
@@ -83,6 +93,18 @@ def build_action_command(action: str, project_root: Path, params: dict[str, str]
         _append_optional(command, "--risk-level", values.get("risk_level"))
         _append_optional(command, "--prompt-language", values.get("prompt_language"))
         return command
+    if action == "validate_task_draft":
+        draft_id = _safe_existing_draft_id(project_root, _required_param(values, "draft_id"))
+        return [
+            sys.executable,
+            "-m",
+            "ai_orchestrator.cli",
+            "validate-task-draft",
+            draft_id,
+            "--drafts-dir",
+            str((project_root / ".task_drafts").resolve()),
+            "--force",
+        ]
     raise UnsupportedJobAction(f"unsupported job action: {action}")
 
 
@@ -107,3 +129,30 @@ def _safe_raw_request_path(project_root: Path, value: str) -> Path:
     except ValueError as exc:
         raise UnsupportedJobAction("raw request path must be under .task_drafts/raw_requests") from exc
     return request_path
+
+
+def _safe_existing_draft_id(project_root: Path, value: str) -> str:
+    draft_id = value.strip()
+    if value != draft_id:
+        raise UnsupportedJobAction("draft id must not contain leading or trailing whitespace")
+    if not _is_safe_identifier(draft_id):
+        raise UnsupportedJobAction("draft id is not safe")
+    draft_dir = (project_root / ".task_drafts" / draft_id).resolve()
+    drafts_dir = (project_root / ".task_drafts").resolve()
+    try:
+        draft_dir.relative_to(drafts_dir)
+    except ValueError as exc:
+        raise UnsupportedJobAction("draft id must resolve under .task_drafts") from exc
+    if not draft_dir.is_dir():
+        raise UnsupportedJobAction(f"task draft not found: {draft_id}")
+    return draft_id
+
+
+def _is_safe_identifier(value: str) -> bool:
+    if not value or value in {".", ".."}:
+        return False
+    if "/" in value or "\\" in value:
+        return False
+    if Path(value).is_absolute() or ".." in PurePath(value).parts:
+        return False
+    return bool(SAFE_ID_PATTERN.fullmatch(value))

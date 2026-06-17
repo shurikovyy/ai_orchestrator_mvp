@@ -18,6 +18,7 @@ from ai_orchestrator.task_draft_inspection import (
     list_task_draft_summaries,
 )
 from ai_orchestrator_web.jobs.runner import ActiveJobExists, start_background_job
+from ai_orchestrator_web.jobs.actions import UnsupportedJobAction
 from ai_orchestrator_web.jobs.store import has_active_job
 
 
@@ -87,6 +88,25 @@ def create_drafts_router(*, project_root: Path, templates: Jinja2Templates) -> A
             )
         except ActiveJobExists as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return RedirectResponse(url=f"/jobs/{job.job_id}", status_code=303)
+
+    @router.post("/drafts/{draft_id}/validate")
+    def validate_draft(draft_id: str) -> RedirectResponse:
+        safe_draft_id = _validate_draft_id(draft_id)
+        draft_dir = drafts_dir / safe_draft_id
+        if not draft_dir.is_dir():
+            raise HTTPException(status_code=404, detail=f"task draft not found: {safe_draft_id}")
+        try:
+            job = start_background_job(
+                project_root=project_root,
+                action="validate_task_draft",
+                params={"draft_id": safe_draft_id},
+                result_refs={"draft_id": safe_draft_id},
+            )
+        except ActiveJobExists as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except UnsupportedJobAction as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         return RedirectResponse(url=f"/jobs/{job.job_id}", status_code=303)
 
     @router.get("/drafts/{draft_id}", response_class=HTMLResponse)
@@ -212,6 +232,8 @@ def _validate_draft_id(draft_id: str) -> str:
     if "/" in draft_id or "\\" in draft_id:
         raise HTTPException(status_code=404, detail="task draft not found")
     if Path(draft_id).is_absolute() or ".." in PurePath(draft_id).parts:
+        raise HTTPException(status_code=404, detail="task draft not found")
+    if not TASK_ID_PATTERN.fullmatch(draft_id):
         raise HTTPException(status_code=404, detail="task draft not found")
     return draft_id
 

@@ -67,6 +67,26 @@ h1 {
   font-size: 1.08rem;
 }
 
+.top-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 24px;
+}
+
+.top-nav a {
+  display: inline-flex;
+  min-height: 38px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0 14px;
+  background: rgba(255, 250, 241, 0.72);
+  color: var(--accent);
+  font-weight: 800;
+  text-decoration: none;
+}
+
 .panel,
 .card {
   border: 1px solid var(--line);
@@ -250,6 +270,21 @@ dd {
 
 .draft-request-form button {
   justify-self: start;
+  min-height: 44px;
+  border: 0;
+  border-radius: 999px;
+  padding: 0 18px;
+  background: var(--accent);
+  color: white;
+  font: inherit;
+  font-weight: 800;
+}
+
+.inline-action-form {
+  margin-top: 18px;
+}
+
+.inline-action-form button {
   min-height: 44px;
   border: 0;
   border-radius: 999px;

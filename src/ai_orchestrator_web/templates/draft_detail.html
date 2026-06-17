@@ -65,6 +65,22 @@
 
 <section class="panel artifact-panel">
   <div class="panel-heading">
+    <h2>Suggested Action</h2>
+    <span class="badge">{{ summary.next_action }}</span>
+  </div>
+  <p><strong>Next action:</strong> {{ summary.next_action }}</p>
+  {% if summary.next_action == "validate_task_draft" %}
+  <p class="note">Validate draft writes only draft-local validator reports and manifest validation metadata.</p>
+  <form class="inline-action-form" method="post" action="/drafts/{{ summary.draft_id }}/validate">
+    <button type="submit">Validate draft</button>
+  </form>
+  {% else %}
+  <p class="empty-state">This action is not available in the web UI yet.</p>
+  {% endif %}
+</section>
+
+<section class="panel artifact-panel">
+  <div class="panel-heading">
     <h2>Draft Artifacts</h2>
     <span class="badge">preview</span>
   </div>

@@ -21,6 +21,11 @@
     <div><dt>stderr_path</dt><dd>{{ job.stderr_path }}</dd></div>
     <div><dt>error</dt><dd>{{ job.error or "" }}</dd></div>
     <div><dt>refresh</dt><dd><a href="/jobs/{{ job.job_id }}">Refresh job</a></dd></div>
+    <div><dt>back to home</dt><dd><a href="/">Home</a></dd></div>
+    <div><dt>back to drafts</dt><dd><a href="/drafts">Drafts</a></dd></div>
+    {% if job.result_refs.draft_id %}
+    <div><dt>open draft</dt><dd><a href="/drafts/{{ job.result_refs.draft_id }}">{{ job.result_refs.draft_id }}</a></dd></div>
+    {% endif %}
   </dl>
 </section>
 

@@ -327,6 +327,33 @@ class WebAppRouteTests(unittest.TestCase):
             self.assertEqual(response.status_code, 200)
             self.assertIn('href="/drafts/new"', response.text)
 
+    def test_home_navigation_exists_on_key_pages(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            draft_id, _draft_dir = scaffold_web_draft(root, task_id="web-nav-draft")
+            write_tasks_yaml(root)
+            command = build_action_command("web_health_cli", root)
+            job = create_job_record(action="web_health_cli", project_root=root, command=command)
+            save_job(root, job)
+            client = TestClient(create_app(root))
+
+            paths = [
+                "/drafts",
+                f"/drafts/{draft_id}",
+                "/drafts/new",
+                "/tasks",
+                f"/jobs/{job.job_id}",
+            ]
+            for path in paths:
+                with self.subTest(path=path):
+                    response = client.get(path)
+                    self.assertEqual(response.status_code, 200)
+                    self.assertIn('href="/"', response.text)
+                    self.assertIn("Home", response.text)
+
     def test_drafts_missing_dir_shows_empty_state(self) -> None:
         from fastapi.testclient import TestClient
 
@@ -511,8 +538,93 @@ class WebAppRouteTests(unittest.TestCase):
             self.assertIn("validation_status", response.text)
             self.assertIn("next_action", response.text)
             self.assertIn("validate_task_draft", response.text)
+            self.assertIn("Validate draft", response.text)
+            self.assertIn(f'action="/drafts/{draft_id}/validate"', response.text)
             self.assertIn("raw_request.md", response.text)
             self.assertIn("task_draft.yaml", response.text)
+
+    def test_validate_draft_post_creates_validation_job(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            draft_id, draft_dir = scaffold_web_draft(root, task_id="web-validate-draft")
+            client = TestClient(create_app(root))
+
+            response = client.post(f"/drafts/{draft_id}/validate", follow_redirects=False)
+
+            self.assertEqual(response.status_code, 303)
+            location = response.headers["location"]
+            self.assertTrue(location.startswith("/jobs/job_"))
+            job_id = location.rsplit("/", 1)[-1]
+            job = load_job(root, job_id)
+            self.assertEqual(job.action, "validate_task_draft")
+            self.assertEqual(job.result_refs, {"draft_id": draft_id})
+            self.assertIsInstance(job.command, list)
+            self.assertIn("validate-task-draft", job.command)
+            self.assertIn(draft_id, job.command)
+            self.assertIn("--drafts-dir", job.command)
+            self.assertIn("--force", job.command)
+
+            self.assertEqual(wait_for_job_status(root, job_id), "succeeded")
+            finished = load_job(root, job_id)
+            self.assertEqual(finished.exit_code, 0)
+            self.assertTrue((draft_dir / "task_draft_validator_report.json").exists())
+            self.assertTrue((draft_dir / "task_draft_validator_report.md").exists())
+            self.assertFalse((root / "tasks.yaml").exists())
+            self.assertFalse((root / ".runs").exists())
+
+            detail_response = client.get(f"/drafts/{draft_id}")
+            job_response = client.get(location)
+
+            self.assertEqual(detail_response.status_code, 200)
+            self.assertIn("validation_status", detail_response.text)
+            self.assertIn("valid_for_promotion", detail_response.text)
+            self.assertEqual(job_response.status_code, 200)
+            self.assertIn(f'href="/drafts/{draft_id}"', job_response.text)
+            self.assertIn("Home", job_response.text)
+
+    def test_validate_unknown_draft_returns_not_found(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            client = TestClient(create_app(root))
+
+            response = client.post("/drafts/missing-draft/validate")
+
+            self.assertEqual(response.status_code, 404)
+
+    def test_validate_path_traversal_draft_id_returns_not_found(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            client = TestClient(create_app(root))
+
+            response = client.post("/drafts/bad%5Cname/validate")
+
+            self.assertIn(response.status_code, {400, 404})
+
+    def test_one_active_job_rule_blocks_validate_job(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            draft_id, _draft_dir = scaffold_web_draft(root, task_id="web-active-job-draft")
+            command = build_action_command("web_health_cli", root)
+            job = create_job_record(action="web_health_cli", project_root=root, command=command)
+            job.status = "running"
+            save_job(root, job)
+            client = TestClient(create_app(root))
+
+            response = client.post(f"/drafts/{draft_id}/validate")
+
+            self.assertEqual(response.status_code, 409)
 
     def test_invalid_draft_id_returns_not_found(self) -> None:
         from fastapi.testclient import TestClient
@@ -861,6 +973,7 @@ class WebAppRouteTests(unittest.TestCase):
             self.assertEqual(response.status_code, 200)
             self.assertIn("No jobs found", response.text)
             self.assertIn("web_health_cli", response.text)
+            self.assertNotIn("validate_task_draft", response.text)
 
     def test_start_allowed_job_creates_metadata_and_logs(self) -> None:
         from fastapi.testclient import TestClient
@@ -978,6 +1091,42 @@ class WebAppRouteTests(unittest.TestCase):
                     "draft_task_scaffold",
                     root,
                     params={"request_path": str(request_path)},
+                )
+
+    def test_validate_task_draft_action_builds_safe_argv(self) -> None:
+        with TemporaryProject() as root:
+            draft_dir = root / ".task_drafts" / "safe-draft"
+            draft_dir.mkdir(parents=True)
+
+            command = build_action_command(
+                "validate_task_draft",
+                root,
+                params={"draft_id": "safe-draft"},
+            )
+
+            self.assertIsInstance(command, list)
+            self.assertIn("validate-task-draft", command)
+            self.assertIn("safe-draft", command)
+            self.assertIn("--drafts-dir", command)
+            self.assertIn(str((root / ".task_drafts").resolve()), command)
+            self.assertIn("--force", command)
+
+    def test_validate_task_draft_action_rejects_missing_draft(self) -> None:
+        with TemporaryProject() as root:
+            with self.assertRaises(ValueError):
+                build_action_command(
+                    "validate_task_draft",
+                    root,
+                    params={"draft_id": "missing-draft"},
+                )
+
+    def test_validate_task_draft_action_rejects_unsafe_draft_id(self) -> None:
+        with TemporaryProject() as root:
+            with self.assertRaises(ValueError):
+                build_action_command(
+                    "validate_task_draft",
+                    root,
+                    params={"draft_id": "..\\bad"},
                 )
 
     def test_job_json_contains_command_as_list(self) -> None:

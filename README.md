@@ -52,6 +52,8 @@ Task pages do not enable/disable tasks, run doctor, run pipeline, run Codex, app
 Run and pipeline pages do not classify, run review checks, prepare review, record findings, approve/reject, apply, accept, commit, run Codex, or run pipeline.
 Jobs use allowlisted CLI actions only, never arbitrary shell commands. Job metadata and logs are stored under `.web/jobs/`; no run-pipeline, apply, accept, or Codex actions are exposed yet.
 New Task Request at `/drafts/new` is a write-capable but safe scaffold flow: it creates a local raw request and task draft scaffold only. It does not run Codex, run pipeline, validate, promote, apply, accept, or commit.
+Validate draft is available from `/drafts/<draft_id>` when the deterministic next action is `validate_task_draft`. It writes only draft-local validator reports and manifest validation metadata; it does not run Codex, run pipeline, promote, apply, accept, or commit.
+Main web pages include Home navigation plus Drafts, Tasks, Runs, Pipelines, and Jobs links.
 
 ## Current capabilities
 

@@ -26,6 +26,7 @@ class JobRecord:
     stdout_path: str
     stderr_path: str
     error: str | None
+    result_refs: dict[str, str]
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -45,6 +46,7 @@ class JobRecord:
             stdout_path=str(payload["stdout_path"]),
             stderr_path=str(payload["stderr_path"]),
             error=_optional_str(payload.get("error")),
+            result_refs={str(key): str(value) for key, value in dict(payload.get("result_refs", {})).items()},
         )
 
 
@@ -53,7 +55,13 @@ def create_job_id() -> str:
     return f"job_{timestamp}_{uuid4().hex[:6]}"
 
 
-def create_job_record(*, action: str, project_root: Path, command: list[str]) -> JobRecord:
+def create_job_record(
+    *,
+    action: str,
+    project_root: Path,
+    command: list[str],
+    result_refs: dict[str, str] | None = None,
+) -> JobRecord:
     job_id = create_job_id()
     jobs_dir = project_root / ".web" / "jobs"
     return JobRecord(
@@ -69,6 +77,7 @@ def create_job_record(*, action: str, project_root: Path, command: list[str]) ->
         stdout_path=str((jobs_dir / f"{job_id}.stdout.log").resolve()),
         stderr_path=str((jobs_dir / f"{job_id}.stderr.log").resolve()),
         error=None,
+        result_refs=dict(result_refs or {}),
     )
 
 
