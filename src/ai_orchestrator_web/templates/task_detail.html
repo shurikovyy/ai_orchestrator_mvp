@@ -125,6 +125,25 @@
 
 <section class="panel artifact-panel">
   <div class="panel-heading">
+    <h2>Real-run Readiness</h2>
+    <span class="badge {{ 'badge-clean' if codex_cmd_configured else 'badge-dirty' }}">codex_cmd={{ 'configured' if codex_cmd_configured else 'not_configured' }}</span>
+  </div>
+  <p>Doctor real-run checks readiness only. It does not run Codex execution, run pipeline, apply, accept, or commit.</p>
+  {% if not summary.enabled %}
+  <p class="note">Task is disabled. Doctor real-run is expected to report that it is not ready until explicitly enabled.</p>
+  {% endif %}
+  {% if codex_cmd_configured %}
+  <p class="note">Codex command: configured from CODEX_CMD or AI_ORCHESTRATOR_CODEX_CMD.</p>
+  <form class="inline-action-form" method="post" action="/tasks/{{ summary.task_id }}/doctor-real-run">
+    <button type="submit">Doctor real-run</button>
+  </form>
+  {% else %}
+  <p class="note">Codex command: not configured. Set CODEX_CMD or AI_ORCHESTRATOR_CODEX_CMD before starting the web app.</p>
+  {% endif %}
+</section>
+
+<section class="panel artifact-panel">
+  <div class="panel-heading">
     <h2>Criteria</h2>
     <span class="badge">{{ summary.criteria_count }}</span>
   </div>

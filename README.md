@@ -57,6 +57,7 @@ Promote disabled is available from `/drafts/<draft_id>` when the deterministic n
 Enable task and Disable task are available from `/tasks/<task_id>`. They only change the local `tasks.yaml` enabled flag; they do not run doctor, run pipeline, run Codex, apply, accept, or commit.
 Doctor dry-run is available from `/tasks/<task_id>`. It checks readiness for `run-pipeline --dry-run`; it does not run Codex, execute tasks, apply, accept, or commit.
 Pipeline dry-run is available from `/tasks/<task_id>` as a planning-only action and always uses `--dry-run`. It previews `run-pipeline --dry-run`; it does not run Codex, execute tasks, create real run artifacts, apply, accept, or commit.
+Doctor real-run readiness is available from `/tasks/<task_id>` when `CODEX_CMD` or `AI_ORCHESTRATOR_CODEX_CMD` is configured before starting the web app. It checks readiness for real execution; it does not run Codex execution, run pipeline, apply, accept, or commit.
 Main web pages include Home navigation plus Drafts, Tasks, Runs, Pipelines, and Jobs links.
 
 ## Current capabilities
