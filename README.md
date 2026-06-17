@@ -43,18 +43,19 @@ Current scope:
 - read-only pipeline detail at `/pipelines/<pipeline_id>`;
 - local allowlisted jobs at `/jobs`;
 - safe task request form at `/drafts/new`;
-- no pipeline execution;
+- no real pipeline execution;
 - no Codex execution;
 - no apply/accept/commit.
 
 Draft pages do not validate, revise, promote, run Codex, run pipeline, apply, or commit.
-Task pages do not enable/disable tasks, run doctor, run pipeline, run Codex, apply, accept, or commit.
+Task pages do not enable/disable tasks, run real pipeline execution, run Codex, apply, accept, or commit. They expose doctor dry-run diagnostics and pipeline dry-run planning only.
 Run and pipeline pages do not classify, run review checks, prepare review, record findings, approve/reject, apply, accept, commit, run Codex, or run pipeline.
-Jobs use allowlisted CLI actions only, never arbitrary shell commands. Job metadata and logs are stored under `.web/jobs/`; no run-pipeline, apply, accept, or Codex actions are exposed yet.
+Jobs use allowlisted CLI actions only, never arbitrary shell commands. Job metadata and logs are stored under `.web/jobs/`; no real pipeline execution, apply, accept, or Codex actions are exposed.
 New Task Request at `/drafts/new` is a write-capable but safe scaffold flow: it creates a local raw request and task draft scaffold only. It does not run Codex, run pipeline, validate, promote, apply, accept, or commit.
 Validate draft is available from `/drafts/<draft_id>` when the deterministic next action is `validate_task_draft`. It writes only draft-local validator reports and manifest validation metadata; it does not run Codex, run pipeline, promote, apply, accept, or commit.
 Promote disabled is available from `/drafts/<draft_id>` when the deterministic next action is `promote_task_draft`. It writes to `tasks.yaml` with `enabled=false`; it does not enable the task, run doctor, run pipeline, run Codex, apply, accept, or commit.
-Doctor dry-run is available from `/tasks/<task_id>`. It checks readiness for `run-pipeline --dry-run`; it does not run Codex, run pipeline, apply, accept, or commit.
+Doctor dry-run is available from `/tasks/<task_id>`. It checks readiness for `run-pipeline --dry-run`; it does not run Codex, execute tasks, apply, accept, or commit.
+Pipeline dry-run is available from `/tasks/<task_id>` as a planning-only action and always uses `--dry-run`. It previews `run-pipeline --dry-run`; it does not run Codex, execute tasks, create real run artifacts, apply, accept, or commit.
 Main web pages include Home navigation plus Drafts, Tasks, Runs, Pipelines, and Jobs links.
 
 ## Current capabilities

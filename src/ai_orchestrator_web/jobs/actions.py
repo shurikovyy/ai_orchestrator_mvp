@@ -63,6 +63,12 @@ ALLOWED_ACTIONS: dict[str, AllowedJobAction] = {
         description="Run read-only doctor diagnostics for one task with dry-run intent.",
         show_in_jobs_form=False,
     ),
+    "pipeline_dry_run": AllowedJobAction(
+        name="pipeline_dry_run",
+        label="Pipeline dry-run",
+        description="Preview the run-pipeline plan for one task with --dry-run.",
+        show_in_jobs_form=False,
+    ),
 }
 
 
@@ -146,6 +152,19 @@ def build_action_command(action: str, project_root: Path, params: dict[str, str]
             task_id,
             "--intent",
             "dry-run",
+        ]
+    if action == "pipeline_dry_run":
+        task_id = _safe_existing_task_id(project_root, _required_param(values, "task_id"))
+        return [
+            sys.executable,
+            "-m",
+            "ai_orchestrator.cli",
+            "run-pipeline",
+            "--tasks-file",
+            str((project_root / "tasks.yaml").resolve()),
+            "--only",
+            task_id,
+            "--dry-run",
         ]
     raise UnsupportedJobAction(f"unsupported job action: {action}")
 

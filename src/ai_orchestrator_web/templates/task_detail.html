@@ -7,7 +7,7 @@
     <h2>Task Detail</h2>
     <span class="badge {{ 'badge-clean' if summary.enabled else 'badge-dirty' }}">enabled={{ summary.enabled|string|lower }}</span>
   </div>
-  <p class="note">Viewing this page is read-only. Doctor dry-run writes only job metadata/logs and does not run pipeline, run Codex, apply, accept, or commit.</p>
+  <p class="note">Viewing this page is read-only. Doctor and pipeline dry-run actions write only job metadata/logs and do not run Codex, apply, accept, or commit.</p>
   <dl class="status-grid">
     <div>
       <dt>task_id</dt>
@@ -87,6 +87,20 @@
   {% endif %}
   <form class="inline-action-form" method="post" action="/tasks/{{ summary.task_id }}/doctor-dry-run">
     <button type="submit">Doctor dry-run</button>
+  </form>
+</section>
+
+<section class="panel artifact-panel">
+  <div class="panel-heading">
+    <h2>Planning Action</h2>
+    <span class="badge">Pipeline dry-run</span>
+  </div>
+  <p>This previews the pipeline plan for this task and always uses --dry-run. It does not run Codex, execute the task, apply, accept, or commit.</p>
+  {% if not summary.enabled %}
+  <p class="note">Task is disabled. Pipeline dry-run is expected to report skip_disabled until the task is explicitly enabled.</p>
+  {% endif %}
+  <form class="inline-action-form" method="post" action="/tasks/{{ summary.task_id }}/pipeline-dry-run">
+    <button type="submit">Pipeline dry-run</button>
   </form>
 </section>
 

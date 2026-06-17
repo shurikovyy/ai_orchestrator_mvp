@@ -870,6 +870,8 @@ class WebAppRouteTests(unittest.TestCase):
             self.assertIn("enabled_check_with_doctor", response.text)
             self.assertIn("Doctor dry-run", response.text)
             self.assertIn('action="/tasks/web-enabled-task/doctor-dry-run"', response.text)
+            self.assertIn("Pipeline dry-run", response.text)
+            self.assertIn('action="/tasks/web-enabled-task/pipeline-dry-run"', response.text)
 
     def test_disabled_task_is_visibly_marked_disabled(self) -> None:
         from fastapi.testclient import TestClient
@@ -887,6 +889,8 @@ class WebAppRouteTests(unittest.TestCase):
             self.assertIn("disabled_requires_explicit_enable", response.text)
             self.assertIn("Task is disabled. Doctor dry-run is expected to report", response.text)
             self.assertIn('action="/tasks/web-disabled-task/doctor-dry-run"', response.text)
+            self.assertIn("Task is disabled. Pipeline dry-run is expected to report skip_disabled", response.text)
+            self.assertIn('action="/tasks/web-disabled-task/pipeline-dry-run"', response.text)
 
     def test_doctor_dry_run_post_creates_diagnostic_job(self) -> None:
         from fastapi.testclient import TestClient
@@ -993,6 +997,117 @@ class WebAppRouteTests(unittest.TestCase):
             client = TestClient(create_app(root))
 
             response = client.post("/tasks/web-enabled-task/doctor-dry-run")
+
+            self.assertEqual(response.status_code, 409)
+            self.assertEqual(tasks_file.read_text(encoding="utf-8"), before_tasks)
+            self.assertFalse((root / ".runs").exists())
+
+    def test_pipeline_dry_run_post_creates_planning_job(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            tasks_file = write_tasks_yaml(root)
+            before_tasks = tasks_file.read_text(encoding="utf-8")
+            client = TestClient(create_app(root))
+
+            response = client.post("/tasks/web-enabled-task/pipeline-dry-run", follow_redirects=False)
+
+            self.assertEqual(response.status_code, 303)
+            location = response.headers["location"]
+            self.assertTrue(location.startswith("/jobs/job_"))
+            job_id = location.rsplit("/", 1)[-1]
+            job = load_job(root, job_id)
+            self.assertEqual(job.action, "pipeline_dry_run")
+            self.assertEqual(
+                job.result_refs,
+                {
+                    "task_id": "web-enabled-task",
+                    "task_url": "/tasks/web-enabled-task",
+                    "tasks_url": "/tasks",
+                },
+            )
+            self.assertIsInstance(job.command, list)
+            self.assertIn("run-pipeline", job.command)
+            self.assertIn("--tasks-file", job.command)
+            self.assertIn(str(tasks_file.resolve()), job.command)
+            self.assertIn("--only", job.command)
+            self.assertIn("web-enabled-task", job.command)
+            self.assertIn("--dry-run", job.command)
+            self.assertNotIn("--codex-cmd", job.command)
+            self.assertNotIn("--verbose", job.command)
+            self.assertNotIn("--stream-codex-output", job.command)
+
+            final_status = wait_for_job_status(root, job_id)
+            self.assertIn(final_status, {"succeeded", "failed"})
+            finished = load_job(root, job_id)
+            self.assertEqual(finished.status, final_status)
+            self.assertTrue(Path(finished.stdout_path).exists())
+            self.assertTrue(Path(finished.stderr_path).exists())
+            self.assertFalse((root / ".runs").exists())
+            self.assertFalse((root / ".task_drafts").exists())
+            self.assertEqual(tasks_file.read_text(encoding="utf-8"), before_tasks)
+
+            detail = client.get(location)
+
+            self.assertEqual(detail.status_code, 200)
+            self.assertIn('href="/tasks/web-enabled-task"', detail.text)
+            self.assertIn('href="/tasks"', detail.text)
+
+    def test_pipeline_dry_run_missing_task_returns_not_found(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            write_tasks_yaml(root)
+            client = TestClient(create_app(root))
+
+            response = client.post("/tasks/missing-task/pipeline-dry-run")
+
+            self.assertEqual(response.status_code, 404)
+
+    def test_pipeline_dry_run_missing_tasks_yaml_returns_not_found(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            client = TestClient(create_app(root))
+
+            response = client.post("/tasks/web-enabled-task/pipeline-dry-run")
+
+            self.assertEqual(response.status_code, 404)
+
+    def test_pipeline_dry_run_path_traversal_task_id_returns_not_found(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            write_tasks_yaml(root)
+            client = TestClient(create_app(root))
+
+            response = client.post("/tasks/bad%5Cname/pipeline-dry-run")
+
+            self.assertIn(response.status_code, {400, 404})
+
+    def test_one_active_job_rule_blocks_pipeline_dry_run_job(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            tasks_file = write_tasks_yaml(root)
+            before_tasks = tasks_file.read_text(encoding="utf-8")
+            command = build_action_command("web_health_cli", root)
+            job = create_job_record(action="web_health_cli", project_root=root, command=command)
+            job.status = "running"
+            save_job(root, job)
+            client = TestClient(create_app(root))
+
+            response = client.post("/tasks/web-enabled-task/pipeline-dry-run")
 
             self.assertEqual(response.status_code, 409)
             self.assertEqual(tasks_file.read_text(encoding="utf-8"), before_tasks)
@@ -1242,9 +1357,14 @@ class WebAppRouteTests(unittest.TestCase):
             self.assertEqual(response.status_code, 200)
             self.assertIn("No jobs found", response.text)
             self.assertIn("web_health_cli", response.text)
+            self.assertNotIn("No run-pipeline", response.text)
+            self.assertIn("Only allowlisted jobs are available", response.text)
+            self.assertIn("Pipeline dry-run is planning-only", response.text)
+            self.assertIn("--dry-run", response.text)
             self.assertNotIn("validate_task_draft", response.text)
             self.assertNotIn("promote_task_draft_disabled", response.text)
             self.assertNotIn("doctor_dry_run", response.text)
+            self.assertNotIn("pipeline_dry_run", response.text)
 
     def test_start_allowed_job_creates_metadata_and_logs(self) -> None:
         from fastapi.testclient import TestClient
@@ -1486,6 +1606,58 @@ class WebAppRouteTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 build_action_command(
                     "doctor_dry_run",
+                    root,
+                    params={"task_id": "..\\bad"},
+                )
+
+    def test_pipeline_dry_run_action_builds_safe_argv(self) -> None:
+        with TemporaryProject() as root:
+            tasks_file = write_tasks_yaml(root)
+
+            command = build_action_command(
+                "pipeline_dry_run",
+                root,
+                params={"task_id": "web-enabled-task"},
+            )
+
+            self.assertIsInstance(command, list)
+            self.assertIn("run-pipeline", command)
+            self.assertIn("--tasks-file", command)
+            self.assertIn(str(tasks_file.resolve()), command)
+            self.assertIn("--only", command)
+            self.assertIn("web-enabled-task", command)
+            self.assertIn("--dry-run", command)
+            self.assertNotIn("--codex-cmd", command)
+            self.assertNotIn("--verbose", command)
+            self.assertNotIn("--stream-codex-output", command)
+
+    def test_pipeline_dry_run_action_rejects_missing_task(self) -> None:
+        with TemporaryProject() as root:
+            write_tasks_yaml(root)
+
+            with self.assertRaises(ValueError):
+                build_action_command(
+                    "pipeline_dry_run",
+                    root,
+                    params={"task_id": "missing-task"},
+                )
+
+    def test_pipeline_dry_run_action_rejects_missing_tasks_yaml(self) -> None:
+        with TemporaryProject() as root:
+            with self.assertRaises(ValueError):
+                build_action_command(
+                    "pipeline_dry_run",
+                    root,
+                    params={"task_id": "web-enabled-task"},
+                )
+
+    def test_pipeline_dry_run_action_rejects_unsafe_task_id(self) -> None:
+        with TemporaryProject() as root:
+            write_tasks_yaml(root)
+
+            with self.assertRaises(ValueError):
+                build_action_command(
+                    "pipeline_dry_run",
                     root,
                     params={"task_id": "..\\bad"},
                 )

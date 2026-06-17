@@ -96,6 +96,34 @@ def create_tasks_router(*, project_root: Path, templates: Jinja2Templates) -> AP
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return RedirectResponse(url=f"/jobs/{job.job_id}", status_code=303)
 
+    @router.post("/tasks/{task_id}/pipeline-dry-run")
+    def pipeline_dry_run(task_id: str) -> RedirectResponse:
+        safe_task_id = _validate_task_id(task_id)
+        if not tasks_file.exists():
+            raise HTTPException(status_code=404, detail="tasks.yaml not found")
+        try:
+            build_task_inspection_summary(tasks_file=tasks_file, task_id=safe_task_id)
+        except TaskQueueConfigError as exc:
+            message = str(exc)
+            status_code = 404 if "task id not found" in message else 400
+            raise HTTPException(status_code=status_code, detail=message) from exc
+        try:
+            job = start_background_job(
+                project_root=project_root,
+                action="pipeline_dry_run",
+                params={"task_id": safe_task_id},
+                result_refs={
+                    "task_id": safe_task_id,
+                    "task_url": f"/tasks/{safe_task_id}",
+                    "tasks_url": "/tasks",
+                },
+            )
+        except ActiveJobExists as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except UnsupportedJobAction as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return RedirectResponse(url=f"/jobs/{job.job_id}", status_code=303)
+
     return router
 
 
