@@ -7,7 +7,7 @@
     <h2>Task Detail</h2>
     <span class="badge {{ 'badge-clean' if summary.enabled else 'badge-dirty' }}">enabled={{ summary.enabled|string|lower }}</span>
   </div>
-  <p class="note">Viewing this page is read-only. Doctor and pipeline dry-run actions write only job metadata/logs and do not run Codex, apply, accept, or commit.</p>
+  <p class="note">Viewing this page is read-only. Enable/disable changes only this task's enabled flag; doctor and pipeline dry-run actions write only job metadata/logs and do not run Codex, apply, accept, or commit.</p>
   <dl class="status-grid">
     <div>
       <dt>task_id</dt>
@@ -74,6 +74,25 @@
       <dd>{{ summary.commit_message or "" }}</dd>
     </div>
   </dl>
+</section>
+
+<section class="panel artifact-panel">
+  <div class="panel-heading">
+    <h2>Execution Eligibility</h2>
+    <span class="badge {{ 'badge-clean' if summary.enabled else 'badge-dirty' }}">enabled={{ summary.enabled|string|lower }}</span>
+  </div>
+  <p>Enable makes this task eligible for doctor, dry-run, and pipeline selection. It does not run Codex, run pipeline, apply, accept, or commit.</p>
+  {% if summary.enabled %}
+  <p class="note">Disable prevents this task from being selected by pipeline runs.</p>
+  <form class="inline-action-form" method="post" action="/tasks/{{ summary.task_id }}/disable">
+    <button type="submit">Disable task</button>
+  </form>
+  {% else %}
+  <p class="note">Task is disabled. Enable only after inspecting the promoted task.</p>
+  <form class="inline-action-form" method="post" action="/tasks/{{ summary.task_id }}/enable">
+    <button type="submit">Enable task</button>
+  </form>
+  {% endif %}
 </section>
 
 <section class="panel artifact-panel">

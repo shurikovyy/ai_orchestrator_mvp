@@ -180,6 +180,20 @@ def write_tasks_yaml(root: Path, *, long_prompt: bool = False) -> Path:
     return tasks_file
 
 
+def load_task_from_yaml(tasks_file: Path, task_id: str) -> dict:
+    payload = yaml.safe_load(tasks_file.read_text(encoding="utf-8"))
+    for task in payload["tasks"]:
+        if task["id"] == task_id:
+            return task
+    raise AssertionError(f"missing task {task_id}")
+
+
+def task_without_enabled(task: dict) -> dict:
+    copy = dict(task)
+    copy.pop("enabled", None)
+    return copy
+
+
 def create_web_run(root: Path, *, long_review_packet: bool = False) -> tuple[str, Path]:
     runs_dir = root / ".runs"
     task = TaskSpec(
@@ -872,6 +886,10 @@ class WebAppRouteTests(unittest.TestCase):
             self.assertIn('action="/tasks/web-enabled-task/doctor-dry-run"', response.text)
             self.assertIn("Pipeline dry-run", response.text)
             self.assertIn('action="/tasks/web-enabled-task/pipeline-dry-run"', response.text)
+            self.assertIn("Execution Eligibility", response.text)
+            self.assertIn("Disable task", response.text)
+            self.assertIn('action="/tasks/web-enabled-task/disable"', response.text)
+            self.assertNotIn('action="/tasks/web-enabled-task/enable"', response.text)
 
     def test_disabled_task_is_visibly_marked_disabled(self) -> None:
         from fastapi.testclient import TestClient
@@ -891,6 +909,99 @@ class WebAppRouteTests(unittest.TestCase):
             self.assertIn('action="/tasks/web-disabled-task/doctor-dry-run"', response.text)
             self.assertIn("Task is disabled. Pipeline dry-run is expected to report skip_disabled", response.text)
             self.assertIn('action="/tasks/web-disabled-task/pipeline-dry-run"', response.text)
+            self.assertIn("Execution Eligibility", response.text)
+            self.assertIn("Enable task", response.text)
+            self.assertIn('action="/tasks/web-disabled-task/enable"', response.text)
+            self.assertNotIn('action="/tasks/web-disabled-task/disable"', response.text)
+
+    def test_enable_task_sets_enabled_true_without_execution_artifacts(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            tasks_file = write_tasks_yaml(root)
+            before = load_task_from_yaml(tasks_file, "web-disabled-task")
+            client = TestClient(create_app(root))
+
+            response = client.post("/tasks/web-disabled-task/enable", follow_redirects=False)
+
+            self.assertEqual(response.status_code, 303)
+            self.assertEqual(response.headers["location"], "/tasks/web-disabled-task")
+            after = load_task_from_yaml(tasks_file, "web-disabled-task")
+            self.assertFalse(before["enabled"])
+            self.assertTrue(after["enabled"])
+            self.assertEqual(task_without_enabled(after), task_without_enabled(before))
+            self.assertFalse((root / ".runs").exists())
+            self.assertFalse((root / ".task_drafts").exists())
+            self.assertFalse((root / ".web" / "jobs").exists())
+
+            detail = client.get("/tasks/web-disabled-task")
+            task_list = client.get("/tasks")
+
+            self.assertEqual(detail.status_code, 200)
+            self.assertIn("enabled=true", detail.text)
+            self.assertIn("Disable task", detail.text)
+            self.assertEqual(task_list.status_code, 200)
+            self.assertIn("web-disabled-task", task_list.text)
+
+    def test_disable_task_sets_enabled_false_without_execution_artifacts(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            tasks_file = write_tasks_yaml(root)
+            before = load_task_from_yaml(tasks_file, "web-enabled-task")
+            client = TestClient(create_app(root))
+
+            response = client.post("/tasks/web-enabled-task/disable", follow_redirects=False)
+
+            self.assertEqual(response.status_code, 303)
+            self.assertEqual(response.headers["location"], "/tasks/web-enabled-task")
+            after = load_task_from_yaml(tasks_file, "web-enabled-task")
+            self.assertTrue(before["enabled"])
+            self.assertFalse(after["enabled"])
+            self.assertEqual(task_without_enabled(after), task_without_enabled(before))
+            self.assertFalse((root / ".runs").exists())
+            self.assertFalse((root / ".task_drafts").exists())
+            self.assertFalse((root / ".web" / "jobs").exists())
+
+            detail = client.get("/tasks/web-enabled-task")
+
+            self.assertEqual(detail.status_code, 200)
+            self.assertIn("enabled=false", detail.text)
+            self.assertIn("Enable task", detail.text)
+
+    def test_enable_disable_unknown_task_returns_not_found(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            write_tasks_yaml(root)
+            client = TestClient(create_app(root))
+
+            enable_response = client.post("/tasks/missing-task/enable")
+            disable_response = client.post("/tasks/missing-task/disable")
+
+            self.assertEqual(enable_response.status_code, 404)
+            self.assertEqual(disable_response.status_code, 404)
+
+    def test_enable_disable_path_traversal_task_id_returns_not_found(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            write_tasks_yaml(root)
+            client = TestClient(create_app(root))
+
+            enable_response = client.post("/tasks/bad%5Cname/enable")
+            disable_response = client.post("/tasks/bad%5Cname/disable")
+
+            self.assertIn(enable_response.status_code, {400, 404})
+            self.assertIn(disable_response.status_code, {400, 404})
 
     def test_doctor_dry_run_post_creates_diagnostic_job(self) -> None:
         from fastapi.testclient import TestClient
@@ -1365,6 +1476,8 @@ class WebAppRouteTests(unittest.TestCase):
             self.assertNotIn("promote_task_draft_disabled", response.text)
             self.assertNotIn("doctor_dry_run", response.text)
             self.assertNotIn("pipeline_dry_run", response.text)
+            self.assertNotIn("enable_task", response.text)
+            self.assertNotIn("disable_task", response.text)
 
     def test_start_allowed_job_creates_metadata_and_logs(self) -> None:
         from fastapi.testclient import TestClient

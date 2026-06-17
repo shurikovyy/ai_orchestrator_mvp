@@ -7,6 +7,7 @@ from ai_orchestrator.schemas import TaskPlanStepSpec
 from ai_orchestrator.task_queue import (
     TaskDefaults,
     TaskDefinition,
+    TaskQueueConfigError,
     get_task_definition,
     load_task_queue_config,
 )
@@ -55,6 +56,43 @@ def build_task_inspection_summary(*, tasks_file: str | Path, task_id: str) -> Ta
     config = load_task_queue_config(tasks_path)
     task = get_task_definition(config, task_id)
     return _build_task_summary(task, config.defaults, tasks_path)
+
+
+def set_task_enabled(*, tasks_file: str | Path, task_id: str, enabled: bool) -> TaskInspectionSummary:
+    tasks_path = Path(tasks_file).expanduser().resolve()
+    config = load_task_queue_config(tasks_path)
+    get_task_definition(config, task_id)
+
+    try:
+        import yaml
+    except ImportError as exc:  # pragma: no cover - exercised by runtime environments, not unit tests.
+        raise RuntimeError(
+            "PyYAML is required to update tasks.yaml. Install project dependencies with `python -m pip install -e .`."
+        ) from exc
+
+    try:
+        payload = yaml.safe_load(tasks_path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        raise TaskQueueConfigError(f"failed to parse YAML in {tasks_path}: {exc}") from exc
+
+    raw_tasks = payload.get("tasks") if isinstance(payload, dict) else None
+    if not isinstance(raw_tasks, list):
+        raise TaskQueueConfigError("tasks must be a list")
+
+    updated = False
+    for raw_task in raw_tasks:
+        if isinstance(raw_task, dict) and str(raw_task.get("id", "")).strip() == task_id.strip():
+            raw_task["enabled"] = bool(enabled)
+            updated = True
+            break
+    if not updated:
+        raise TaskQueueConfigError(f"task id not found: {task_id.strip()}")
+
+    tmp_path = tasks_path.with_name(f"{tasks_path.name}.tmp")
+    tmp_path.write_text(yaml.safe_dump(payload, sort_keys=False, allow_unicode=True), encoding="utf-8")
+    tmp_path.replace(tasks_path)
+
+    return build_task_inspection_summary(tasks_file=tasks_path, task_id=task_id)
 
 
 def _build_task_summary(

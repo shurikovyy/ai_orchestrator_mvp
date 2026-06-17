@@ -13,6 +13,7 @@ from ai_orchestrator.task_inspection import (
     TaskInspectionSummary,
     build_task_inspection_summary,
     list_task_inspection_summaries,
+    set_task_enabled,
 )
 from ai_orchestrator_web.jobs.actions import UnsupportedJobAction
 from ai_orchestrator_web.jobs.runner import ActiveJobExists, start_background_job
@@ -123,6 +124,32 @@ def create_tasks_router(*, project_root: Path, templates: Jinja2Templates) -> AP
         except UnsupportedJobAction as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return RedirectResponse(url=f"/jobs/{job.job_id}", status_code=303)
+
+    @router.post("/tasks/{task_id}/enable")
+    def enable_task(task_id: str) -> RedirectResponse:
+        safe_task_id = _validate_task_id(task_id)
+        if not tasks_file.exists():
+            raise HTTPException(status_code=404, detail="tasks.yaml not found")
+        try:
+            set_task_enabled(tasks_file=tasks_file, task_id=safe_task_id, enabled=True)
+        except TaskQueueConfigError as exc:
+            message = str(exc)
+            status_code = 404 if "task id not found" in message else 400
+            raise HTTPException(status_code=status_code, detail=message) from exc
+        return RedirectResponse(url=f"/tasks/{safe_task_id}", status_code=303)
+
+    @router.post("/tasks/{task_id}/disable")
+    def disable_task(task_id: str) -> RedirectResponse:
+        safe_task_id = _validate_task_id(task_id)
+        if not tasks_file.exists():
+            raise HTTPException(status_code=404, detail="tasks.yaml not found")
+        try:
+            set_task_enabled(tasks_file=tasks_file, task_id=safe_task_id, enabled=False)
+        except TaskQueueConfigError as exc:
+            message = str(exc)
+            status_code = 404 if "task id not found" in message else 400
+            raise HTTPException(status_code=status_code, detail=message) from exc
+        return RedirectResponse(url=f"/tasks/{safe_task_id}", status_code=303)
 
     return router
 
