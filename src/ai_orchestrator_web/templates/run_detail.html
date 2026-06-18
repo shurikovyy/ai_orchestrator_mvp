@@ -7,7 +7,7 @@
     <h2>Run Detail</h2>
     <span class="badge">{{ summary.next_action }}</span>
   </div>
-  <p class="note">Viewing this page is read-only. Classify run writes only risk classification artifacts under .runs and does not run review checks, approve, apply, accept, commit, run Codex, or run pipeline.</p>
+  <p class="note">Viewing this page is read-only. Classify run and run review checks write only post-run analysis artifacts under .runs. They do not approve, apply, accept, commit, run Codex, or run pipeline.</p>
   <dl class="status-grid">
     <div><dt>run_id</dt><dd><code>{{ summary.run_id }}</code></dd></div>
     <div><dt>validator_status</dt><dd>{{ summary.validator_status }}</dd></div>
@@ -39,6 +39,13 @@
   <p>Classify run analyzes completed run artifacts and writes risk classification under .runs. It does not run Codex, run pipeline, apply, accept, or commit.</p>
   <form class="inline-action-form" method="post" action="/runs/{{ summary.run_id }}/classify">
     <button type="submit">Classify run</button>
+  </form>
+  {% if not summary.risk_classification_exists %}
+  <p class="note">Classify this run before running review checks.</p>
+  {% endif %}
+  <p>Run review checks analyzes existing run artifacts and writes deterministic review/check artifacts under .runs. It does not run Codex, run pipeline, approve, apply, accept, or commit.</p>
+  <form class="inline-action-form" method="post" action="/runs/{{ summary.run_id }}/review-checks">
+    <button type="submit">Run review checks</button>
   </form>
 </section>
 

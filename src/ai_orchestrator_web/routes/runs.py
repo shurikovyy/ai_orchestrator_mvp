@@ -80,6 +80,31 @@ def create_runs_router(*, project_root: Path, templates: Jinja2Templates) -> API
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return RedirectResponse(url=f"/jobs/{job.job_id}", status_code=303)
 
+    @router.post("/runs/{run_id}/review-checks")
+    def run_review_checks(run_id: str) -> RedirectResponse:
+        safe_run_id = _validate_id(run_id, "run not found")
+        if not runs_dir.exists():
+            raise HTTPException(status_code=404, detail="runs directory not found")
+        if not (runs_dir / safe_run_id).is_dir():
+            raise HTTPException(status_code=404, detail=f"run not found: {safe_run_id}")
+        try:
+            job = start_background_job(
+                project_root=project_root,
+                action="run_review_checks",
+                params={"run_id": safe_run_id},
+                result_refs={
+                    "run_id": safe_run_id,
+                    "run_url": f"/runs/{safe_run_id}",
+                    "runs_url": "/runs",
+                    "pipelines_url": "/pipelines",
+                },
+            )
+        except ActiveJobExists as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except UnsupportedJobAction as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return RedirectResponse(url=f"/jobs/{job.job_id}", status_code=303)
+
     return router
 
 

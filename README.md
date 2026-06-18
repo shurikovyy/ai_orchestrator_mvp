@@ -47,7 +47,7 @@ Current scope:
 
 Draft pages do not validate, revise, promote, run Codex, run pipeline, apply, or commit.
 Task pages expose an explicit enable/disable gate plus doctor dry-run diagnostics, pipeline dry-run planning, doctor real-run readiness, and the confirmed real pipeline action. They do not apply, accept, or commit.
-Run and pipeline pages do not classify, run review checks, prepare review, record findings, approve/reject, apply, accept, commit, run Codex, or run pipeline.
+Run and pipeline pages expose post-run analysis actions only. They do not prepare review, record findings, approve/reject, apply, accept, commit, run Codex, or run pipeline.
 The generic `/jobs` form exposes only safe allowlisted actions and never arbitrary shell commands. Job metadata and logs are stored under `.web/jobs/`.
 New Task Request at `/drafts/new` is a write-capable but safe scaffold flow: it creates a local raw request and task draft scaffold only. It does not run Codex, run pipeline, validate, promote, apply, accept, or commit.
 Validate draft is available from `/drafts/<draft_id>` when the deterministic next action is `validate_task_draft`. It writes only draft-local validator reports and manifest validation metadata; it does not run Codex, run pipeline, promote, apply, accept, or commit.
@@ -58,6 +58,7 @@ Pipeline dry-run is available from `/tasks/<task_id>` as a planning-only action 
 Doctor real-run readiness is available from `/tasks/<task_id>` when `CODEX_CMD` or `AI_ORCHESTRATOR_CODEX_CMD` is configured before starting the web app. It checks readiness for real execution; it does not run Codex execution, run pipeline, apply, accept, or commit.
 Run real pipeline is available only from `/tasks/<task_id>` when the task is enabled, `CODEX_CMD` or `AI_ORCHESTRATOR_CODEX_CMD` is configured, and the operator explicitly confirms. It launches the orchestrator with Codex in an isolated workspace and creates `.runs` artifacts; it does not apply changes, accept, or commit.
 Classify run is available from `/runs/<run_id>`. It analyzes existing run artifacts and writes risk classification under `.runs/<run_id>`; it does not run Codex, run pipeline, apply, accept, or commit.
+Run review checks is available from `/runs/<run_id>`. It analyzes existing run artifacts and writes deterministic review/check artifacts under `.runs/<run_id>`; it does not run Codex, run pipeline, approve, apply, accept, or commit.
 Main web pages include Home navigation plus Drafts, Tasks, Runs, Pipelines, and Jobs links.
 
 ## Current capabilities

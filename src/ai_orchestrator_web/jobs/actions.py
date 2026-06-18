@@ -87,6 +87,12 @@ ALLOWED_ACTIONS: dict[str, AllowedJobAction] = {
         description="Classify risk for one existing run artifact directory.",
         show_in_jobs_form=False,
     ),
+    "run_review_checks": AllowedJobAction(
+        name="run_review_checks",
+        label="Run review checks",
+        description="Run deterministic review checks for one existing run artifact directory.",
+        show_in_jobs_form=False,
+    ),
 }
 
 
@@ -229,6 +235,17 @@ def build_action_command(action: str, project_root: Path, params: dict[str, str]
             "-m",
             "ai_orchestrator.cli",
             "classify-run",
+            run_id,
+            "--runs-dir",
+            str((project_root / ".runs").resolve()),
+        ]
+    if action == "run_review_checks":
+        run_id = _safe_existing_run_id(project_root, _required_param(values, "run_id"))
+        return [
+            sys.executable,
+            "-m",
+            "ai_orchestrator.cli",
+            "run-review-checks",
             run_id,
             "--runs-dir",
             str((project_root / ".runs").resolve()),

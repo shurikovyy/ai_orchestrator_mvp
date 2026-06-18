@@ -1695,6 +1695,9 @@ class WebAppRouteTests(unittest.TestCase):
             self.assertIn("Recommended next action: classify_run", response.text)
             self.assertIn("Classify run", response.text)
             self.assertIn(f'action="/runs/{run_id}/classify"', response.text)
+            self.assertIn("Classify this run before running review checks.", response.text)
+            self.assertIn("Run review checks", response.text)
+            self.assertIn(f'action="/runs/{run_id}/review-checks"', response.text)
 
     def test_classify_run_post_creates_analysis_job_without_starting_cli_in_test(self) -> None:
         from fastapi.testclient import TestClient
@@ -1748,6 +1751,58 @@ class WebAppRouteTests(unittest.TestCase):
             self.assertIn('href="/runs"', detail.text)
             self.assertIn('href="/pipelines"', detail.text)
 
+    def test_run_review_checks_post_creates_analysis_job_without_starting_cli_in_test(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            before_state = (run_dir / "state.json").read_text(encoding="utf-8")
+            client = TestClient(create_app(root))
+
+            with patch(
+                "ai_orchestrator_web.routes.runs.start_background_job",
+                side_effect=create_job_without_starting_subprocess,
+            ) as start_job:
+                response = client.post(f"/runs/{run_id}/review-checks", follow_redirects=False)
+
+            self.assertEqual(response.status_code, 303)
+            location = response.headers["location"]
+            self.assertTrue(location.startswith("/jobs/job_"))
+            start_job.assert_called_once()
+            job_id = location.rsplit("/", 1)[-1]
+            job = load_job(root, job_id)
+            self.assertEqual(job.action, "run_review_checks")
+            self.assertEqual(
+                job.result_refs,
+                {
+                    "run_id": run_id,
+                    "run_url": f"/runs/{run_id}",
+                    "runs_url": "/runs",
+                    "pipelines_url": "/pipelines",
+                },
+            )
+            self.assertIsInstance(job.command, list)
+            self.assertIn("run-review-checks", job.command)
+            self.assertIn(run_id, job.command)
+            self.assertIn("--runs-dir", job.command)
+            self.assertIn(str((root / ".runs").resolve()), job.command)
+            self.assertNotIn("--codex-cmd", job.command)
+            self.assertNotIn("run-pipeline", job.command)
+            self.assertNotIn("apply-run", job.command)
+            self.assertNotIn("accept-run", job.command)
+            self.assertFalse((root / ".task_drafts").exists())
+            self.assertFalse((root / "tasks.yaml").exists())
+            self.assertEqual((run_dir / "state.json").read_text(encoding="utf-8"), before_state)
+
+            detail = client.get(location)
+
+            self.assertEqual(detail.status_code, 200)
+            self.assertIn(f'href="/runs/{run_id}"', detail.text)
+            self.assertIn('href="/runs"', detail.text)
+            self.assertIn('href="/pipelines"', detail.text)
+
     def test_classify_run_unknown_run_returns_not_found(self) -> None:
         from fastapi.testclient import TestClient
 
@@ -1760,6 +1815,18 @@ class WebAppRouteTests(unittest.TestCase):
 
             self.assertEqual(response.status_code, 404)
 
+    def test_run_review_checks_unknown_run_returns_not_found(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            client = TestClient(create_app(root))
+
+            response = client.post("/runs/missing-run/review-checks")
+
+            self.assertEqual(response.status_code, 404)
+
     def test_classify_run_path_traversal_run_id_returns_not_found(self) -> None:
         from fastapi.testclient import TestClient
 
@@ -1769,6 +1836,18 @@ class WebAppRouteTests(unittest.TestCase):
             client = TestClient(create_app(root))
 
             response = client.post("/runs/bad%5Cname/classify")
+
+            self.assertIn(response.status_code, {400, 404})
+
+    def test_run_review_checks_path_traversal_run_id_returns_not_found(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            client = TestClient(create_app(root))
+
+            response = client.post("/runs/bad%5Cname/review-checks")
 
             self.assertIn(response.status_code, {400, 404})
 
@@ -1787,6 +1866,25 @@ class WebAppRouteTests(unittest.TestCase):
             client = TestClient(create_app(root))
 
             response = client.post(f"/runs/{run_id}/classify")
+
+            self.assertEqual(response.status_code, 409)
+            self.assertEqual((run_dir / "state.json").read_text(encoding="utf-8"), before_state)
+
+    def test_one_active_job_rule_blocks_run_review_checks_job(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            before_state = (run_dir / "state.json").read_text(encoding="utf-8")
+            command = build_action_command("web_health_cli", root)
+            job = create_job_record(action="web_health_cli", project_root=root, command=command)
+            job.status = "running"
+            save_job(root, job)
+            client = TestClient(create_app(root))
+
+            response = client.post(f"/runs/{run_id}/review-checks")
 
             self.assertEqual(response.status_code, 409)
             self.assertEqual((run_dir / "state.json").read_text(encoding="utf-8"), before_state)
@@ -1945,6 +2043,7 @@ class WebAppRouteTests(unittest.TestCase):
             self.assertNotIn("pipeline_dry_run", response.text)
             self.assertNotIn("run_pipeline_real", response.text)
             self.assertNotIn("classify_run", response.text)
+            self.assertNotIn("run_review_checks", response.text)
             self.assertNotIn("enable_task", response.text)
             self.assertNotIn("disable_task", response.text)
 
@@ -2390,6 +2489,46 @@ class WebAppRouteTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 build_action_command(
                     "classify_run",
+                    root,
+                    params={"run_id": "..\\bad"},
+                )
+
+    def test_run_review_checks_action_builds_safe_argv(self) -> None:
+        with TemporaryProject() as root:
+            run_id, _run_dir = create_web_run(root)
+
+            command = build_action_command(
+                "run_review_checks",
+                root,
+                params={"run_id": run_id},
+            )
+
+            self.assertIsInstance(command, list)
+            self.assertIn("run-review-checks", command)
+            self.assertIn(run_id, command)
+            self.assertIn("--runs-dir", command)
+            self.assertIn(str((root / ".runs").resolve()), command)
+            self.assertNotIn("--codex-cmd", command)
+            self.assertNotIn("run-pipeline", command)
+            self.assertNotIn("apply-run", command)
+            self.assertNotIn("accept-run", command)
+
+    def test_run_review_checks_action_rejects_missing_run(self) -> None:
+        with TemporaryProject() as root:
+            with self.assertRaises(ValueError):
+                build_action_command(
+                    "run_review_checks",
+                    root,
+                    params={"run_id": "missing-run"},
+                )
+
+    def test_run_review_checks_action_rejects_unsafe_run_id(self) -> None:
+        with TemporaryProject() as root:
+            create_web_run(root)
+
+            with self.assertRaises(ValueError):
+                build_action_command(
+                    "run_review_checks",
                     root,
                     params={"run_id": "..\\bad"},
                 )
