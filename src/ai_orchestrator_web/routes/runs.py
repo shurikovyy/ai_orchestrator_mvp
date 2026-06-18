@@ -3,16 +3,20 @@
 from __future__ import annotations
 
 from pathlib import Path, PurePath
+import re
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from ai_orchestrator.run_inspection import list_run_status_summaries
 from ai_orchestrator.run_status import RunStatusSummary, build_run_status_summary
+from ai_orchestrator_web.jobs.actions import UnsupportedJobAction
+from ai_orchestrator_web.jobs.runner import ActiveJobExists, start_background_job
 
 
 ARTIFACT_PREVIEW_LIMIT = 4000
+RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
 RUN_PREVIEW_ARTIFACTS = (
     ("final_report", "final_report.md"),
     ("review_packet", "REVIEW_PACKET.md"),
@@ -51,6 +55,31 @@ def create_runs_router(*, project_root: Path, templates: Jinja2Templates) -> API
             {"summary": summary, "artifact_previews": _artifact_previews(summary)},
         )
 
+    @router.post("/runs/{run_id}/classify")
+    def classify_run(run_id: str) -> RedirectResponse:
+        safe_run_id = _validate_id(run_id, "run not found")
+        if not runs_dir.exists():
+            raise HTTPException(status_code=404, detail="runs directory not found")
+        if not (runs_dir / safe_run_id).is_dir():
+            raise HTTPException(status_code=404, detail=f"run not found: {safe_run_id}")
+        try:
+            job = start_background_job(
+                project_root=project_root,
+                action="classify_run",
+                params={"run_id": safe_run_id},
+                result_refs={
+                    "run_id": safe_run_id,
+                    "run_url": f"/runs/{safe_run_id}",
+                    "runs_url": "/runs",
+                    "pipelines_url": "/pipelines",
+                },
+            )
+        except ActiveJobExists as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except UnsupportedJobAction as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return RedirectResponse(url=f"/jobs/{job.job_id}", status_code=303)
+
     return router
 
 
@@ -60,6 +89,8 @@ def _validate_id(identifier: str, message: str) -> str:
     if "/" in identifier or "\\" in identifier:
         raise HTTPException(status_code=404, detail=message)
     if Path(identifier).is_absolute() or ".." in PurePath(identifier).parts:
+        raise HTTPException(status_code=404, detail=message)
+    if not RUN_ID_PATTERN.fullmatch(identifier):
         raise HTTPException(status_code=404, detail=message)
     return identifier
 

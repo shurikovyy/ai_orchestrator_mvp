@@ -7,7 +7,7 @@
     <h2>Run Detail</h2>
     <span class="badge">{{ summary.next_action }}</span>
   </div>
-  <p class="note">This page is read-only. It does not classify, run review checks, approve, apply, accept, commit, run Codex, or run pipeline.</p>
+  <p class="note">Viewing this page is read-only. Classify run writes only risk classification artifacts under .runs and does not run review checks, approve, apply, accept, commit, run Codex, or run pipeline.</p>
   <dl class="status-grid">
     <div><dt>run_id</dt><dd><code>{{ summary.run_id }}</code></dd></div>
     <div><dt>validator_status</dt><dd>{{ summary.validator_status }}</dd></div>
@@ -28,6 +28,18 @@
     <div><dt>acceptance_status</dt><dd>{{ summary.acceptance_status }}</dd></div>
     <div><dt>next_action</dt><dd>{{ summary.next_action }}</dd></div>
   </dl>
+</section>
+
+<section class="panel artifact-panel">
+  <div class="panel-heading">
+    <h2>Post-run Analysis</h2>
+    <span class="badge">{{ summary.next_action }}</span>
+  </div>
+  <p>Recommended next action: {{ summary.next_action }}</p>
+  <p>Classify run analyzes completed run artifacts and writes risk classification under .runs. It does not run Codex, run pipeline, apply, accept, or commit.</p>
+  <form class="inline-action-form" method="post" action="/runs/{{ summary.run_id }}/classify">
+    <button type="submit">Classify run</button>
+  </form>
 </section>
 
 <section class="panel artifact-panel">

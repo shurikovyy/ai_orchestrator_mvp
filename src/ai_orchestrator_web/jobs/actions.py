@@ -81,6 +81,12 @@ ALLOWED_ACTIONS: dict[str, AllowedJobAction] = {
         description="Run the orchestrator pipeline for one task with configured Codex command.",
         show_in_jobs_form=False,
     ),
+    "classify_run": AllowedJobAction(
+        name="classify_run",
+        label="Classify run",
+        description="Classify risk for one existing run artifact directory.",
+        show_in_jobs_form=False,
+    ),
 }
 
 
@@ -216,6 +222,17 @@ def build_action_command(action: str, project_root: Path, params: dict[str, str]
             "--verbose",
             "--stream-codex-output",
         ]
+    if action == "classify_run":
+        run_id = _safe_existing_run_id(project_root, _required_param(values, "run_id"))
+        return [
+            sys.executable,
+            "-m",
+            "ai_orchestrator.cli",
+            "classify-run",
+            run_id,
+            "--runs-dir",
+            str((project_root / ".runs").resolve()),
+        ]
     raise UnsupportedJobAction(f"unsupported job action: {action}")
 
 
@@ -273,6 +290,23 @@ def _safe_existing_task_id(project_root: Path, value: str) -> str:
     except (FileNotFoundError, TaskQueueConfigError) as exc:
         raise UnsupportedJobAction(str(exc)) from exc
     return task_id
+
+
+def _safe_existing_run_id(project_root: Path, value: str) -> str:
+    run_id = value.strip()
+    if value != run_id:
+        raise UnsupportedJobAction("run id must not contain leading or trailing whitespace")
+    if not _is_safe_identifier(run_id):
+        raise UnsupportedJobAction("run id is not safe")
+    run_dir = (project_root / ".runs" / run_id).resolve()
+    runs_dir = (project_root / ".runs").resolve()
+    try:
+        run_dir.relative_to(runs_dir)
+    except ValueError as exc:
+        raise UnsupportedJobAction("run id must resolve under .runs") from exc
+    if not run_dir.is_dir():
+        raise UnsupportedJobAction(f"run not found: {run_id}")
+    return run_id
 
 
 def _is_safe_identifier(value: str) -> bool:
