@@ -1,4 +1,4 @@
-"""Read-only task queue web routes."""
+"""Task queue inspection and allowlisted lifecycle action routes."""
 
 from __future__ import annotations
 

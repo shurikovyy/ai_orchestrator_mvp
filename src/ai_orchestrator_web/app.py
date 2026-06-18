@@ -1,4 +1,4 @@
-"""FastAPI app factory for the read-only local web MVP."""
+"""FastAPI app factory for the local governed web MVP."""
 
 from __future__ import annotations
 

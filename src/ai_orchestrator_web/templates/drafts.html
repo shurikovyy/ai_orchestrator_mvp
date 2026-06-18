@@ -4,9 +4,9 @@
 <section class="panel">
   <div class="panel-heading">
     <h2>Task Drafts</h2>
-    <span class="badge">read-only</span>
+    <span class="badge">inspection + draft actions</span>
   </div>
-  <p class="note">Draft pages inspect local artifacts only. They do not validate, revise, promote, run Codex, run pipeline, apply, or commit.</p>
+  <p class="note">Draft list is inspection-only. Draft detail pages may run allowlisted draft-local actions such as validate draft and promote disabled; they do not run Codex, run pipeline, apply, accept, or commit.</p>
   <p><a class="card-link" href="/drafts/new">Create new task draft</a></p>
   {% if summaries %}
   <div class="table-wrap">

@@ -1,4 +1,4 @@
-"""Read-only task draft web routes."""
+"""Task draft inspection and allowlisted intake action routes."""
 
 from __future__ import annotations
 

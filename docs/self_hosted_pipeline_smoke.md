@@ -23,7 +23,7 @@ python -m pip install -e .
 - Have a working Codex CLI command available, either on `PATH` or via an explicit `codex_cmd` / `--codex-cmd` value.
 - Start from a local `tasks.yaml`; do not edit `tasks.yaml.example` directly.
 - For a true self-hosted run, point `seed_workspace` at this repository. If `tasks.yaml` is in the repo root, `seed_workspace: "."` resolves to the current repo.
-- If you may later run `accept-run`, keep the target repo clean first. `accept-run` refuses dirty target repositories.
+- Keep the target repo clean before any later apply step. `apply-run` and the advanced `accept-run` path both refuse dirty target repositories.
 
 ## Create Or Update `tasks.yaml`
 
@@ -130,16 +130,28 @@ Review it in this order:
 2. Check the recorded test command and test result summary.
 3. Check `Changed files and apply plan` to make sure only intended files would be applied.
 4. Read the diff preview.
-5. Verify the suggested `accept-run` command matches the run you intend to approve.
+5. Verify the run id and apply plan before recording any human review approval.
 
-For a smoke pass, the review packet should give you enough information to decide whether the run is safe to accept or whether it should be discarded and rerun.
+For a smoke pass, the review packet should give you enough information to decide whether the run is ready for post-run review gates or whether it should be discarded and rerun.
 
 ## Manual Gates
 
-`run-pipeline` stops at artifact generation. Two gates stay manual:
+`run-pipeline` stops at artifact generation. The recommended smoke path keeps review, apply, tests, and commit explicit:
 
-- `accept-run` is manual. Nothing is applied back to the target repo unless you invoke it yourself after review.
-- commit is manual. `run-pipeline` never creates a commit by itself. If you choose to use `accept-run`, that is an explicit manual accept/commit step. You can also skip it and apply or commit changes with your normal workflow instead.
+```text
+run-pipeline
+→ inspect REVIEW_PACKET
+→ classify-run / run-review-checks / prepare-review if needed
+→ review-run --decision approved
+→ apply-run
+→ git diff
+→ tests
+→ manual git add / git commit
+```
+
+Do not apply anything until human review approval is recorded. The recommended default is `review-run --decision approved` → `apply-run` → manual diff/tests/commit.
+
+`accept-run` remains available only as an advanced explicit delegated apply+commit path, separate from the recommended smoke path.
 
 ## Artifacts To Inspect
 
@@ -163,6 +175,6 @@ What to look for:
 - `PIPELINE_REPORT.md` should confirm which task ran and remind you that no automatic accept or commit happened.
 - `pipeline_state.json` should record the selected task, final pipeline status, and per-task artifact paths.
 - `final_report.md` should summarize the final validation outcome.
-- `REVIEW_PACKET.md` should summarize report status, tests, changed files, diff preview, and the manual accept command.
+- `REVIEW_PACKET.md` should summarize report status, tests, changed files, diff preview, and the manual apply/review path.
 - `artifacts/workspace/EXECUTION_REPORT.json` should contain the structured execution report produced inside the isolated workspace.
 - `artifacts/workspace/...` should contain only the files you expect the task to have changed.

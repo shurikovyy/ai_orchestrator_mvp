@@ -7,7 +7,7 @@
     <h2>Task Detail</h2>
     <span class="badge {{ 'badge-clean' if summary.enabled else 'badge-dirty' }}">enabled={{ summary.enabled|string|lower }}</span>
   </div>
-  <p class="note">Viewing this page is read-only. Enable/disable changes only this task's enabled flag; diagnostic/planning jobs write job metadata/logs, and real pipeline execution creates .runs artifacts without apply, accept, or commit.</p>
+  <p class="note">Task detail includes inspection plus explicit lifecycle actions. Enable/disable changes only this task's enabled flag; diagnostic/planning jobs write job metadata/logs, and real pipeline execution creates .runs artifacts without apply, accept, or commit.</p>
   <dl class="status-grid">
     <div>
       <dt>task_id</dt>

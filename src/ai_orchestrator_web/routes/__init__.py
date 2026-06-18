@@ -1,1 +1,1 @@
-"""Web route modules for the local read-only dashboard."""
+"""Web route modules for the local governed dashboard."""

@@ -32,23 +32,18 @@ http://127.0.0.1:8765
 
 Current scope:
 
-- read-only dashboard;
-- read-only drafts list at `/drafts`;
-- read-only draft detail at `/drafts/<draft_id>`;
-- read-only tasks list at `/tasks`;
-- task detail and explicit enable/disable gate at `/tasks/<task_id>`;
-- read-only runs list at `/runs`;
-- read-only run detail at `/runs/<run_id>`;
-- read-only pipelines list at `/pipelines`;
-- read-only pipeline detail at `/pipelines/<pipeline_id>`;
+- read-only inspection pages for dashboard, draft/task/run/pipeline lists, and pipeline detail;
+- allowlisted lifecycle actions from selected detail pages;
 - local allowlisted jobs at `/jobs`;
 - safe task request form at `/drafts/new`;
-- no apply/accept/commit.
+- no approval/apply/accept/commit actions.
 
-Draft pages do not validate, revise, promote, run Codex, run pipeline, apply, or commit.
-Task pages expose an explicit enable/disable gate plus doctor dry-run diagnostics, pipeline dry-run planning, doctor real-run readiness, and the confirmed real pipeline action. They do not apply, accept, or commit.
-Run and pipeline pages expose post-run analysis actions only. They do not prepare review, record findings, approve/reject, apply, accept, commit, run Codex, or run pipeline.
-The generic `/jobs` form exposes only safe allowlisted actions and never arbitrary shell commands. Job metadata and logs are stored under `.web/jobs/`.
+The web UI includes read-only inspection pages plus governed allowlisted lifecycle actions. Some actions write local artifacts under `.task_drafts/`, `tasks.yaml`, `.runs/`, or `.web/jobs/`.
+Draft list pages are inspection-only. Draft detail pages may validate a draft and promote a valid draft as disabled; they do not run Codex, run pipeline, apply, accept, or commit.
+Task detail pages expose an explicit enable/disable gate plus doctor dry-run diagnostics, pipeline dry-run planning, doctor real-run readiness, and the confirmed real pipeline action. Real pipeline execution is available only from `/tasks/<task_id>` when the task is enabled, `CODEX_CMD` or `AI_ORCHESTRATOR_CODEX_CMD` is configured, and the operator explicitly confirms. Task actions do not apply, accept, or commit.
+Run detail pages expose post-run analysis/material preparation actions: classify run, run review checks, and prepare review. They do not run reviewer agents, record findings, record arbitration, approve/reject, apply, accept, commit, run Codex, or run pipeline.
+Pipeline pages remain read-only inspection pages.
+The generic `/jobs` form exposes only safe non-parameterized allowlisted actions and never arbitrary shell commands. Parameterized lifecycle actions are launched from their detail pages. Job metadata and logs are stored under `.web/jobs/`.
 New Task Request at `/drafts/new` is a write-capable but safe scaffold flow: it creates a local raw request and task draft scaffold only. It does not run Codex, run pipeline, validate, promote, apply, accept, or commit.
 Validate draft is available from `/drafts/<draft_id>` when the deterministic next action is `validate_task_draft`. It writes only draft-local validator reports and manifest validation metadata; it does not run Codex, run pipeline, promote, apply, accept, or commit.
 Promote disabled is available from `/drafts/<draft_id>` when the deterministic next action is `promote_task_draft`. It writes to `tasks.yaml` with `enabled=false`; it does not enable the task, run doctor, run pipeline, run Codex, apply, accept, or commit.
@@ -1069,6 +1064,19 @@ Behavior:
 - it does not create `REVIEW_FINDINGS.json`;
 - it does not approve or reject the run;
 - it does not modify the target repo.
+
+Artifact contract:
+
+```text
+.runs/<run_id>/reviewer_prompts/
+├── MANIFEST.json
+├── security_review_prompt.md
+├── architecture_review_prompt.md
+├── qa_review_prompt.md
+└── ...
+```
+
+`MANIFEST.json` is the reviewer prompt packet index. Prompt files are written as `<profile>_review_prompt.md`. Future viewers/tools should use the manifest and safe profile-to-file mapping, not hardcoded illustrative filenames.
 
 Workflow:
 
