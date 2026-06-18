@@ -7,7 +7,7 @@
     <h2>Run Detail</h2>
     <span class="badge">{{ summary.next_action }}</span>
   </div>
-  <p class="note">Viewing this page is read-only. Classify run and run review checks write only post-run analysis artifacts under .runs. They do not approve, apply, accept, commit, run Codex, or run pipeline.</p>
+  <p class="note">Viewing this page is read-only. Classify run, run review checks, and prepare review write only post-run analysis/review materials under .runs. They do not run reviewer agents, approve, apply, accept, commit, run Codex, or run pipeline.</p>
   <dl class="status-grid">
     <div><dt>run_id</dt><dd><code>{{ summary.run_id }}</code></dd></div>
     <div><dt>validator_status</dt><dd>{{ summary.validator_status }}</dd></div>
@@ -46,6 +46,11 @@
   <p>Run review checks analyzes existing run artifacts and writes deterministic review/check artifacts under .runs. It does not run Codex, run pipeline, approve, apply, accept, or commit.</p>
   <form class="inline-action-form" method="post" action="/runs/{{ summary.run_id }}/review-checks">
     <button type="submit">Run review checks</button>
+  </form>
+  <p class="note">Prepare review usually comes after classification and review checks.</p>
+  <p>Prepare review generates reviewer prompt packets for required profiles under .runs. It does not run reviewer agents, run Codex, run pipeline, approve, apply, accept, or commit. Prepared reviewer prompts are written under the run artifacts directory.</p>
+  <form class="inline-action-form" method="post" action="/runs/{{ summary.run_id }}/prepare-review">
+    <button type="submit">Prepare review</button>
   </form>
 </section>
 

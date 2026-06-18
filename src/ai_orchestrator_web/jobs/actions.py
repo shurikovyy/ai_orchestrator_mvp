@@ -93,6 +93,12 @@ ALLOWED_ACTIONS: dict[str, AllowedJobAction] = {
         description="Run deterministic review checks for one existing run artifact directory.",
         show_in_jobs_form=False,
     ),
+    "prepare_review": AllowedJobAction(
+        name="prepare_review",
+        label="Prepare review",
+        description="Prepare required reviewer prompt packets for one existing run artifact directory.",
+        show_in_jobs_form=False,
+    ),
 }
 
 
@@ -249,6 +255,18 @@ def build_action_command(action: str, project_root: Path, params: dict[str, str]
             run_id,
             "--runs-dir",
             str((project_root / ".runs").resolve()),
+        ]
+    if action == "prepare_review":
+        run_id = _safe_existing_run_id(project_root, _required_param(values, "run_id"))
+        return [
+            sys.executable,
+            "-m",
+            "ai_orchestrator.cli",
+            "prepare-review",
+            run_id,
+            "--runs-dir",
+            str((project_root / ".runs").resolve()),
+            "--required-profiles",
         ]
     raise UnsupportedJobAction(f"unsupported job action: {action}")
 

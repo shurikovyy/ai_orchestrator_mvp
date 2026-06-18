@@ -59,6 +59,7 @@ Doctor real-run readiness is available from `/tasks/<task_id>` when `CODEX_CMD` 
 Run real pipeline is available only from `/tasks/<task_id>` when the task is enabled, `CODEX_CMD` or `AI_ORCHESTRATOR_CODEX_CMD` is configured, and the operator explicitly confirms. It launches the orchestrator with Codex in an isolated workspace and creates `.runs` artifacts; it does not apply changes, accept, or commit.
 Classify run is available from `/runs/<run_id>`. It analyzes existing run artifacts and writes risk classification under `.runs/<run_id>`; it does not run Codex, run pipeline, apply, accept, or commit.
 Run review checks is available from `/runs/<run_id>`. It analyzes existing run artifacts and writes deterministic review/check artifacts under `.runs/<run_id>`; it does not run Codex, run pipeline, approve, apply, accept, or commit.
+Prepare review is available from `/runs/<run_id>`. It generates reviewer prompt packets for required profiles under `.runs/<run_id>`; it does not run reviewer agents, run Codex, run pipeline, record findings, approve, apply, accept, or commit.
 Main web pages include Home navigation plus Drafts, Tasks, Runs, Pipelines, and Jobs links.
 
 ## Current capabilities
