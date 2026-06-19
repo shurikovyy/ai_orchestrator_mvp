@@ -23,7 +23,10 @@
     <div><dt>change_type</dt><dd>{{ summary.change_type or "" }}</dd></div>
     <div><dt>required_review_profiles</dt><dd>{{ summary.required_review_profiles|join(", ") }}</dd></div>
     <div><dt>optional_review_profiles</dt><dd>{{ summary.optional_review_profiles|join(", ") }}</dd></div>
-    <div><dt>reviewer_prompts_count</dt><dd>{{ summary.reviewer_prompts_count }}</dd></div>
+    <div>
+      <dt>reviewer_prompts_count</dt>
+      <dd>{{ summary.reviewer_prompts_count }} (<a href="/runs/{{ summary.run_id }}/reviewer-prompts">View reviewer prompts</a>)</dd>
+    </div>
     <div><dt>application_status</dt><dd>{{ summary.application_status }}</dd></div>
     <div><dt>acceptance_status</dt><dd>{{ summary.acceptance_status }}</dd></div>
     <div><dt>next_action</dt><dd>{{ summary.next_action }}</dd></div>

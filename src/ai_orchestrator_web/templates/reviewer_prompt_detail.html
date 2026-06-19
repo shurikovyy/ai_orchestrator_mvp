@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="panel">
+  <p><a href="/runs/{{ detail.run_id }}/reviewer-prompts">&larr; Back to reviewer prompts</a></p>
+  <p><a href="/runs/{{ detail.run_id }}">&larr; Back to run</a></p>
+  <div class="panel-heading">
+    <h2>Reviewer Prompt Packet</h2>
+    <span class="badge">{{ detail.profile }}</span>
+  </div>
+  <p class="note">External reviewers or humans can copy this prompt. This page does not run reviewers, record findings, approve, apply, accept, or commit.</p>
+  <dl class="status-grid">
+    <div><dt>run_id</dt><dd><code>{{ detail.run_id }}</code></dd></div>
+    <div><dt>profile</dt><dd><code>{{ detail.profile }}</code></dd></div>
+    <div><dt>filename</dt><dd>{{ detail.filename }}</dd></div>
+    <div><dt>source</dt><dd>{{ detail.source }}</dd></div>
+    <div><dt>path</dt><dd>{{ detail.path }}</dd></div>
+  </dl>
+</section>
+
+<section class="panel artifact-panel">
+  <div class="panel-heading">
+    <h2>Prompt Content</h2>
+    <span class="badge">read-only</span>
+  </div>
+  <pre>{{ detail.content }}</pre>
+</section>
+{% endblock %}

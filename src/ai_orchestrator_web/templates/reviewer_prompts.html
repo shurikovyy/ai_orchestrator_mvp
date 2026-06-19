@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="panel">
+  <p><a href="/runs/{{ index.run_id }}">&larr; Back to run</a></p>
+  <div class="panel-heading">
+    <h2>Reviewer Prompt Packets</h2>
+    <span class="badge">{{ index.entries|length }}</span>
+  </div>
+  <p class="note">Read-only viewer for prepared reviewer prompt packets. It does not run reviewer agents, record findings, approve, apply, accept, or commit.</p>
+  <dl class="status-grid">
+    <div><dt>run_id</dt><dd><code>{{ index.run_id }}</code></dd></div>
+    <div><dt>reviewer_prompts_dir</dt><dd>{{ index.prompts_dir }}</dd></div>
+    <div><dt>manifest</dt><dd>{{ index.manifest_path if index.manifest_exists else "missing" }}</dd></div>
+    <div><dt>schema_version</dt><dd>{{ index.manifest_schema_version or "" }}</dd></div>
+    <div><dt>manifest_profiles</dt><dd>{{ index.manifest_profiles|join(", ") }}</dd></div>
+  </dl>
+  {% for warning in index.warnings %}
+  <p class="note">{{ warning }}</p>
+  {% endfor %}
+</section>
+
+<section class="panel artifact-panel">
+  <div class="panel-heading">
+    <h2>Prompt Packets</h2>
+    <span class="badge">manifest + fallback</span>
+  </div>
+  {% if index.entries %}
+  <div class="table-wrap">
+    <table class="draft-table">
+      <thead>
+        <tr>
+          <th>profile</th>
+          <th>filename</th>
+          <th>source</th>
+          <th>exists</th>
+          <th>detail</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for entry in index.entries %}
+        <tr>
+          <td><code>{{ entry.profile }}</code></td>
+          <td>{{ entry.filename }}</td>
+          <td>{{ entry.source }}</td>
+          <td>{{ entry.exists|string|lower }}</td>
+          <td>
+            {% if entry.safe and entry.exists %}
+            <a href="/runs/{{ index.run_id }}/reviewer-prompts/{{ entry.profile }}">Open</a>
+            {% else %}
+            unavailable
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty-state">No reviewer prompt packets found for this run. Run Prepare review first.</p>
+  {% endif %}
+</section>
+{% endblock %}

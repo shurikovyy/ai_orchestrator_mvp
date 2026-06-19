@@ -208,6 +208,29 @@ def create_web_run(root: Path, *, long_review_packet: bool = False) -> tuple[str
     return state.run_id, run_dir
 
 
+def write_reviewer_prompt_fixture(run_dir: Path, run_id: str, profiles: tuple[str, ...]) -> Path:
+    prompts_dir = run_dir / "reviewer_prompts"
+    prompts_dir.mkdir(parents=True, exist_ok=True)
+    prompt_entries = []
+    for profile in profiles:
+        prompt_path = prompts_dir / f"{profile}_review_prompt.md"
+        prompt_path.write_text(f"# {profile} prompt\n\nPrompt content for {profile}.\n", encoding="utf-8")
+        prompt_entries.append({"profile": profile, "path": str(prompt_path.resolve())})
+    (prompts_dir / "MANIFEST.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "run_id": run_id,
+                "profiles": list(profiles),
+                "prompts": prompt_entries,
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    return prompts_dir
+
+
 def create_web_pipeline(root: Path, *, run_id: str, run_dir: Path) -> tuple[str, Path]:
     pipeline_id = "pipeline_web_fixture"
     pipeline_dir = root / ".runs" / "pipelines" / pipeline_id
@@ -1702,6 +1725,238 @@ class WebAppRouteTests(unittest.TestCase):
             self.assertIn("Prepare review", response.text)
             self.assertIn("reviewer prompt packets", response.text)
             self.assertIn(f'action="/runs/{run_id}/prepare-review"', response.text)
+
+    def test_run_detail_links_to_reviewer_prompt_viewer(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, _run_dir = create_web_run(root)
+            client = TestClient(create_app(root))
+
+            response = client.get(f"/runs/{run_id}")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("View reviewer prompts", response.text)
+            self.assertIn(f'href="/runs/{run_id}/reviewer-prompts"', response.text)
+
+    def test_reviewer_prompts_index_empty_state_is_read_only(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            before_state = (run_dir / "state.json").read_text(encoding="utf-8")
+            client = TestClient(create_app(root))
+
+            response = client.get(f"/runs/{run_id}/reviewer-prompts")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("No reviewer prompt packets found for this run. Run Prepare review first.", response.text)
+            self.assertIn("does not run reviewer agents", response.text)
+            self.assertFalse((root / ".web" / "jobs").exists())
+            self.assertEqual((run_dir / "state.json").read_text(encoding="utf-8"), before_state)
+            for blocked in ("record-findings", "review-run", "apply-run", "accept-run", "run-pipeline"):
+                self.assertNotIn(blocked, response.text)
+
+    def test_reviewer_prompts_index_reads_manifest_and_lists_actual_files(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            write_reviewer_prompt_fixture(run_dir, run_id, ("security", "architecture", "qa"))
+            client = TestClient(create_app(root))
+
+            response = client.get(f"/runs/{run_id}/reviewer-prompts")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("schema_version", response.text)
+            self.assertIn("1.0", response.text)
+            self.assertIn("security_review_prompt.md", response.text)
+            self.assertIn("architecture_review_prompt.md", response.text)
+            self.assertIn("qa_review_prompt.md", response.text)
+            self.assertNotIn("security" + ".md", response.text)
+            self.assertNotIn("architecture" + ".md", response.text)
+            self.assertNotIn("qa" + ".md", response.text)
+            self.assertIn(f'href="/runs/{run_id}/reviewer-prompts/security"', response.text)
+            self.assertIn(f'href="/runs/{run_id}/reviewer-prompts/architecture"', response.text)
+            self.assertIn(f'href="/runs/{run_id}/reviewer-prompts/qa"', response.text)
+
+    def test_reviewer_prompt_detail_opens_manifest_backed_file(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            write_reviewer_prompt_fixture(run_dir, run_id, ("security",))
+            client = TestClient(create_app(root))
+
+            response = client.get(f"/runs/{run_id}/reviewer-prompts/security")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("security_review_prompt.md", response.text)
+            self.assertIn("Prompt content for security.", response.text)
+            self.assertIn("External reviewers or humans can copy this prompt.", response.text)
+            for blocked in ("record-findings", "review-run", "apply-run", "accept-run", "run-pipeline"):
+                self.assertNotIn(blocked, response.text)
+
+    def test_reviewer_prompt_fallback_works_without_manifest(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            prompts_dir = run_dir / "reviewer_prompts"
+            prompts_dir.mkdir(parents=True)
+            (prompts_dir / "qa_review_prompt.md").write_text("# QA fallback\n\nFallback prompt.\n", encoding="utf-8")
+            client = TestClient(create_app(root))
+
+            index = client.get(f"/runs/{run_id}/reviewer-prompts")
+            detail = client.get(f"/runs/{run_id}/reviewer-prompts/qa")
+
+            self.assertEqual(index.status_code, 200)
+            self.assertIn("qa_review_prompt.md", index.text)
+            self.assertIn("fallback", index.text)
+            self.assertEqual(detail.status_code, 200)
+            self.assertIn("Fallback prompt.", detail.text)
+            self.assertIn("source</dt><dd>fallback", detail.text)
+
+    def test_reviewer_prompt_incomplete_manifest_adds_fallback_files(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            prompts_dir = write_reviewer_prompt_fixture(run_dir, run_id, ("security",))
+            (prompts_dir / "qa_review_prompt.md").write_text("# QA fallback\n\nExtra prompt.\n", encoding="utf-8")
+            client = TestClient(create_app(root))
+
+            response = client.get(f"/runs/{run_id}/reviewer-prompts")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("security_review_prompt.md", response.text)
+            self.assertIn("qa_review_prompt.md", response.text)
+            self.assertIn(f'href="/runs/{run_id}/reviewer-prompts/qa"', response.text)
+
+    def test_reviewer_prompt_routes_reject_unsafe_run_id(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            client = TestClient(create_app(root))
+
+            index = client.get("/runs/bad%5Cname/reviewer-prompts")
+            detail = client.get("/runs/bad%5Cname/reviewer-prompts/qa")
+
+            self.assertIn(index.status_code, {400, 404})
+            self.assertIn(detail.status_code, {400, 404})
+
+    def test_reviewer_prompt_detail_rejects_unsafe_profile(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            write_reviewer_prompt_fixture(run_dir, run_id, ("qa",))
+            client = TestClient(create_app(root))
+
+            path_traversal = client.get(f"/runs/{run_id}/reviewer-prompts/..%2Fsecret")
+            bad_name = client.get(f"/runs/{run_id}/reviewer-prompts/bad%5Cname")
+
+            self.assertIn(path_traversal.status_code, {400, 404})
+            self.assertIn(bad_name.status_code, {400, 404})
+
+    def test_reviewer_prompt_unknown_profile_returns_not_found(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            write_reviewer_prompt_fixture(run_dir, run_id, ("qa",))
+            client = TestClient(create_app(root))
+
+            response = client.get(f"/runs/{run_id}/reviewer-prompts/security")
+
+            self.assertEqual(response.status_code, 404)
+
+    def test_reviewer_prompt_manifest_path_outside_prompts_dir_is_not_read(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            prompts_dir = run_dir / "reviewer_prompts"
+            prompts_dir.mkdir(parents=True)
+            outside_file = root / "outside_secret.md"
+            outside_file.write_text("outside file secret should not render", encoding="utf-8")
+            (prompts_dir / "MANIFEST.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": "1.0",
+                        "run_id": run_id,
+                        "profiles": ["security"],
+                        "prompts": [{"profile": "security", "path": str(outside_file.resolve())}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            client = TestClient(create_app(root))
+
+            index = client.get(f"/runs/{run_id}/reviewer-prompts")
+            detail = client.get(f"/runs/{run_id}/reviewer-prompts/security")
+
+            self.assertEqual(index.status_code, 200)
+            self.assertIn("ignored unsafe manifest path for profile: security", index.text)
+            self.assertNotIn("outside file secret should not render", index.text)
+            self.assertNotIn(f'href="/runs/{run_id}/reviewer-prompts/security"', index.text)
+            self.assertEqual(detail.status_code, 404)
+            self.assertNotIn("outside file secret should not render", detail.text)
+
+    def test_reviewer_prompt_manifest_contained_non_prompt_file_is_not_read(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            prompts_dir = run_dir / "reviewer_prompts"
+            prompts_dir.mkdir(parents=True)
+            non_prompt = prompts_dir / "not_a_prompt.txt"
+            non_prompt.write_text("contained non-prompt secret should not render", encoding="utf-8")
+            (prompts_dir / "MANIFEST.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": "1.0",
+                        "run_id": run_id,
+                        "profiles": ["security"],
+                        "prompts": [{"profile": "security", "path": str(non_prompt.resolve())}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            client = TestClient(create_app(root))
+
+            index = client.get(f"/runs/{run_id}/reviewer-prompts")
+            detail = client.get(f"/runs/{run_id}/reviewer-prompts/security")
+
+            self.assertEqual(index.status_code, 200)
+            self.assertIn("ignored non-prompt manifest path for profile: security", index.text)
+            self.assertIn("not_a_prompt.txt", index.text)
+            self.assertNotIn(f'href="/runs/{run_id}/reviewer-prompts/security"', index.text)
+            self.assertNotIn("contained non-prompt secret should not render", index.text)
+            self.assertEqual(detail.status_code, 404)
+            self.assertNotIn("contained non-prompt secret should not render", detail.text)
 
     def test_classify_run_post_creates_analysis_job_without_starting_cli_in_test(self) -> None:
         from fastapi.testclient import TestClient

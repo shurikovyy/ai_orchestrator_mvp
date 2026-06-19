@@ -55,6 +55,7 @@ Run real pipeline is available only from `/tasks/<task_id>` when the task is ena
 Classify run is available from `/runs/<run_id>`. It analyzes existing run artifacts and writes risk classification under `.runs/<run_id>`; it does not run Codex, run pipeline, apply, accept, or commit.
 Run review checks is available from `/runs/<run_id>`. It analyzes existing run artifacts and writes deterministic review/check artifacts under `.runs/<run_id>`; it does not run Codex, run pipeline, approve, apply, accept, or commit.
 Prepare review is available from `/runs/<run_id>`. It generates reviewer prompt packets for required profiles under `.runs/<run_id>`; it does not run reviewer agents, run Codex, run pipeline, record findings, approve, apply, accept, or commit.
+Reviewer prompt packet viewer is available at `/runs/<run_id>/reviewer-prompts` and `/runs/<run_id>/reviewer-prompts/<profile>`. It displays prepared reviewer prompt packets only; it does not run reviewer agents, record findings, approve, apply, accept, or commit.
 Main web pages include Home navigation plus Drafts, Tasks, Runs, Pipelines, and Jobs links.
 
 ## Current capabilities
