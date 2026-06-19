@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="panel">
+  <p><a href="/runs/{{ detail.run_id }}/findings">&larr; Back to findings</a></p>
+  <p><a href="/runs/{{ detail.run_id }}">&larr; Back to run</a></p>
+  <div class="panel-heading">
+    <h2>Review Finding</h2>
+    <span class="badge">{{ detail.finding.severity }}</span>
+  </div>
+  <p class="note">Read-only finding detail. This page does not record findings, arbitrate, approve, apply, accept, commit, run reviewer agents, run Codex, or run pipeline.</p>
+  <dl class="status-grid">
+    <div><dt>run_id</dt><dd><code>{{ detail.run_id }}</code></dd></div>
+    <div><dt>finding_id</dt><dd><code>{{ detail.finding.id }}</code></dd></div>
+    <div><dt>reviewer</dt><dd>{{ detail.finding.reviewer }}</dd></div>
+    <div><dt>category</dt><dd>{{ detail.finding.category }}</dd></div>
+    <div><dt>severity</dt><dd>{{ detail.finding.severity }}</dd></div>
+    <div><dt>status</dt><dd>{{ detail.finding.status }}</dd></div>
+    <div><dt>blocking</dt><dd>{{ detail.finding.blocking|string|lower }}</dd></div>
+    <div><dt>file</dt><dd>{{ detail.finding.file or "" }}</dd></div>
+    <div><dt>line</dt><dd>{{ detail.finding.line or "" }}</dd></div>
+    <div><dt>source_json</dt><dd>{{ detail.json_path }}</dd></div>
+  </dl>
+</section>
+
+<section class="panel artifact-panel">
+  <div class="panel-heading">
+    <h2>{{ detail.finding.title }}</h2>
+    <span class="badge">evidence</span>
+  </div>
+  <h3>Evidence</h3>
+  <pre>{{ detail.finding.evidence }}</pre>
+  <h3>Required action</h3>
+  <pre>{{ detail.finding.required_action or "(none)" }}</pre>
+</section>
+{% endblock %}

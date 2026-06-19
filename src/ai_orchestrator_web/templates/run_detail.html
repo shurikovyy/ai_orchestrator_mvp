@@ -13,7 +13,7 @@
     <div><dt>validator_status</dt><dd>{{ summary.validator_status }}</dd></div>
     <div><dt>backend</dt><dd>{{ summary.backend or "" }}</dd></div>
     <div><dt>human_review_decision</dt><dd>{{ summary.human_review_decision or "" }}</dd></div>
-    <div><dt>findings_exists</dt><dd>{{ summary.findings_exists|string|lower }}</dd></div>
+    <div><dt>findings_exists</dt><dd>{{ summary.findings_exists|string|lower }} (<a href="/runs/{{ summary.run_id }}/findings">View findings</a>)</dd></div>
     <div><dt>blocking_findings</dt><dd>{{ summary.blocking_findings }}</dd></div>
     <div><dt>review_findings_decision</dt><dd>{{ summary.review_findings_decision }}</dd></div>
     <div><dt>arbitration_exists</dt><dd>{{ summary.arbitration_exists|string|lower }}</dd></div>

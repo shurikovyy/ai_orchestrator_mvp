@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="panel">
+  <p><a href="/runs/{{ index.run_id }}">&larr; Back to run</a></p>
+  <div class="panel-heading">
+    <h2>Review Findings</h2>
+    <span class="badge">{{ index.findings|length }}</span>
+  </div>
+  <p class="note">Read-only viewer for existing review findings artifacts. This page documents the manual CLI format only; it does not record findings, run reviewer agents, arbitrate, approve, apply, accept, commit, run Codex, or run pipeline.</p>
+  <dl class="status-grid">
+    <div><dt>run_id</dt><dd><code>{{ index.run_id }}</code></dd></div>
+    <div><dt>REVIEW_FINDINGS.json</dt><dd>{{ index.json_path if index.json_exists else "missing" }}</dd></div>
+    <div><dt>REVIEW_FINDINGS.md</dt><dd>{{ index.markdown_path if index.markdown_exists else "missing" }}</dd></div>
+    {% if index.report %}
+    <div><dt>overall_decision</dt><dd>{{ index.report.overall_decision }}</dd></div>
+    <div><dt>source_profile</dt><dd>{{ index.report.source_profile or "" }}</dd></div>
+    <div><dt>source_kind</dt><dd>{{ index.report.source_kind or "" }}</dd></div>
+    <div><dt>created_at</dt><dd>{{ index.report.created_at.isoformat() }}</dd></div>
+    {% endif %}
+  </dl>
+  {% if index.load_error %}
+  <p class="empty-state">Review findings artifact exists, but could not be parsed safely.</p>
+  <p class="note">{{ index.load_error }}</p>
+  {% elif not index.json_exists %}
+  <p class="empty-state">No review findings recorded for this run yet. Use reviewer prompt packets with an external reviewer or human reviewer, then record structured JSON findings through the CLI.</p>
+  {% endif %}
+</section>
+
+{% if index.report %}
+<section class="panel">
+  <div class="panel-heading">
+    <h2>Findings Summary</h2>
+    <span class="badge">{{ index.report.overall_decision }}</span>
+  </div>
+  <p>{{ index.report.summary }}</p>
+  <dl class="status-grid">
+    <div><dt>total</dt><dd>{{ index.report.counts.total }}</dd></div>
+    <div><dt>critical</dt><dd>{{ index.report.counts.critical }}</dd></div>
+    <div><dt>major</dt><dd>{{ index.report.counts.major }}</dd></div>
+    <div><dt>minor</dt><dd>{{ index.report.counts.minor }}</dd></div>
+    <div><dt>nit</dt><dd>{{ index.report.counts.nit }}</dd></div>
+    <div><dt>blocking_open</dt><dd>{{ index.report.counts.blocking_open }}</dd></div>
+    <div><dt>accepted_risk</dt><dd>{{ index.report.counts.accepted_risk }}</dd></div>
+    <div><dt>resolved</dt><dd>{{ index.report.counts.resolved }}</dd></div>
+  </dl>
+</section>
+
+<section class="panel artifact-panel">
+  <div class="panel-heading">
+    <h2>Findings List</h2>
+    <span class="badge">read-only</span>
+  </div>
+  {% if index.findings %}
+  <div class="table-wrap">
+    <table class="draft-table">
+      <thead>
+        <tr>
+          <th>id</th>
+          <th>reviewer</th>
+          <th>category</th>
+          <th>severity</th>
+          <th>status</th>
+          <th>blocking</th>
+          <th>location</th>
+          <th>title</th>
+          <th>detail</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for entry in index.findings %}
+        {% set finding = entry.finding %}
+        <tr>
+          <td><code>{{ finding.id }}</code></td>
+          <td>{{ finding.reviewer }}</td>
+          <td>{{ finding.category }}</td>
+          <td>{{ finding.severity }}</td>
+          <td>{{ finding.status }}</td>
+          <td>{{ finding.blocking|string|lower }}</td>
+          <td>{{ finding.file or "" }}{% if finding.line %}:{{ finding.line }}{% endif %}</td>
+          <td>{{ finding.title }}</td>
+          <td>
+            {% if entry.safe_for_url %}
+            <a href="/runs/{{ index.run_id }}/findings/{{ finding.id }}">Open</a>
+            {% else %}
+            unavailable: unsafe id
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty-state">No findings in this report.</p>
+  {% endif %}
+</section>
+{% endif %}
+
+<section class="panel artifact-panel">
+  <div class="panel-heading">
+    <h2>record-findings JSON Helper</h2>
+    <span class="badge">manual CLI only</span>
+  </div>
+  <p class="note">The web UI does not ingest findings in this stage. Save reviewer output as a JSON file that matches the current schema, then run the CLI manually.</p>
+  <h3>CLI examples</h3>
+  <pre>{{ index.format_helper.command_example }}</pre>
+  <pre>{{ index.format_helper.profile_command_example }}</pre>
+  <h3>Top-level fields</h3>
+  <ul>
+    {% for field in index.format_helper.top_level_fields %}
+    <li><code>{{ field }}</code></li>
+    {% endfor %}
+  </ul>
+  <h3>Finding fields</h3>
+  <ul>
+    {% for field in index.format_helper.finding_fields %}
+    <li><code>{{ field }}</code></li>
+    {% endfor %}
+  </ul>
+  <h3>Validation rules</h3>
+  <ul>
+    {% for rule in index.format_helper.validation_rules %}
+    <li>{{ rule }}</li>
+    {% endfor %}
+  </ul>
+  <h3>No findings example</h3>
+  <pre>{{ index.format_helper.no_findings_example }}</pre>
+  <h3>Major finding example</h3>
+  <pre>{{ index.format_helper.major_finding_example }}</pre>
+</section>
+{% endblock %}

@@ -208,6 +208,39 @@ def create_web_run(root: Path, *, long_review_packet: bool = False) -> tuple[str
     return state.run_id, run_dir
 
 
+def write_review_findings_fixture(run_dir: Path, run_id: str) -> Path:
+    findings_path = run_dir / "REVIEW_FINDINGS.json"
+    findings_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "run_id": run_id,
+                "summary": "QA reviewer found one blocking issue.",
+                "overall_decision": "needs_rework",
+                "source_profile": "qa",
+                "source_kind": "reviewer_profile",
+                "findings": [
+                    {
+                        "id": "QA001",
+                        "reviewer": "qa",
+                        "category": "qa",
+                        "severity": "major",
+                        "title": "Missing regression test for changed behavior",
+                        "evidence": "The changed route behavior is not covered by a regression test.",
+                        "required_action": "Add a regression test for the changed route behavior.",
+                        "file": "tests/test_web_app.py",
+                        "line": 123,
+                        "status": "open",
+                    }
+                ],
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    return findings_path
+
+
 def write_reviewer_prompt_fixture(run_dir: Path, run_id: str, profiles: tuple[str, ...]) -> Path:
     prompts_dir = run_dir / "reviewer_prompts"
     prompts_dir.mkdir(parents=True, exist_ok=True)
@@ -1957,6 +1990,209 @@ class WebAppRouteTests(unittest.TestCase):
             self.assertNotIn("contained non-prompt secret should not render", index.text)
             self.assertEqual(detail.status_code, 404)
             self.assertNotIn("contained non-prompt secret should not render", detail.text)
+
+    def test_findings_index_empty_state_includes_cli_helper_and_is_read_only(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            before_state = (run_dir / "state.json").read_text(encoding="utf-8")
+            client = TestClient(create_app(root))
+
+            response = client.get(f"/runs/{run_id}/findings")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("No review findings recorded", response.text)
+            self.assertIn("record-findings", response.text)
+            self.assertIn("--findings-file", response.text)
+            self.assertNotIn("<form", response.text.lower())
+            self.assertNotIn('method="post"', response.text.lower())
+            self.assertFalse((root / ".web" / "jobs").exists())
+            self.assertEqual((run_dir / "state.json").read_text(encoding="utf-8"), before_state)
+
+    def test_findings_index_shows_existing_findings_summary_and_links(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            write_review_findings_fixture(run_dir, run_id)
+            client = TestClient(create_app(root))
+
+            response = client.get(f"/runs/{run_id}/findings")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("overall_decision", response.text)
+            self.assertIn("needs_rework", response.text)
+            self.assertIn("source_profile", response.text)
+            self.assertIn("qa", response.text)
+            self.assertIn("blocking_open", response.text)
+            self.assertIn("<dd>1</dd>", response.text)
+            self.assertIn("QA001", response.text)
+            self.assertIn("Missing regression test", response.text)
+            self.assertIn(f'href="/runs/{run_id}/findings/QA001"', response.text)
+
+    def test_findings_index_shows_markdown_artifact_status(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            write_review_findings_fixture(run_dir, run_id)
+            (run_dir / "REVIEW_FINDINGS.md").write_text("# Review Findings\n", encoding="utf-8")
+            client = TestClient(create_app(root))
+
+            response = client.get(f"/runs/{run_id}/findings")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("REVIEW_FINDINGS.md", response.text)
+            self.assertIn(str(run_dir / "REVIEW_FINDINGS.md"), response.text)
+
+    def test_findings_index_invalid_json_returns_friendly_error(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            (run_dir / "REVIEW_FINDINGS.json").write_text("{invalid json", encoding="utf-8")
+            client = TestClient(create_app(root))
+
+            response = client.get(f"/runs/{run_id}/findings")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("could not be parsed safely", response.text)
+            self.assertIn("REVIEW_FINDINGS.json could not be loaded", response.text)
+
+    def test_finding_detail_shows_existing_finding_fields(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            write_review_findings_fixture(run_dir, run_id)
+            client = TestClient(create_app(root))
+
+            response = client.get(f"/runs/{run_id}/findings/QA001")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("reviewer</dt><dd>qa", response.text)
+            self.assertIn("severity</dt><dd>major", response.text)
+            self.assertIn("category</dt><dd>qa", response.text)
+            self.assertIn("blocking</dt><dd>true", response.text)
+            self.assertIn("The changed route behavior is not covered", response.text)
+            self.assertIn("Add a regression test", response.text)
+            self.assertIn("tests/test_web_app.py", response.text)
+
+    def test_finding_detail_unknown_id_returns_not_found(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            write_review_findings_fixture(run_dir, run_id)
+            client = TestClient(create_app(root))
+
+            response = client.get(f"/runs/{run_id}/findings/MISSING")
+
+            self.assertEqual(response.status_code, 404)
+
+    def test_finding_detail_rejects_unsafe_finding_id(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            write_review_findings_fixture(run_dir, run_id)
+            client = TestClient(create_app(root))
+
+            path_traversal = client.get(f"/runs/{run_id}/findings/..%2Fsecret")
+            bad_name = client.get(f"/runs/{run_id}/findings/bad%5Cname")
+
+            self.assertIn(path_traversal.status_code, {400, 404})
+            self.assertIn(bad_name.status_code, {400, 404})
+
+    def test_findings_routes_reject_unsafe_run_id(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            client = TestClient(create_app(root))
+
+            index = client.get("/runs/bad%5Cname/findings")
+            detail = client.get("/runs/bad%5Cname/findings/QA001")
+
+            self.assertIn(index.status_code, {400, 404})
+            self.assertIn(detail.status_code, {400, 404})
+
+    def test_findings_pages_do_not_modify_state_or_findings_json(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            findings_path = write_review_findings_fixture(run_dir, run_id)
+            before_state = (run_dir / "state.json").read_text(encoding="utf-8")
+            before_findings = findings_path.read_text(encoding="utf-8")
+            client = TestClient(create_app(root))
+
+            index = client.get(f"/runs/{run_id}/findings")
+            detail = client.get(f"/runs/{run_id}/findings/QA001")
+
+            self.assertEqual(index.status_code, 200)
+            self.assertEqual(detail.status_code, 200)
+            self.assertFalse((root / ".web" / "jobs").exists())
+            self.assertEqual((run_dir / "state.json").read_text(encoding="utf-8"), before_state)
+            self.assertEqual(findings_path.read_text(encoding="utf-8"), before_findings)
+
+    def test_findings_pages_have_no_write_forms_or_dangerous_actions(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            write_review_findings_fixture(run_dir, run_id)
+            client = TestClient(create_app(root))
+
+            pages = [
+                client.get(f"/runs/{run_id}/findings"),
+                client.get(f"/runs/{run_id}/findings/QA001"),
+            ]
+
+            for response in pages:
+                self.assertEqual(response.status_code, 200)
+                self.assertNotIn("<form", response.text.lower())
+                self.assertNotIn('method="post"', response.text.lower())
+                self.assertNotIn("record-arbitration", response.text)
+                self.assertNotIn("review-run", response.text)
+                self.assertNotIn("apply-run", response.text)
+                self.assertNotIn("accept-run", response.text)
+                self.assertNotIn("run-pipeline", response.text)
+
+    def test_run_detail_links_to_findings_viewer(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, _run_dir = create_web_run(root)
+            client = TestClient(create_app(root))
+
+            response = client.get(f"/runs/{run_id}")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("View findings", response.text)
+            self.assertIn(f'href="/runs/{run_id}/findings"', response.text)
 
     def test_classify_run_post_creates_analysis_job_without_starting_cli_in_test(self) -> None:
         from fastapi.testclient import TestClient

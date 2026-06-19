@@ -56,6 +56,7 @@ Classify run is available from `/runs/<run_id>`. It analyzes existing run artifa
 Run review checks is available from `/runs/<run_id>`. It analyzes existing run artifacts and writes deterministic review/check artifacts under `.runs/<run_id>`; it does not run Codex, run pipeline, approve, apply, accept, or commit.
 Prepare review is available from `/runs/<run_id>`. It generates reviewer prompt packets for required profiles under `.runs/<run_id>`; it does not run reviewer agents, run Codex, run pipeline, record findings, approve, apply, accept, or commit.
 Reviewer prompt packet viewer is available at `/runs/<run_id>/reviewer-prompts` and `/runs/<run_id>/reviewer-prompts/<profile>`. It displays prepared reviewer prompt packets only; it does not run reviewer agents, record findings, approve, apply, accept, or commit.
+Review findings viewer is available at `/runs/<run_id>/findings` and `/runs/<run_id>/findings/<finding_id>`. It displays existing `REVIEW_FINDINGS.json` / `REVIEW_FINDINGS.md` summaries, finding detail, JSON format guidance, and manual `record-findings` CLI examples. It does not record findings, run reviewer agents, arbitrate, approve, apply, accept, or commit. `record-findings` UI is not implemented yet.
 Main web pages include Home navigation plus Drafts, Tasks, Runs, Pipelines, and Jobs links.
 
 ## Current capabilities
@@ -866,6 +867,8 @@ Findings are stored in run artifacts as:
 
 - `REVIEW_FINDINGS.json`
 - `REVIEW_FINDINGS.md`
+
+The local web UI can inspect existing findings at `/runs/<run_id>/findings` and `/runs/<run_id>/findings/<finding_id>`. This viewer is read-only: it documents the current JSON format and CLI `record-findings` examples, but does not record findings or expose approval/apply/accept/commit actions.
 
 Example findings JSON:
 
