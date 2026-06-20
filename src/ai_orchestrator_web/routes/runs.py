@@ -12,6 +12,11 @@ from fastapi.templating import Jinja2Templates
 
 from ai_orchestrator.run_inspection import list_run_status_summaries
 from ai_orchestrator.run_status import RunStatusSummary, build_run_status_summary
+from ai_orchestrator_web.arbitration_inspection import (
+    ArbitrationFindingNotFound,
+    build_arbitration_detail,
+    build_arbitration_index,
+)
 from ai_orchestrator_web.findings_inspection import (
     FindingNotFound,
     build_finding_detail,
@@ -200,6 +205,32 @@ def create_runs_router(*, project_root: Path, templates: Jinja2Templates) -> API
         return templates.TemplateResponse(
             request,
             "finding_detail.html",
+            {"detail": detail},
+        )
+
+    @router.get("/runs/{run_id}/arbitration", response_class=HTMLResponse)
+    def arbitration_index(request: Request, run_id: str) -> HTMLResponse:
+        safe_run_id = _validate_id(run_id, "run not found")
+        _ensure_run_exists(runs_dir=runs_dir, run_id=safe_run_id)
+        index = build_arbitration_index(run_id=safe_run_id, runs_dir=runs_dir)
+        return templates.TemplateResponse(
+            request,
+            "arbitration.html",
+            {"index": index},
+        )
+
+    @router.get("/runs/{run_id}/arbitration/{finding_id}", response_class=HTMLResponse)
+    def arbitration_detail(request: Request, run_id: str, finding_id: str) -> HTMLResponse:
+        safe_run_id = _validate_id(run_id, "run not found")
+        safe_finding_id = _validate_id(finding_id, "arbitrated finding not found")
+        _ensure_run_exists(runs_dir=runs_dir, run_id=safe_run_id)
+        try:
+            detail = build_arbitration_detail(run_id=safe_run_id, runs_dir=runs_dir, finding_id=safe_finding_id)
+        except ArbitrationFindingNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return templates.TemplateResponse(
+            request,
+            "arbitration_detail.html",
             {"detail": detail},
         )
 

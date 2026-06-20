@@ -1,0 +1,182 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="panel">
+  <p><a href="/runs/{{ index.run_id }}">&larr; Back to run</a></p>
+  <div class="panel-heading">
+    <h2>Review Arbitration</h2>
+    <span class="badge">{{ index.arbitrated_findings|length }}</span>
+  </div>
+  <p class="note">This page is read-only. It does not record arbitration, approve the run, apply changes, accept the run, or commit.</p>
+  <dl class="status-grid">
+    <div><dt>run_id</dt><dd><code>{{ index.run_id }}</code></dd></div>
+    <div><dt>REVIEW_FINDINGS.json</dt><dd>{{ index.findings_json_path if index.findings_exists else "missing" }}</dd></div>
+    <div><dt>REVIEW_FINDINGS.md</dt><dd>{{ index.findings_markdown_path if index.findings_markdown_exists else "missing" }}</dd></div>
+    <div><dt>REVIEW_ARBITRATION.json</dt><dd>{{ index.arbitration_json_path if index.arbitration_exists else "missing" }}</dd></div>
+    <div><dt>REVIEW_ARBITRATION.md</dt><dd>{{ index.arbitration_markdown_path if index.arbitration_markdown_exists else "missing" }}</dd></div>
+  </dl>
+  {% if index.findings_load_error %}
+  <p class="empty-state">Review findings artifact exists, but could not be parsed safely.</p>
+  <p class="note">{{ index.findings_load_error }}</p>
+  {% elif not index.findings_exists %}
+  <p class="empty-state">No review findings recorded yet. Arbitration requires REVIEW_FINDINGS.json.</p>
+  {% endif %}
+  {% if index.arbitration_load_error %}
+  <p class="empty-state">Review arbitration artifact exists, but could not be parsed safely.</p>
+  <p class="note">{{ index.arbitration_load_error }}</p>
+  {% elif not index.arbitration_exists %}
+  <p class="empty-state">No review arbitration recorded yet.</p>
+  {% endif %}
+  {% if index.arbitration_stale %}
+  <p class="empty-state">Review arbitration is stale because REVIEW_FINDINGS.json changed after arbitration was recorded. Do not rely on this arbitration.</p>
+  {% endif %}
+</section>
+
+{% if index.arbitration_report %}
+<section class="panel">
+  <div class="panel-heading">
+    <h2>Arbitration Summary</h2>
+    <span class="badge">{{ index.arbitration_report.overall_decision }}</span>
+  </div>
+  <p>{{ index.arbitration_report.summary }}</p>
+  <dl class="status-grid">
+    <div><dt>overall_decision</dt><dd>{{ index.arbitration_report.overall_decision }}</dd></div>
+    <div><dt>arbiter</dt><dd>{{ index.arbitration_report.arbiter }}</dd></div>
+    <div><dt>created_at</dt><dd>{{ index.arbitration_report.created_at.isoformat() }}</dd></div>
+    <div><dt>source_findings_sha256</dt><dd>{{ index.arbitration_report.source_findings_sha256 or "" }}</dd></div>
+    <div><dt>source_findings_updated_at</dt><dd>{{ index.arbitration_report.source_findings_updated_at or "" }}</dd></div>
+    <div><dt>arbitration_stale</dt><dd>{{ index.arbitration_stale|string|lower }}</dd></div>
+    <div><dt>total</dt><dd>{{ index.arbitration_report.counts.total }}</dd></div>
+    <div><dt>upheld</dt><dd>{{ index.arbitration_report.counts.upheld }}</dd></div>
+    <div><dt>downgraded</dt><dd>{{ index.arbitration_report.counts.downgraded }}</dd></div>
+    <div><dt>upgraded</dt><dd>{{ index.arbitration_report.counts.upgraded }}</dd></div>
+    <div><dt>dismissed</dt><dd>{{ index.arbitration_report.counts.dismissed }}</dd></div>
+    <div><dt>needs_evidence</dt><dd>{{ index.arbitration_report.counts.needs_evidence }}</dd></div>
+    <div><dt>conflict</dt><dd>{{ index.arbitration_report.counts.conflict }}</dd></div>
+    <div><dt>accepted_risk</dt><dd>{{ index.arbitration_report.counts.accepted_risk }}</dd></div>
+    <div><dt>final_blocking</dt><dd>{{ index.arbitration_report.counts.final_blocking }}</dd></div>
+    <div><dt>human_escalation_required</dt><dd>{{ index.arbitration_report.counts.human_escalation_required }}</dd></div>
+  </dl>
+</section>
+{% endif %}
+
+<section class="panel artifact-panel">
+  <div class="panel-heading">
+    <h2>Open Blocking Findings</h2>
+    <span class="badge">{{ index.open_blocking_findings|length }}</span>
+  </div>
+  {% if index.open_blocking_findings %}
+  <div class="table-wrap">
+    <table class="draft-table">
+      <thead>
+        <tr>
+          <th>id</th>
+          <th>reviewer</th>
+          <th>severity</th>
+          <th>blocking</th>
+          <th>status</th>
+          <th>title</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for finding in index.open_blocking_findings %}
+        <tr>
+          <td><code>{{ finding.id }}</code></td>
+          <td>{{ finding.reviewer }}</td>
+          <td>{{ finding.severity }}</td>
+          <td>{{ finding.blocking|string|lower }}</td>
+          <td>{{ finding.status }}</td>
+          <td>{{ finding.title }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty-state">No open blocking findings found.</p>
+  {% endif %}
+  {% if index.missing_open_blocking_ids %}
+  <p class="empty-state">Missing arbitration coverage for open blocking findings: {{ index.missing_open_blocking_ids|join(", ") }}</p>
+  {% endif %}
+</section>
+
+<section class="panel artifact-panel">
+  <div class="panel-heading">
+    <h2>Arbitrated Findings</h2>
+    <span class="badge">read-only</span>
+  </div>
+  {% if index.arbitrated_findings %}
+  <div class="table-wrap">
+    <table class="draft-table">
+      <thead>
+        <tr>
+          <th>finding_id</th>
+          <th>source_reviewer</th>
+          <th>severity</th>
+          <th>blocking</th>
+          <th>status</th>
+          <th>human_escalation_required</th>
+          <th>deterministic_hard_gate</th>
+          <th>detail</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for arbitrated in index.arbitrated_findings %}
+        {% set entry = index.arbitrated_entries[loop.index0] %}
+        <tr>
+          <td><code>{{ arbitrated.finding_id }}</code></td>
+          <td>{{ arbitrated.source_reviewer }}</td>
+          <td>{{ arbitrated.original_severity }} -> {{ arbitrated.final_severity }}</td>
+          <td>{{ arbitrated.original_blocking|string|lower }} -> {{ arbitrated.final_blocking|string|lower }}</td>
+          <td>{{ arbitrated.status }}</td>
+          <td>{{ arbitrated.human_escalation_required|string|lower }}</td>
+          <td>{{ arbitrated.deterministic_hard_gate|string|lower }}</td>
+          <td>
+            {% if entry.safe_for_url %}
+            <a href="/runs/{{ index.run_id }}/arbitration/{{ arbitrated.finding_id }}">Open</a>
+            {% else %}
+            unavailable: unsafe id
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty-state">No arbitrated findings recorded.</p>
+  {% endif %}
+</section>
+
+<section class="panel artifact-panel">
+  <div class="panel-heading">
+    <h2>record-arbitration JSON Helper</h2>
+    <span class="badge">JSON helper</span>
+  </div>
+  <p class="note">This page documents the manual CLI format only. It does not record arbitration.</p>
+  <h3>CLI example</h3>
+  <pre>{{ index.format_helper.command_example }}</pre>
+  <h3>Top-level fields</h3>
+  <ul>
+    {% for field in index.format_helper.top_level_fields %}
+    <li><code>{{ field }}</code></li>
+    {% endfor %}
+  </ul>
+  <h3>Arbitrated finding fields</h3>
+  <ul>
+    {% for field in index.format_helper.arbitrated_finding_fields %}
+    <li><code>{{ field }}</code></li>
+    {% endfor %}
+  </ul>
+  <h3>Validation rules</h3>
+  <ul>
+    {% for rule in index.format_helper.validation_rules %}
+    <li>{{ rule }}</li>
+    {% endfor %}
+  </ul>
+  <h3>Upheld blocking finding example</h3>
+  <pre>{{ index.format_helper.upheld_blocking_example }}</pre>
+  <h3>Accepted risk example</h3>
+  <pre>{{ index.format_helper.accepted_risk_example }}</pre>
+</section>
+{% endblock %}

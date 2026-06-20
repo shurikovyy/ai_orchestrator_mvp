@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="panel">
+  <p><a href="/runs/{{ detail.run_id }}/arbitration">&larr; Back to arbitration</a></p>
+  <p><a href="/runs/{{ detail.run_id }}">&larr; Back to run</a></p>
+  <div class="panel-heading">
+    <h2>Arbitrated Finding</h2>
+    <span class="badge">{{ detail.arbitrated_finding.status }}</span>
+  </div>
+  <p class="note">Read-only arbitration detail. This page does not record arbitration, approve the run, apply changes, accept the run, or commit.</p>
+  <dl class="status-grid">
+    <div><dt>run_id</dt><dd><code>{{ detail.run_id }}</code></dd></div>
+    <div><dt>finding_id</dt><dd><code>{{ detail.arbitrated_finding.finding_id }}</code></dd></div>
+    <div><dt>source_reviewer</dt><dd>{{ detail.arbitrated_finding.source_reviewer }}</dd></div>
+    <div><dt>original_severity</dt><dd>{{ detail.arbitrated_finding.original_severity }}</dd></div>
+    <div><dt>final_severity</dt><dd>{{ detail.arbitrated_finding.final_severity }}</dd></div>
+    <div><dt>original_blocking</dt><dd>{{ detail.arbitrated_finding.original_blocking|string|lower }}</dd></div>
+    <div><dt>final_blocking</dt><dd>{{ detail.arbitrated_finding.final_blocking|string|lower }}</dd></div>
+    <div><dt>status</dt><dd>{{ detail.arbitrated_finding.status }}</dd></div>
+    <div><dt>human_escalation_required</dt><dd>{{ detail.arbitrated_finding.human_escalation_required|string|lower }}</dd></div>
+    <div><dt>deterministic_hard_gate</dt><dd>{{ detail.arbitrated_finding.deterministic_hard_gate|string|lower }}</dd></div>
+    <div><dt>source_json</dt><dd>{{ detail.arbitration_json_path }}</dd></div>
+  </dl>
+</section>
+
+<section class="panel artifact-panel">
+  <div class="panel-heading">
+    <h2>Reason and Required Action</h2>
+    <span class="badge">read-only</span>
+  </div>
+  <h3>Reason</h3>
+  <pre>{{ detail.arbitrated_finding.reason }}</pre>
+  <h3>Final required action</h3>
+  <pre>{{ detail.arbitrated_finding.final_required_action or "(none)" }}</pre>
+</section>
+{% endblock %}

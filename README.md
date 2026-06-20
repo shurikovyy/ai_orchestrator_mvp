@@ -58,6 +58,7 @@ Prepare review is available from `/runs/<run_id>`. It generates reviewer prompt 
 Reviewer prompt packet viewer is available at `/runs/<run_id>/reviewer-prompts` and `/runs/<run_id>/reviewer-prompts/<profile>`. It displays prepared reviewer prompt packets only; it does not run reviewer agents, record findings, approve, apply, accept, or commit.
 Review findings viewer is available at `/runs/<run_id>/findings` and `/runs/<run_id>/findings/<finding_id>`. It displays existing `REVIEW_FINDINGS.json` / `REVIEW_FINDINGS.md` summaries, finding detail, JSON format guidance, and manual `record-findings` CLI examples.
 Record findings JSON is available at `/runs/<run_id>/findings/new` and `POST /runs/<run_id>/findings/record`. The browser submits JSON text, not a file path. The web route validates JSON with the existing `ReviewFindingsReport` schema, writes a server-generated temporary JSON file under `.web/findings_inputs/`, then starts a hidden allowlisted CLI `record-findings` job. The UI does not support `--force` overwrite and does not run reviewer agents, arbitrate, approve, apply, accept, or commit.
+Review arbitration viewer is available at `/runs/<run_id>/arbitration` and `/runs/<run_id>/arbitration/<finding_id>`. It displays existing `REVIEW_ARBITRATION.json` / `REVIEW_ARBITRATION.md`, stale arbitration warnings, open blocking findings, missing arbitration coverage, arbitrated finding detail, JSON format guidance, and a manual `record-arbitration` CLI example. It is read-only: record-arbitration UI, review approval UI, apply-run UI, and accept-run UI are not implemented yet.
 Main web pages include Home navigation plus Drafts, Tasks, Runs, Pipelines, and Jobs links.
 
 ## Current capabilities
@@ -870,6 +871,7 @@ Findings are stored in run artifacts as:
 - `REVIEW_FINDINGS.md`
 
 The local web UI can inspect existing findings at `/runs/<run_id>/findings` and `/runs/<run_id>/findings/<finding_id>`. It can also submit structured JSON findings through `/runs/<run_id>/findings/new`, which validates the JSON schema, writes a server-generated input under `.web/`, and runs the existing CLI `record-findings` through an allowlisted job. The browser never supplies a findings file path, the UI does not pass `--force`, and arbitration/review approval/apply/accept/commit actions remain outside the web UI.
+The local web UI can inspect existing arbitration at `/runs/<run_id>/arbitration` and `/runs/<run_id>/arbitration/<finding_id>`. This viewer shows stale arbitration status, open blocking findings, missing arbitration coverage, JSON helper examples, and the manual `record-arbitration` CLI command shape. It does not record arbitration, approve/reject runs, apply, accept, or commit.
 
 Example findings JSON:
 

@@ -22,7 +22,7 @@
     </div>
     <div><dt>blocking_findings</dt><dd>{{ summary.blocking_findings }}</dd></div>
     <div><dt>review_findings_decision</dt><dd>{{ summary.review_findings_decision }}</dd></div>
-    <div><dt>arbitration_exists</dt><dd>{{ summary.arbitration_exists|string|lower }}</dd></div>
+    <div><dt>arbitration_exists</dt><dd>{{ summary.arbitration_exists|string|lower }} (<a href="/runs/{{ summary.run_id }}/arbitration">View arbitration</a>)</dd></div>
     <div><dt>arbitration_stale</dt><dd>{{ summary.arbitration_stale|string|lower }}</dd></div>
     <div><dt>arbitration_final_blocking</dt><dd>{{ summary.arbitration_final_blocking }}</dd></div>
     <div><dt>risk_level</dt><dd>{{ summary.risk_level or "" }}</dd></div>

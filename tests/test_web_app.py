@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import redirect_stdout
+import hashlib
 import importlib.util
 from io import StringIO
 import json
@@ -241,6 +242,61 @@ def write_review_findings_fixture(run_dir: Path, run_id: str) -> Path:
     findings_path = run_dir / "REVIEW_FINDINGS.json"
     findings_path.write_text(review_findings_json(run_id), encoding="utf-8")
     return findings_path
+
+
+def review_arbitration_payload(
+    run_id: str,
+    *,
+    source_sha256: str | None = None,
+    finding_id: str = "QA001",
+) -> dict[str, object]:
+    return {
+        "schema_version": "1.0",
+        "run_id": run_id,
+        "source_findings_path": "REVIEW_FINDINGS.json",
+        "source_findings_sha256": source_sha256,
+        "source_findings_updated_at": "2026-06-20T00:00:00+00:00",
+        "arbiter": "human",
+        "summary": "QA blocking finding upheld; rework is required before approval.",
+        "overall_decision": "needs_rework",
+        "arbitrated_findings": [
+            {
+                "finding_id": finding_id,
+                "source_reviewer": "qa",
+                "original_severity": "major",
+                "final_severity": "major",
+                "original_blocking": True,
+                "final_blocking": True,
+                "status": "upheld",
+                "reason": "The missing regression test is a valid blocker.",
+                "final_required_action": "Add a regression test that covers the changed behavior.",
+                "human_escalation_required": False,
+                "deterministic_hard_gate": False,
+            }
+        ],
+    }
+
+
+def write_review_arbitration_fixture(
+    run_dir: Path,
+    run_id: str,
+    *,
+    source_sha256: str | None = None,
+    finding_id: str = "QA001",
+) -> Path:
+    arbitration_path = run_dir / "REVIEW_ARBITRATION.json"
+    arbitration_path.write_text(
+        json.dumps(
+            review_arbitration_payload(run_id, source_sha256=source_sha256, finding_id=finding_id),
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    return arbitration_path
+
+
+def sha256_file(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def write_reviewer_prompt_fixture(run_dir: Path, run_id: str, profiles: tuple[str, ...]) -> Path:
@@ -2550,6 +2606,291 @@ class WebAppRouteTests(unittest.TestCase):
             self.assertEqual(detail.status_code, 200)
             self.assertIn(f'href="/runs/{run_id}/findings/new"', findings.text)
             self.assertIn(f'href="/runs/{run_id}/findings/new"', detail.text)
+
+    def test_arbitration_index_empty_without_findings_shows_helper(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            before_state = (run_dir / "state.json").read_text(encoding="utf-8")
+            client = TestClient(create_app(root))
+
+            response = client.get(f"/runs/{run_id}/arbitration")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("Arbitration requires REVIEW_FINDINGS.json", response.text)
+            self.assertIn("record-arbitration", response.text)
+            self.assertIn("read-only", response.text)
+            self.assertNotIn("<form", response.text.lower())
+            self.assertFalse((root / ".web" / "jobs").exists())
+            self.assertEqual((run_dir / "state.json").read_text(encoding="utf-8"), before_state)
+
+    def test_arbitration_index_shows_findings_when_arbitration_missing(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            write_review_findings_fixture(run_dir, run_id)
+            client = TestClient(create_app(root))
+
+            response = client.get(f"/runs/{run_id}/arbitration")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("No review arbitration recorded yet.", response.text)
+            self.assertIn("Open Blocking Findings", response.text)
+            self.assertIn("QA001", response.text)
+            self.assertIn("Missing regression test", response.text)
+
+    def test_arbitration_index_shows_existing_arbitration_summary(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            findings_path = write_review_findings_fixture(run_dir, run_id)
+            source_sha = sha256_file(findings_path)
+            write_review_arbitration_fixture(run_dir, run_id, source_sha256=source_sha)
+            client = TestClient(create_app(root))
+
+            response = client.get(f"/runs/{run_id}/arbitration")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("overall_decision", response.text)
+            self.assertIn("needs_rework", response.text)
+            self.assertIn("arbiter", response.text)
+            self.assertIn("human", response.text)
+            self.assertIn("final_blocking", response.text)
+            self.assertIn("human_escalation_required", response.text)
+            self.assertIn("source_findings_sha256", response.text)
+            self.assertIn(source_sha, response.text)
+            self.assertIn("QA001", response.text)
+            self.assertIn(f'href="/runs/{run_id}/arbitration/QA001"', response.text)
+
+    def test_arbitration_index_shows_markdown_artifact_status(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            findings_path = write_review_findings_fixture(run_dir, run_id)
+            write_review_arbitration_fixture(run_dir, run_id, source_sha256=sha256_file(findings_path))
+            (run_dir / "REVIEW_ARBITRATION.md").write_text("# Review Arbitration\n", encoding="utf-8")
+            client = TestClient(create_app(root))
+
+            response = client.get(f"/runs/{run_id}/arbitration")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("REVIEW_ARBITRATION.md", response.text)
+            self.assertIn(str(run_dir / "REVIEW_ARBITRATION.md"), response.text)
+
+    def test_arbitration_index_shows_stale_warning(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            write_review_findings_fixture(run_dir, run_id)
+            write_review_arbitration_fixture(run_dir, run_id, source_sha256="badsha")
+            client = TestClient(create_app(root))
+
+            response = client.get(f"/runs/{run_id}/arbitration")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("Review arbitration is stale", response.text)
+            self.assertIn("Do not rely on this arbitration", response.text)
+
+    def test_arbitration_index_invalid_json_returns_friendly_error(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            write_review_findings_fixture(run_dir, run_id)
+            (run_dir / "REVIEW_ARBITRATION.json").write_text("{invalid json", encoding="utf-8")
+            client = TestClient(create_app(root))
+
+            response = client.get(f"/runs/{run_id}/arbitration")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("could not be parsed safely", response.text)
+            self.assertIn("REVIEW_ARBITRATION.json could not be loaded", response.text)
+
+    def test_arbitration_index_shows_missing_open_blocking_coverage(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            payload = review_findings_payload(run_id)
+            payload["findings"].append(
+                {
+                    "id": "QA002",
+                    "reviewer": "qa",
+                    "category": "qa",
+                    "severity": "major",
+                    "title": "Second blocker",
+                    "evidence": "Evidence.",
+                    "required_action": "Fix second blocker.",
+                    "status": "open",
+                }
+            )
+            findings_path = run_dir / "REVIEW_FINDINGS.json"
+            findings_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            write_review_arbitration_fixture(run_dir, run_id, source_sha256=sha256_file(findings_path), finding_id="QA001")
+            client = TestClient(create_app(root))
+
+            response = client.get(f"/runs/{run_id}/arbitration")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("Missing arbitration coverage for open blocking findings: QA002", response.text)
+
+    def test_arbitration_detail_shows_arbitrated_finding_fields(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            findings_path = write_review_findings_fixture(run_dir, run_id)
+            write_review_arbitration_fixture(run_dir, run_id, source_sha256=sha256_file(findings_path))
+            client = TestClient(create_app(root))
+
+            response = client.get(f"/runs/{run_id}/arbitration/QA001")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("source_reviewer</dt><dd>qa", response.text)
+            self.assertIn("original_severity</dt><dd>major", response.text)
+            self.assertIn("final_severity</dt><dd>major", response.text)
+            self.assertIn("original_blocking</dt><dd>true", response.text)
+            self.assertIn("final_blocking</dt><dd>true", response.text)
+            self.assertIn("status</dt><dd>upheld", response.text)
+            self.assertIn("The missing regression test is a valid blocker.", response.text)
+            self.assertIn("Add a regression test", response.text)
+            self.assertIn("human_escalation_required</dt><dd>false", response.text)
+            self.assertIn("deterministic_hard_gate</dt><dd>false", response.text)
+
+    def test_arbitration_detail_unknown_id_returns_not_found(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            findings_path = write_review_findings_fixture(run_dir, run_id)
+            write_review_arbitration_fixture(run_dir, run_id, source_sha256=sha256_file(findings_path))
+            client = TestClient(create_app(root))
+
+            response = client.get(f"/runs/{run_id}/arbitration/MISSING")
+
+            self.assertEqual(response.status_code, 404)
+
+    def test_arbitration_detail_rejects_unsafe_finding_id(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            findings_path = write_review_findings_fixture(run_dir, run_id)
+            write_review_arbitration_fixture(run_dir, run_id, source_sha256=sha256_file(findings_path))
+            client = TestClient(create_app(root))
+
+            path_traversal = client.get(f"/runs/{run_id}/arbitration/..%2Fsecret")
+            bad_name = client.get(f"/runs/{run_id}/arbitration/bad%5Cname")
+
+            self.assertIn(path_traversal.status_code, {400, 404})
+            self.assertIn(bad_name.status_code, {400, 404})
+
+    def test_arbitration_routes_reject_unsafe_run_id(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            client = TestClient(create_app(root))
+
+            index = client.get("/runs/bad%5Cname/arbitration")
+            detail = client.get("/runs/bad%5Cname/arbitration/QA001")
+
+            self.assertIn(index.status_code, {400, 404})
+            self.assertIn(detail.status_code, {400, 404})
+
+    def test_arbitration_pages_do_not_modify_artifacts_or_create_jobs(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            findings_path = write_review_findings_fixture(run_dir, run_id)
+            arbitration_path = write_review_arbitration_fixture(
+                run_dir,
+                run_id,
+                source_sha256=sha256_file(findings_path),
+            )
+            before_state = (run_dir / "state.json").read_text(encoding="utf-8")
+            before_findings = findings_path.read_text(encoding="utf-8")
+            before_arbitration = arbitration_path.read_text(encoding="utf-8")
+            client = TestClient(create_app(root))
+
+            index = client.get(f"/runs/{run_id}/arbitration")
+            detail = client.get(f"/runs/{run_id}/arbitration/QA001")
+
+            self.assertEqual(index.status_code, 200)
+            self.assertEqual(detail.status_code, 200)
+            self.assertFalse((root / ".web" / "jobs").exists())
+            self.assertEqual((run_dir / "state.json").read_text(encoding="utf-8"), before_state)
+            self.assertEqual(findings_path.read_text(encoding="utf-8"), before_findings)
+            self.assertEqual(arbitration_path.read_text(encoding="utf-8"), before_arbitration)
+
+    def test_arbitration_pages_have_no_write_forms_or_dangerous_actions(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            findings_path = write_review_findings_fixture(run_dir, run_id)
+            write_review_arbitration_fixture(run_dir, run_id, source_sha256=sha256_file(findings_path))
+            client = TestClient(create_app(root))
+
+            pages = [
+                client.get(f"/runs/{run_id}/arbitration"),
+                client.get(f"/runs/{run_id}/arbitration/QA001"),
+            ]
+
+            for response in pages:
+                self.assertEqual(response.status_code, 200)
+                self.assertNotIn("<form", response.text.lower())
+                self.assertNotIn('method="post"', response.text.lower())
+                self.assertNotIn("review-run", response.text)
+                self.assertNotIn("apply-run", response.text)
+                self.assertNotIn("accept-run", response.text)
+                self.assertNotIn("run-pipeline", response.text)
+
+    def test_run_detail_links_to_arbitration_viewer(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, _run_dir = create_web_run(root)
+            client = TestClient(create_app(root))
+
+            response = client.get(f"/runs/{run_id}")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("View arbitration", response.text)
+            self.assertIn(f'href="/runs/{run_id}/arbitration"', response.text)
 
     def test_classify_run_post_creates_analysis_job_without_starting_cli_in_test(self) -> None:
         from fastapi.testclient import TestClient
