@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="panel">
+  <p><a href="/runs/{{ run_id }}/findings">&larr; Back to findings</a></p>
+  <p><a href="/runs/{{ run_id }}">&larr; Back to run</a></p>
+  <div class="panel-heading">
+    <h2>Record Findings JSON</h2>
+    <span class="badge">controlled write</span>
+  </div>
+  <p class="note">This records structured findings through the existing CLI. It does not run reviewer agents, approve the run, arbitrate findings, apply changes, accept the run, or commit.</p>
+  <p class="note">The browser submits JSON text only. It cannot provide a file path. The server writes a generated temporary JSON file under .web and starts an allowlisted record-findings job.</p>
+  {% if error %}
+  <p class="empty-state">{{ error }}</p>
+  {% endif %}
+  {% if overwrite_message %}
+  <p class="empty-state">{{ overwrite_message }}</p>
+  {% endif %}
+</section>
+
+<section class="panel artifact-panel">
+  <div class="panel-heading">
+    <h2>Submit JSON</h2>
+    <span class="badge">ReviewFindingsReport</span>
+  </div>
+  <form class="job-form" method="post" action="/runs/{{ run_id }}/findings/record">
+    <label for="profile">Optional reviewer profile</label>
+    <input id="profile" name="profile" type="text" value="{{ values.profile }}" placeholder="qa">
+
+    <label for="findings_json">Findings JSON</label>
+    <textarea id="findings_json" name="findings_json" rows="22" {% if overwrite_message %}disabled{% endif %}>{{ values.findings_json }}</textarea>
+
+    <label>
+      <input type="checkbox" name="confirm_record_findings" value="yes" {% if overwrite_message %}disabled{% endif %}>
+      I understand this will record REVIEW_FINDINGS artifacts for this run and may block approval.
+    </label>
+
+    <button type="submit" {% if overwrite_message %}disabled{% endif %}>Record findings JSON</button>
+  </form>
+</section>
+
+<section class="panel artifact-panel">
+  <div class="panel-heading">
+    <h2>JSON Format Reference</h2>
+    <span class="badge">manual schema helper</span>
+  </div>
+  <p>Equivalent CLI command shape:</p>
+  <pre>{{ format_helper.command_example }}</pre>
+  <pre>{{ format_helper.profile_command_example }}</pre>
+  <h3>No findings example</h3>
+  <pre>{{ format_helper.no_findings_example }}</pre>
+  <h3>Major finding example</h3>
+  <pre>{{ format_helper.major_finding_example }}</pre>
+</section>
+{% endblock %}

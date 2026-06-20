@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path, PurePath
 import re
+from urllib.parse import parse_qs
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -15,9 +16,13 @@ from ai_orchestrator_web.findings_inspection import (
     FindingNotFound,
     build_finding_detail,
     build_findings_index,
+    build_findings_format_helper,
+    validate_findings_submission,
+    write_findings_input_file,
 )
 from ai_orchestrator_web.jobs.actions import UnsupportedJobAction
 from ai_orchestrator_web.jobs.runner import ActiveJobExists, start_background_job
+from ai_orchestrator_web.jobs.store import has_active_job
 from ai_orchestrator_web.reviewer_prompt_inspection import (
     ReviewerPromptNotFound,
     build_reviewer_prompt_detail,
@@ -101,6 +106,87 @@ def create_runs_router(*, project_root: Path, templates: Jinja2Templates) -> API
             "findings.html",
             {"index": index},
         )
+
+    @router.get("/runs/{run_id}/findings/new", response_class=HTMLResponse)
+    def new_findings(request: Request, run_id: str) -> HTMLResponse:
+        safe_run_id = _validate_id(run_id, "run not found")
+        _ensure_run_exists(runs_dir=runs_dir, run_id=safe_run_id)
+        return _render_findings_form(
+            request=request,
+            templates=templates,
+            runs_dir=runs_dir,
+            run_id=safe_run_id,
+        )
+
+    @router.post("/runs/{run_id}/findings/record", response_model=None)
+    async def record_findings(request: Request, run_id: str) -> HTMLResponse | RedirectResponse:
+        safe_run_id = _validate_id(run_id, "run not found")
+        _ensure_run_exists(runs_dir=runs_dir, run_id=safe_run_id)
+        form = await _parse_form(request)
+        if (runs_dir / safe_run_id / "REVIEW_FINDINGS.json").is_file():
+            return _render_findings_form(
+                request=request,
+                templates=templates,
+                runs_dir=runs_dir,
+                run_id=safe_run_id,
+                values=form,
+                error=OVERWRITE_NOT_SUPPORTED_MESSAGE,
+                status_code=400,
+            )
+        if form.get("confirm_record_findings") != "yes":
+            return _render_findings_form(
+                request=request,
+                templates=templates,
+                runs_dir=runs_dir,
+                run_id=safe_run_id,
+                values=form,
+                error="Explicit record findings confirmation is required.",
+                status_code=400,
+            )
+        profile = form.get("profile", "")
+        submission, error = validate_findings_submission(
+            run_id=safe_run_id,
+            findings_json=form.get("findings_json", ""),
+            profile=profile,
+        )
+        if error or submission is None:
+            return _render_findings_form(
+                request=request,
+                templates=templates,
+                runs_dir=runs_dir,
+                run_id=safe_run_id,
+                values=form,
+                error=error or "Findings JSON could not be validated.",
+                status_code=400,
+            )
+        if has_active_job(project_root.resolve()):
+            raise HTTPException(status_code=409, detail="another job is already queued or running")
+        findings_input_id, _findings_input_path = write_findings_input_file(
+            project_root=project_root,
+            run_id=safe_run_id,
+            normalized_json=submission.normalized_json,
+        )
+        try:
+            job = start_background_job(
+                project_root=project_root,
+                action="record_findings",
+                params={
+                    "run_id": safe_run_id,
+                    "findings_input_id": findings_input_id,
+                    "profile": submission.profile or "",
+                },
+                result_refs={
+                    "run_id": safe_run_id,
+                    "run_url": f"/runs/{safe_run_id}",
+                    "runs_url": "/runs",
+                    "findings_url": f"/runs/{safe_run_id}/findings",
+                },
+            )
+        except ActiveJobExists as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except UnsupportedJobAction as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return RedirectResponse(url=f"/jobs/{job.job_id}", status_code=303)
 
     @router.get("/runs/{run_id}/findings/{finding_id}", response_class=HTMLResponse)
     def finding_detail(request: Request, run_id: str, finding_id: str) -> HTMLResponse:
@@ -212,6 +298,47 @@ def _ensure_run_exists(*, runs_dir: Path, run_id: str) -> None:
         raise HTTPException(status_code=404, detail="runs directory not found")
     if not (runs_dir / run_id).is_dir():
         raise HTTPException(status_code=404, detail=f"run not found: {run_id}")
+
+
+OVERWRITE_NOT_SUPPORTED_MESSAGE = (
+    "Review findings already exist for this run. This web UI does not overwrite findings yet. "
+    "Use the CLI with --force only if you deliberately want to replace them."
+)
+
+
+def _render_findings_form(
+    *,
+    request: Request,
+    templates: Jinja2Templates,
+    runs_dir: Path,
+    run_id: str,
+    values: dict[str, str] | None = None,
+    error: str | None = None,
+    status_code: int = 200,
+) -> HTMLResponse:
+    index = build_findings_index(run_id=run_id, runs_dir=runs_dir)
+    form_values = {"findings_json": "", "profile": ""}
+    if values:
+        form_values.update(values)
+    return templates.TemplateResponse(
+        request,
+        "findings_new.html",
+        {
+            "run_id": run_id,
+            "index": index,
+            "values": form_values,
+            "error": error,
+            "overwrite_message": OVERWRITE_NOT_SUPPORTED_MESSAGE if index.json_exists else None,
+            "format_helper": build_findings_format_helper(run_id=run_id),
+        },
+        status_code=status_code,
+    )
+
+
+async def _parse_form(request: Request) -> dict[str, str]:
+    body = (await request.body()).decode("utf-8")
+    parsed = parse_qs(body, keep_blank_values=True)
+    return {key: values[0] if values else "" for key, values in parsed.items()}
 
 
 def _artifact_previews(summary: RunStatusSummary) -> list[dict[str, object]]:

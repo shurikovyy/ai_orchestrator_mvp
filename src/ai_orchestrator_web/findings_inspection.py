@@ -1,11 +1,13 @@
-"""Read-only inspection helpers for review findings artifacts."""
+"""Inspection and controlled submission helpers for review findings artifacts."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 import re
+from uuid import uuid4
 
 from pydantic import ValidationError
 
@@ -14,6 +16,7 @@ from ai_orchestrator.review_findings_schemas import ReviewFinding, ReviewFinding
 
 
 SAFE_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
+MAX_FINDINGS_JSON_CHARS = 200_000
 
 NO_FINDINGS_EXAMPLE = """{
   "schema_version": "1.0",
@@ -85,6 +88,13 @@ class FindingDetail:
     run_id: str
     json_path: Path
     finding: ReviewFinding
+
+
+@dataclass(frozen=True)
+class FindingsSubmission:
+    report: ReviewFindingsReport
+    normalized_json: str
+    profile: str | None
 
 
 class FindingNotFound(FileNotFoundError):
@@ -185,5 +195,74 @@ def build_findings_format_helper(*, run_id: str) -> FindingsFormatHelper:
     )
 
 
+def validate_findings_submission(
+    *,
+    run_id: str,
+    findings_json: str,
+    profile: str | None,
+) -> tuple[FindingsSubmission | None, str | None]:
+    if not findings_json.strip():
+        return None, "Findings JSON is required."
+    if len(findings_json) > MAX_FINDINGS_JSON_CHARS:
+        return None, f"Findings JSON must be {MAX_FINDINGS_JSON_CHARS} characters or fewer."
+    try:
+        report = ReviewFindingsReport.model_validate_json(findings_json)
+    except (ValueError, ValidationError) as exc:
+        return None, f"Findings JSON did not match ReviewFindingsReport: {exc}"
+    if report.run_id != run_id:
+        return None, f"Findings report run_id must match this run: expected {run_id}, got {report.run_id}."
+    form_profile = profile.strip() if profile else ""
+    if form_profile:
+        if not _is_safe_id(form_profile):
+            return None, "Profile may contain only letters, numbers, dot, dash, and underscore."
+        if report.source_profile is not None and report.source_profile != form_profile:
+            return (
+                None,
+                f"Findings report source_profile must be empty or match selected profile: {form_profile}.",
+            )
+        effective_profile = form_profile
+    elif report.source_kind == "reviewer_profile" and report.source_profile:
+        if not _is_safe_id(report.source_profile):
+            return None, "Findings report source_profile is not a safe reviewer profile id."
+        effective_profile = report.source_profile
+    else:
+        effective_profile = None
+    normalized_json = json.dumps(report.model_dump(mode="json"), indent=2, ensure_ascii=False) + "\n"
+    return FindingsSubmission(
+        report=report,
+        normalized_json=normalized_json,
+        profile=effective_profile,
+    ), None
+
+
+def write_findings_input_file(
+    *,
+    project_root: str | Path,
+    run_id: str,
+    normalized_json: str,
+) -> tuple[str, Path]:
+    inputs_dir = findings_inputs_dir(project_root)
+    inputs_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    input_id = f"{run_id}_{timestamp}_{uuid4().hex[:6]}.json"
+    input_path = (inputs_dir / input_id).resolve()
+    if not _is_relative_to(input_path, inputs_dir):
+        raise ValueError("findings input file must remain under .web/findings_inputs")
+    input_path.write_text(normalized_json, encoding="utf-8")
+    return input_id, input_path
+
+
+def findings_inputs_dir(project_root: str | Path) -> Path:
+    return (Path(project_root) / ".web" / "findings_inputs").resolve()
+
+
 def _is_safe_id(value: str) -> bool:
     return bool(value and value not in {".", ".."} and SAFE_ID_PATTERN.fullmatch(value))
+
+
+def _is_relative_to(path: Path, parent: Path) -> bool:
+    try:
+        path.resolve().relative_to(parent.resolve())
+    except ValueError:
+        return False
+    return True

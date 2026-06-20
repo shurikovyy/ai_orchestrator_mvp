@@ -99,6 +99,12 @@ ALLOWED_ACTIONS: dict[str, AllowedJobAction] = {
         description="Prepare required reviewer prompt packets for one existing run artifact directory.",
         show_in_jobs_form=False,
     ),
+    "record_findings": AllowedJobAction(
+        name="record_findings",
+        label="Record findings",
+        description="Record structured review findings for one existing run from a server-generated JSON input file.",
+        show_in_jobs_form=False,
+    ),
 }
 
 
@@ -268,6 +274,29 @@ def build_action_command(action: str, project_root: Path, params: dict[str, str]
             str((project_root / ".runs").resolve()),
             "--required-profiles",
         ]
+    if action == "record_findings":
+        run_id = _safe_existing_run_id(project_root, _required_param(values, "run_id"))
+        findings_input = _safe_existing_findings_input(project_root, _required_param(values, "findings_input_id"))
+        command = [
+            sys.executable,
+            "-m",
+            "ai_orchestrator.cli",
+            "record-findings",
+            run_id,
+            "--runs-dir",
+            str((project_root / ".runs").resolve()),
+            "--findings-file",
+            str(findings_input),
+        ]
+        profile_raw = values.get("profile", "")
+        profile = profile_raw.strip()
+        if profile_raw and profile_raw != profile:
+            raise UnsupportedJobAction("profile must not contain leading or trailing whitespace")
+        if profile:
+            if not _is_safe_identifier(profile):
+                raise UnsupportedJobAction("profile is not safe")
+            command.extend(["--profile", profile])
+        return command
     raise UnsupportedJobAction(f"unsupported job action: {action}")
 
 
@@ -342,6 +371,29 @@ def _safe_existing_run_id(project_root: Path, value: str) -> str:
     if not run_dir.is_dir():
         raise UnsupportedJobAction(f"run not found: {run_id}")
     return run_id
+
+
+def _safe_existing_findings_input(project_root: Path, value: str) -> Path:
+    input_id = value.strip()
+    if value != input_id:
+        raise UnsupportedJobAction("findings input id must not contain leading or trailing whitespace")
+    if not input_id.endswith(".json"):
+        raise UnsupportedJobAction("findings input id must be a JSON file")
+    if "/" in input_id or "\\" in input_id:
+        raise UnsupportedJobAction("findings input id must not contain path separators")
+    if Path(input_id).is_absolute() or ".." in PurePath(input_id).parts:
+        raise UnsupportedJobAction("findings input id must not be a path")
+    if not re.fullmatch(r"[A-Za-z0-9._-]+\.json", input_id):
+        raise UnsupportedJobAction("findings input id is not safe")
+    inputs_dir = (project_root / ".web" / "findings_inputs").resolve()
+    input_path = (inputs_dir / input_id).resolve()
+    try:
+        input_path.relative_to(inputs_dir)
+    except ValueError as exc:
+        raise UnsupportedJobAction("findings input file must resolve under .web/findings_inputs") from exc
+    if not input_path.is_file():
+        raise UnsupportedJobAction(f"findings input file not found: {input_id}")
+    return input_path
 
 
 def _is_safe_identifier(value: str) -> bool:

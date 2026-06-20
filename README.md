@@ -56,7 +56,8 @@ Classify run is available from `/runs/<run_id>`. It analyzes existing run artifa
 Run review checks is available from `/runs/<run_id>`. It analyzes existing run artifacts and writes deterministic review/check artifacts under `.runs/<run_id>`; it does not run Codex, run pipeline, approve, apply, accept, or commit.
 Prepare review is available from `/runs/<run_id>`. It generates reviewer prompt packets for required profiles under `.runs/<run_id>`; it does not run reviewer agents, run Codex, run pipeline, record findings, approve, apply, accept, or commit.
 Reviewer prompt packet viewer is available at `/runs/<run_id>/reviewer-prompts` and `/runs/<run_id>/reviewer-prompts/<profile>`. It displays prepared reviewer prompt packets only; it does not run reviewer agents, record findings, approve, apply, accept, or commit.
-Review findings viewer is available at `/runs/<run_id>/findings` and `/runs/<run_id>/findings/<finding_id>`. It displays existing `REVIEW_FINDINGS.json` / `REVIEW_FINDINGS.md` summaries, finding detail, JSON format guidance, and manual `record-findings` CLI examples. It does not record findings, run reviewer agents, arbitrate, approve, apply, accept, or commit. `record-findings` UI is not implemented yet.
+Review findings viewer is available at `/runs/<run_id>/findings` and `/runs/<run_id>/findings/<finding_id>`. It displays existing `REVIEW_FINDINGS.json` / `REVIEW_FINDINGS.md` summaries, finding detail, JSON format guidance, and manual `record-findings` CLI examples.
+Record findings JSON is available at `/runs/<run_id>/findings/new` and `POST /runs/<run_id>/findings/record`. The browser submits JSON text, not a file path. The web route validates JSON with the existing `ReviewFindingsReport` schema, writes a server-generated temporary JSON file under `.web/findings_inputs/`, then starts a hidden allowlisted CLI `record-findings` job. The UI does not support `--force` overwrite and does not run reviewer agents, arbitrate, approve, apply, accept, or commit.
 Main web pages include Home navigation plus Drafts, Tasks, Runs, Pipelines, and Jobs links.
 
 ## Current capabilities
@@ -868,7 +869,7 @@ Findings are stored in run artifacts as:
 - `REVIEW_FINDINGS.json`
 - `REVIEW_FINDINGS.md`
 
-The local web UI can inspect existing findings at `/runs/<run_id>/findings` and `/runs/<run_id>/findings/<finding_id>`. This viewer is read-only: it documents the current JSON format and CLI `record-findings` examples, but does not record findings or expose approval/apply/accept/commit actions.
+The local web UI can inspect existing findings at `/runs/<run_id>/findings` and `/runs/<run_id>/findings/<finding_id>`. It can also submit structured JSON findings through `/runs/<run_id>/findings/new`, which validates the JSON schema, writes a server-generated input under `.web/`, and runs the existing CLI `record-findings` through an allowlisted job. The browser never supplies a findings file path, the UI does not pass `--force`, and arbitration/review approval/apply/accept/commit actions remain outside the web UI.
 
 Example findings JSON:
 

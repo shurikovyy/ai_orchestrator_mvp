@@ -208,36 +208,38 @@ def create_web_run(root: Path, *, long_review_packet: bool = False) -> tuple[str
     return state.run_id, run_dir
 
 
+def review_findings_payload(run_id: str) -> dict[str, object]:
+    return {
+        "schema_version": "1.0",
+        "run_id": run_id,
+        "summary": "QA reviewer found one blocking issue.",
+        "overall_decision": "needs_rework",
+        "source_profile": "qa",
+        "source_kind": "reviewer_profile",
+        "findings": [
+            {
+                "id": "QA001",
+                "reviewer": "qa",
+                "category": "qa",
+                "severity": "major",
+                "title": "Missing regression test for changed behavior",
+                "evidence": "The changed route behavior is not covered by a regression test.",
+                "required_action": "Add a regression test for the changed route behavior.",
+                "file": "tests/test_web_app.py",
+                "line": 123,
+                "status": "open",
+            }
+        ],
+    }
+
+
+def review_findings_json(run_id: str) -> str:
+    return json.dumps(review_findings_payload(run_id), indent=2)
+
+
 def write_review_findings_fixture(run_dir: Path, run_id: str) -> Path:
     findings_path = run_dir / "REVIEW_FINDINGS.json"
-    findings_path.write_text(
-        json.dumps(
-            {
-                "schema_version": "1.0",
-                "run_id": run_id,
-                "summary": "QA reviewer found one blocking issue.",
-                "overall_decision": "needs_rework",
-                "source_profile": "qa",
-                "source_kind": "reviewer_profile",
-                "findings": [
-                    {
-                        "id": "QA001",
-                        "reviewer": "qa",
-                        "category": "qa",
-                        "severity": "major",
-                        "title": "Missing regression test for changed behavior",
-                        "evidence": "The changed route behavior is not covered by a regression test.",
-                        "required_action": "Add a regression test for the changed route behavior.",
-                        "file": "tests/test_web_app.py",
-                        "line": 123,
-                        "status": "open",
-                    }
-                ],
-            },
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
+    findings_path.write_text(review_findings_json(run_id), encoding="utf-8")
     return findings_path
 
 
@@ -2193,6 +2195,361 @@ class WebAppRouteTests(unittest.TestCase):
             self.assertEqual(response.status_code, 200)
             self.assertIn("View findings", response.text)
             self.assertIn(f'href="/runs/{run_id}/findings"', response.text)
+
+    def test_new_findings_form_returns_200_for_run_without_findings(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, _run_dir = create_web_run(root)
+            client = TestClient(create_app(root))
+
+            response = client.get(f"/runs/{run_id}/findings/new")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("Record Findings JSON", response.text)
+            self.assertIn("textarea", response.text)
+            self.assertIn('name="findings_json"', response.text)
+            self.assertIn("record-findings", response.text)
+            self.assertIn('name="confirm_record_findings"', response.text)
+            self.assertIn("does not run reviewer agents", response.text)
+            self.assertIn("approve", response.text)
+            self.assertIn("apply", response.text)
+
+    def test_new_findings_form_warns_when_findings_exist(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            write_review_findings_fixture(run_dir, run_id)
+            client = TestClient(create_app(root))
+
+            response = client.get(f"/runs/{run_id}/findings/new")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("Review findings already exist for this run", response.text)
+            self.assertIn("does not overwrite findings yet", response.text)
+            self.assertIn("disabled", response.text)
+
+    def test_record_findings_without_confirmation_returns_error_without_job(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            client = TestClient(create_app(root))
+
+            response = client.post(
+                f"/runs/{run_id}/findings/record",
+                data={"findings_json": review_findings_json(run_id), "profile": "qa"},
+            )
+
+            self.assertEqual(response.status_code, 400)
+            self.assertIn("Explicit record findings confirmation is required.", response.text)
+            self.assertFalse((root / ".web" / "jobs").exists())
+            self.assertFalse((run_dir / "REVIEW_FINDINGS.json").exists())
+
+    def test_record_findings_invalid_json_returns_error_without_job(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            client = TestClient(create_app(root))
+
+            response = client.post(
+                f"/runs/{run_id}/findings/record",
+                data={
+                    "findings_json": "{invalid json",
+                    "confirm_record_findings": "yes",
+                },
+            )
+
+            self.assertEqual(response.status_code, 400)
+            self.assertIn("Findings JSON did not match ReviewFindingsReport", response.text)
+            self.assertFalse((root / ".web" / "jobs").exists())
+            self.assertFalse((run_dir / "REVIEW_FINDINGS.json").exists())
+
+    def test_record_findings_schema_invalid_json_returns_error_without_job(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            payload = review_findings_payload(run_id)
+            payload["overall_decision"] = "pass"
+            client = TestClient(create_app(root))
+
+            response = client.post(
+                f"/runs/{run_id}/findings/record",
+                data={
+                    "findings_json": json.dumps(payload),
+                    "confirm_record_findings": "yes",
+                },
+            )
+
+            self.assertEqual(response.status_code, 400)
+            self.assertIn("Findings JSON did not match ReviewFindingsReport", response.text)
+            self.assertFalse((root / ".web" / "jobs").exists())
+            self.assertFalse((run_dir / "REVIEW_FINDINGS.json").exists())
+
+    def test_record_findings_run_id_mismatch_returns_error_without_job(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            client = TestClient(create_app(root))
+
+            response = client.post(
+                f"/runs/{run_id}/findings/record",
+                data={
+                    "findings_json": review_findings_json("other-run"),
+                    "confirm_record_findings": "yes",
+                },
+            )
+
+            self.assertEqual(response.status_code, 400)
+            self.assertIn("Findings report run_id must match this run", response.text)
+            self.assertFalse((root / ".web" / "jobs").exists())
+            self.assertFalse((run_dir / "REVIEW_FINDINGS.json").exists())
+
+    def test_record_findings_rejects_unsafe_profile_without_job(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            client = TestClient(create_app(root))
+
+            response = client.post(
+                f"/runs/{run_id}/findings/record",
+                data={
+                    "findings_json": review_findings_json(run_id),
+                    "profile": "..\\bad",
+                    "confirm_record_findings": "yes",
+                },
+            )
+
+            self.assertEqual(response.status_code, 400)
+            self.assertIn("Profile may contain only", response.text)
+            self.assertFalse((root / ".web" / "jobs").exists())
+            self.assertFalse((run_dir / "REVIEW_FINDINGS.json").exists())
+
+    def test_record_findings_refuses_existing_findings_without_job(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            before_findings = write_review_findings_fixture(run_dir, run_id).read_text(encoding="utf-8")
+            client = TestClient(create_app(root))
+
+            response = client.post(
+                f"/runs/{run_id}/findings/record",
+                data={
+                    "findings_json": review_findings_json(run_id),
+                    "confirm_record_findings": "yes",
+                },
+            )
+
+            self.assertEqual(response.status_code, 400)
+            self.assertIn("does not overwrite findings yet", response.text)
+            self.assertFalse((root / ".web" / "jobs").exists())
+            self.assertEqual((run_dir / "REVIEW_FINDINGS.json").read_text(encoding="utf-8"), before_findings)
+
+    def test_record_findings_valid_json_creates_hidden_job_with_generated_input(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            client = TestClient(create_app(root))
+
+            with patch(
+                "ai_orchestrator_web.routes.runs.start_background_job",
+                side_effect=create_job_without_starting_subprocess,
+            ) as start_job:
+                response = client.post(
+                    f"/runs/{run_id}/findings/record",
+                    data={
+                        "findings_json": review_findings_json(run_id),
+                        "profile": "qa",
+                        "confirm_record_findings": "yes",
+                    },
+                    follow_redirects=False,
+                )
+
+            self.assertEqual(response.status_code, 303)
+            start_job.assert_called_once()
+            location = response.headers["location"]
+            job_id = location.rsplit("/", 1)[-1]
+            job = load_job(root, job_id)
+            self.assertEqual(job.action, "record_findings")
+            self.assertIn("record-findings", job.command)
+            self.assertIn("--findings-file", job.command)
+            self.assertIn("--profile", job.command)
+            self.assertIn("qa", job.command)
+            self.assertNotIn("--force", job.command)
+            self.assertEqual(job.result_refs["findings_url"], f"/runs/{run_id}/findings")
+            input_paths = list((root / ".web" / "findings_inputs").glob("*.json"))
+            self.assertEqual(len(input_paths), 1)
+            self.assertIn(str(input_paths[0].resolve()), job.command)
+            normalized_payload = json.loads(input_paths[0].read_text(encoding="utf-8"))
+            self.assertEqual(normalized_payload["run_id"], run_id)
+            self.assertEqual(normalized_payload["counts"]["blocking_open"], 1)
+            self.assertFalse((run_dir / "REVIEW_FINDINGS.json").exists())
+
+            detail = client.get(location)
+
+            self.assertEqual(detail.status_code, 200)
+            self.assertIn(f'href="/runs/{run_id}/findings"', detail.text)
+
+    def test_record_findings_reviewer_profile_json_auto_passes_profile_to_job(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, _run_dir = create_web_run(root)
+            client = TestClient(create_app(root))
+
+            with patch(
+                "ai_orchestrator_web.routes.runs.start_background_job",
+                side_effect=create_job_without_starting_subprocess,
+            ):
+                response = client.post(
+                    f"/runs/{run_id}/findings/record",
+                    data={
+                        "findings_json": review_findings_json(run_id),
+                        "confirm_record_findings": "yes",
+                    },
+                    follow_redirects=False,
+                )
+
+            self.assertEqual(response.status_code, 303)
+            job_id = response.headers["location"].rsplit("/", 1)[-1]
+            job = load_job(root, job_id)
+            self.assertEqual(job.action, "record_findings")
+            self.assertIn("--profile", job.command)
+            self.assertIn("qa", job.command)
+            self.assertNotIn("--force", job.command)
+
+    def test_record_findings_rejects_unsafe_reviewer_profile_from_json_without_job(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            payload = review_findings_payload(run_id)
+            payload["source_profile"] = "../qa"
+            client = TestClient(create_app(root))
+
+            response = client.post(
+                f"/runs/{run_id}/findings/record",
+                data={
+                    "findings_json": json.dumps(payload),
+                    "confirm_record_findings": "yes",
+                },
+            )
+
+            self.assertEqual(response.status_code, 400)
+            self.assertIn("Findings report source_profile is not a safe reviewer profile id.", response.text)
+            self.assertFalse((root / ".web" / "jobs").exists())
+            self.assertFalse((run_dir / "REVIEW_FINDINGS.json").exists())
+
+    def test_record_findings_action_builds_safe_argv(self) -> None:
+        with TemporaryProject() as root:
+            run_id, _run_dir = create_web_run(root)
+            inputs_dir = root / ".web" / "findings_inputs"
+            input_path = inputs_dir / "safe_findings.json"
+            write_text(input_path, review_findings_json(run_id))
+
+            command = build_action_command(
+                "record_findings",
+                root,
+                params={"run_id": run_id, "findings_input_id": input_path.name, "profile": "qa"},
+            )
+
+            self.assertIsInstance(command, list)
+            self.assertIn("record-findings", command)
+            self.assertIn(run_id, command)
+            self.assertIn("--runs-dir", command)
+            self.assertIn(str((root / ".runs").resolve()), command)
+            self.assertIn("--findings-file", command)
+            self.assertIn(str(input_path.resolve()), command)
+            self.assertIn("--profile", command)
+            self.assertIn("qa", command)
+            self.assertNotIn("--force", command)
+            self.assertNotIn("apply-run", command)
+            self.assertNotIn("accept-run", command)
+
+    def test_record_findings_action_rejects_unsafe_or_missing_inputs(self) -> None:
+        with TemporaryProject() as root:
+            run_id, _run_dir = create_web_run(root)
+            inputs_dir = root / ".web" / "findings_inputs"
+            input_path = inputs_dir / "safe_findings.json"
+            write_text(input_path, review_findings_json(run_id))
+
+            with self.assertRaises(ValueError):
+                build_action_command(
+                    "record_findings",
+                    root,
+                    params={"run_id": "..\\bad", "findings_input_id": input_path.name},
+                )
+            with self.assertRaises(ValueError):
+                build_action_command(
+                    "record_findings",
+                    root,
+                    params={"run_id": run_id, "findings_input_id": "missing.json"},
+                )
+            with self.assertRaises(ValueError):
+                build_action_command(
+                    "record_findings",
+                    root,
+                    params={"run_id": run_id, "findings_input_id": "..\\outside.json"},
+                )
+
+    def test_jobs_selector_does_not_expose_record_findings(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            client = TestClient(create_app(root))
+
+            response = client.get("/jobs")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertNotIn("record_findings", response.text)
+
+    def test_findings_pages_link_to_record_findings_form(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, _run_dir = create_web_run(root)
+            client = TestClient(create_app(root))
+
+            findings = client.get(f"/runs/{run_id}/findings")
+            detail = client.get(f"/runs/{run_id}")
+
+            self.assertEqual(findings.status_code, 200)
+            self.assertEqual(detail.status_code, 200)
+            self.assertIn(f'href="/runs/{run_id}/findings/new"', findings.text)
+            self.assertIn(f'href="/runs/{run_id}/findings/new"', detail.text)
 
     def test_classify_run_post_creates_analysis_job_without_starting_cli_in_test(self) -> None:
         from fastapi.testclient import TestClient

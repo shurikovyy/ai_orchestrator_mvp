@@ -7,7 +7,12 @@
     <h2>Review Findings</h2>
     <span class="badge">{{ index.findings|length }}</span>
   </div>
-  <p class="note">Read-only viewer for existing review findings artifacts. This page documents the manual CLI format only; it does not record findings, run reviewer agents, arbitrate, approve, apply, accept, commit, run Codex, or run pipeline.</p>
+  <p class="note">Viewer for existing review findings artifacts plus a controlled JSON submit entry point. Findings submission uses the existing CLI through an allowlisted job; this page does not run reviewer agents, arbitrate, approve, apply, accept, commit, run Codex, or run pipeline.</p>
+  {% if index.json_exists %}
+  <p class="note">Review findings already exist for this run. This web UI does not overwrite findings yet. Use the CLI with --force only if you deliberately want to replace them.</p>
+  {% else %}
+  <p><a href="/runs/{{ index.run_id }}/findings/new">Record findings JSON</a></p>
+  {% endif %}
   <dl class="status-grid">
     <div><dt>run_id</dt><dd><code>{{ index.run_id }}</code></dd></div>
     <div><dt>REVIEW_FINDINGS.json</dt><dd>{{ index.json_path if index.json_exists else "missing" }}</dd></div>
@@ -100,9 +105,9 @@
 <section class="panel artifact-panel">
   <div class="panel-heading">
     <h2>record-findings JSON Helper</h2>
-    <span class="badge">manual CLI only</span>
+    <span class="badge">JSON helper</span>
   </div>
-  <p class="note">The web UI does not ingest findings in this stage. Save reviewer output as a JSON file that matches the current schema, then run the CLI manually.</p>
+  <p class="note">You can paste JSON through <a href="/runs/{{ index.run_id }}/findings/new">Record findings JSON</a>, or save reviewer output as a JSON file and run the CLI manually. This UI does not support --force overwrite.</p>
   <h3>CLI examples</h3>
   <pre>{{ index.format_helper.command_example }}</pre>
   <pre>{{ index.format_helper.profile_command_example }}</pre>
