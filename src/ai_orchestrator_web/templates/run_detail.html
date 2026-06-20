@@ -56,7 +56,7 @@
         {% if summary.human_review_decision == "approved" and not summary.apply_report_exists and summary.application_status != "applied" %}
         (<a href="/runs/{{ summary.run_id }}/apply/new">Apply approved run</a>)
         {% elif summary.apply_report_exists or summary.application_status == "applied" %}
-        <span class="note">(apply report already exists)</span>
+        (<a href="/runs/{{ summary.run_id }}/apply-report">View apply report</a>)
         {% elif summary.human_review_decision == "rejected" %}
         <span class="note">(run is rejected; apply is disabled)</span>
         {% else %}

@@ -35,6 +35,9 @@
     {% if job.result_refs.run_url %}
     <div><dt>open run</dt><dd><a href="{{ job.result_refs.run_url }}">{{ job.result_refs.run_id or "Run" }}</a></dd></div>
     {% endif %}
+    {% if job.action == "apply_run" and job.result_refs.run_id %}
+    <div><dt>open apply report</dt><dd><a href="/runs/{{ job.result_refs.run_id }}/apply-report">Apply report</a></dd></div>
+    {% endif %}
     {% if job.result_refs.findings_url %}
     <div><dt>open findings</dt><dd><a href="{{ job.result_refs.findings_url }}">Findings</a></dd></div>
     {% endif %}

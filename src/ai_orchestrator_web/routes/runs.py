@@ -12,6 +12,7 @@ from fastapi.templating import Jinja2Templates
 
 from ai_orchestrator.run_inspection import list_run_status_summaries
 from ai_orchestrator.run_status import RunStatusSummary, build_run_status_summary
+from ai_orchestrator_web.apply_inspection import build_apply_report_summary
 from ai_orchestrator_web.arbitration_inspection import (
     ArbitrationFindingNotFound,
     build_arbitration_detail,
@@ -217,6 +218,18 @@ def create_runs_router(*, project_root: Path, templates: Jinja2Templates) -> API
         except UnsupportedJobAction as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return RedirectResponse(url=f"/jobs/{job.job_id}", status_code=303)
+
+    @router.get("/runs/{run_id}/apply-report", response_class=HTMLResponse)
+    def apply_report(request: Request, run_id: str) -> HTMLResponse:
+        safe_run_id = _validate_id(run_id, "run not found")
+        _ensure_run_exists(runs_dir=runs_dir, run_id=safe_run_id)
+        summary = build_run_status_summary(run_id=safe_run_id, runs_dir=runs_dir)
+        report = build_apply_report_summary(run_id=safe_run_id, runs_dir=runs_dir)
+        return templates.TemplateResponse(
+            request,
+            "apply_report.html",
+            {"run_id": safe_run_id, "summary": summary, "report": report},
+        )
 
     @router.get("/runs/{run_id}/reviewer-prompts", response_class=HTMLResponse)
     def reviewer_prompts_index(request: Request, run_id: str) -> HTMLResponse:

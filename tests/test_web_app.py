@@ -323,6 +323,37 @@ def write_review_decision_fixture(run_dir: Path, run_id: str, *, decision: str =
     return decision_path
 
 
+def write_apply_report_fixture(run_dir: Path, run_id: str) -> tuple[Path, Path]:
+    json_path = run_dir / "APPLY_REPORT.json"
+    markdown_path = run_dir / "APPLY_REPORT.md"
+    json_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "run_id": run_id,
+                "status": "applied",
+                "applied_at": "2026-06-20T00:00:00+00:00",
+                "target_workspace": str((run_dir.parent.parent / "target_repo").resolve()),
+                "review_gate": "human_approved",
+                "applied_files": ["docs/applied.md"],
+                "deleted_files": ["docs/deleted.md"],
+                "skipped_files": ["EXECUTION_REPORT.json"],
+                "commit_created": False,
+                "git_add_performed": False,
+                "next_step": "Inspect git diff, run tests, then commit manually.",
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    markdown_path.write_text(
+        "# Apply Report\n\nStatus: `applied`\n\nTarget workspace: `target_repo`\n",
+        encoding="utf-8",
+    )
+    return json_path, markdown_path
+
+
 def sha256_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -3990,6 +4021,167 @@ class WebAppRouteTests(unittest.TestCase):
             self.assertEqual(response.status_code, 409)
             self.assertEqual((run_dir / "state.json").read_text(encoding="utf-8"), before_state)
             self.assertFalse((run_dir / "APPLY_REPORT.json").exists())
+
+    def test_apply_report_page_returns_empty_state_when_missing(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            write_review_decision_fixture(run_dir, run_id, decision="approved")
+            client = TestClient(create_app(root))
+
+            response = client.get(f"/runs/{run_id}/apply-report")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("Apply report not found", response.text)
+            self.assertIn(f'href="/runs/{run_id}/apply/new"', response.text)
+            self.assertNotIn("<form", response.text.lower())
+            self.assertFalse((root / ".web" / "jobs").exists())
+
+    def test_apply_report_page_shows_existing_report_and_manual_checklist(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            write_review_decision_fixture(run_dir, run_id, decision="approved")
+            write_apply_report_fixture(run_dir, run_id)
+            client = TestClient(create_app(root))
+
+            response = client.get(f"/runs/{run_id}/apply-report")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("status", response.text)
+            self.assertIn("applied", response.text)
+            self.assertIn("target_workspace", response.text)
+            self.assertIn("review_gate", response.text)
+            self.assertIn("commit_created", response.text)
+            self.assertIn("false", response.text)
+            self.assertIn("git_add_performed", response.text)
+            self.assertIn("docs/applied.md", response.text)
+            self.assertIn("docs/deleted.md", response.text)
+            self.assertIn("EXECUTION_REPORT.json", response.text)
+            self.assertIn("git diff --stat", response.text)
+            self.assertIn("git diff", response.text)
+            self.assertIn("python -m unittest discover -s tests", response.text)
+            self.assertIn("git add", response.text)
+            self.assertIn("git commit", response.text)
+            self.assertNotIn("<form", response.text.lower())
+
+    def test_apply_report_page_invalid_json_returns_read_only_error(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            (run_dir / "APPLY_REPORT.json").write_text("{invalid json", encoding="utf-8")
+            client = TestClient(create_app(root))
+
+            response = client.get(f"/runs/{run_id}/apply-report")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("Read-only error", response.text)
+            self.assertIn("APPLY_REPORT.json could not be loaded", response.text)
+
+    def test_apply_report_page_rejects_unsafe_run_id(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            client = TestClient(create_app(root))
+
+            backslash_response = client.get("/runs/bad%5Cname/apply-report")
+            traversal_response = client.get("/runs/..%2Fsecret/apply-report")
+
+            self.assertIn(backslash_response.status_code, {400, 404})
+            self.assertIn(traversal_response.status_code, {400, 404})
+
+    def test_apply_report_page_does_not_modify_jobs_or_run_artifacts(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            json_path, markdown_path = write_apply_report_fixture(run_dir, run_id)
+            before_state = (run_dir / "state.json").read_text(encoding="utf-8")
+            before_json = json_path.read_text(encoding="utf-8")
+            before_markdown = markdown_path.read_text(encoding="utf-8")
+            client = TestClient(create_app(root))
+
+            response = client.get(f"/runs/{run_id}/apply-report")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertFalse((root / ".web" / "jobs").exists())
+            self.assertEqual((run_dir / "state.json").read_text(encoding="utf-8"), before_state)
+            self.assertEqual(json_path.read_text(encoding="utf-8"), before_json)
+            self.assertEqual(markdown_path.read_text(encoding="utf-8"), before_markdown)
+
+    def test_apply_report_page_has_no_active_write_controls(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            write_apply_report_fixture(run_dir, run_id)
+            client = TestClient(create_app(root))
+
+            response = client.get(f"/runs/{run_id}/apply-report")
+
+            self.assertEqual(response.status_code, 200)
+            lowered = response.text.lower()
+            self.assertNotIn("<form", lowered)
+            self.assertNotIn("method=\"post\"", lowered)
+            self.assertNotIn("<button", lowered)
+            self.assertNotIn('action="/runs/', lowered)
+
+    def test_run_detail_links_to_apply_report_when_report_exists(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            write_review_decision_fixture(run_dir, run_id, decision="approved")
+            write_apply_report_fixture(run_dir, run_id)
+            client = TestClient(create_app(root))
+
+            response = client.get(f"/runs/{run_id}")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("View apply report", response.text)
+            self.assertIn(f'href="/runs/{run_id}/apply-report"', response.text)
+
+    def test_job_detail_for_apply_job_links_to_apply_report_without_accept_or_commit_links(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, _run_dir = create_web_run(root)
+            command = build_action_command("apply_run", root, params={"run_id": run_id})
+            job = create_job_record(
+                action="apply_run",
+                project_root=root,
+                command=command,
+                result_refs={"run_id": run_id, "run_url": f"/runs/{run_id}", "runs_url": "/runs"},
+            )
+            save_job(root, job)
+            client = TestClient(create_app(root))
+
+            response = client.get(f"/jobs/{job.job_id}")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertIn(f'href="/runs/{run_id}"', response.text)
+            self.assertIn(f'href="/runs/{run_id}/apply-report"', response.text)
+            self.assertNotIn("Accept run", response.text)
+            self.assertNotIn("Commit", response.text)
 
     def test_classify_run_post_creates_analysis_job_without_starting_cli_in_test(self) -> None:
         from fastapi.testclient import TestClient

@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="panel">
+  <p><a href="/runs/{{ run_id }}">&larr; Back to run</a> · <a href="/runs">Runs</a> · <a href="/jobs">Jobs</a></p>
+  <div class="panel-heading">
+    <h2>Apply Report</h2>
+    <span class="badge">{{ summary.application_status }}</span>
+  </div>
+  <p class="note">This is a read-only post-apply inspection page. It does not run apply-run, accept-run, tests, git diff, git add, or git commit.</p>
+  <p class="empty-state">Apply already modified the target working tree if this report exists. Web does not stage, commit, or run accept-run. Inspect git diff and run tests manually before committing.</p>
+  {% if not report.json_exists %}
+  <p class="empty-state">Apply report not found. Apply has not been run for this run, or the report artifact is missing.</p>
+  {% if summary.human_review_decision == "approved" and summary.application_status != "applied" %}
+  <p><a href="/runs/{{ run_id }}/apply/new">Open apply confirmation page</a></p>
+  {% endif %}
+  {% endif %}
+  {% if report.load_error %}
+  <p class="empty-state">Read-only error: {{ report.load_error }}</p>
+  {% endif %}
+</section>
+
+<section class="panel artifact-panel">
+  <div class="panel-heading">
+    <h2>Run Apply Status</h2>
+    <span class="badge">{{ summary.next_action }}</span>
+  </div>
+  <dl class="status-grid">
+    <div><dt>run_id</dt><dd><code>{{ summary.run_id }}</code></dd></div>
+    <div><dt>application_status</dt><dd>{{ summary.application_status }}</dd></div>
+    <div><dt>apply_report_exists</dt><dd>{{ summary.apply_report_exists|string|lower }}</dd></div>
+    <div><dt>human_review_decision</dt><dd>{{ summary.human_review_decision or "" }}</dd></div>
+    <div><dt>next_action</dt><dd>{{ summary.next_action }}</dd></div>
+  </dl>
+</section>
+
+<section class="panel artifact-panel">
+  <div class="panel-heading">
+    <h2>Artifacts</h2>
+    <span class="badge">read-only</span>
+  </div>
+  <dl class="status-grid">
+    <div><dt>APPLY_REPORT.json</dt><dd>{{ "exists" if report.json_exists else "missing" }} · <code>{{ report.json_path }}</code></dd></div>
+    <div><dt>APPLY_REPORT.md</dt><dd>{{ "exists" if report.markdown_exists else "missing" }} · <code>{{ report.markdown_path }}</code></dd></div>
+  </dl>
+</section>
+
+{% if report.json_exists and not report.load_error %}
+<section class="panel artifact-panel">
+  <div class="panel-heading">
+    <h2>Report Fields</h2>
+    <span class="badge">{{ report.status or "unknown" }}</span>
+  </div>
+  <dl class="status-grid">
+    <div><dt>schema_version</dt><dd>{{ report.schema_version or "" }}</dd></div>
+    <div><dt>status</dt><dd>{{ report.status or "" }}</dd></div>
+    <div><dt>applied_at</dt><dd>{{ report.applied_at or "" }}</dd></div>
+    <div><dt>target_workspace</dt><dd>{{ report.target_workspace or "" }}</dd></div>
+    <div><dt>review_gate</dt><dd>{{ report.review_gate or "" }}</dd></div>
+    <div><dt>commit_created</dt><dd>{{ report.commit_created|string|lower if report.commit_created is not none else "" }}</dd></div>
+    <div><dt>git_add_performed</dt><dd>{{ report.git_add_performed|string|lower if report.git_add_performed is not none else "" }}</dd></div>
+    <div><dt>next_step</dt><dd>{{ report.next_step or "" }}</dd></div>
+  </dl>
+</section>
+
+<section class="panel artifact-panel">
+  <div class="panel-heading">
+    <h2>Files</h2>
+    <span class="badge">applied / deleted / skipped</span>
+  </div>
+  <h3>Applied files</h3>
+  {% if report.applied_files %}
+  <ul>
+    {% for item in report.applied_files %}
+    <li><code>{{ item }}</code></li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="empty-state">No applied files reported.</p>
+  {% endif %}
+
+  <h3>Deleted files</h3>
+  {% if report.deleted_files %}
+  <ul>
+    {% for item in report.deleted_files %}
+    <li><code>{{ item }}</code></li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="empty-state">No deleted files reported.</p>
+  {% endif %}
+
+  <h3>Skipped files</h3>
+  {% if report.skipped_files %}
+  <ul>
+    {% for item in report.skipped_files %}
+    <li><code>{{ item }}</code></li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="empty-state">No skipped files reported.</p>
+  {% endif %}
+</section>
+{% endif %}
+
+<section class="panel artifact-panel">
+  <div class="panel-heading">
+    <h2>Manual Post-apply Checklist</h2>
+    <span class="badge">instructions only</span>
+  </div>
+  <p class="note">Run these commands yourself from the target repository. This page does not execute them.</p>
+  <pre>git diff --stat
+git diff
+python -m unittest discover -s tests
+git add &lt;files&gt;
+git commit -m "..."</pre>
+</section>
+{% endblock %}
