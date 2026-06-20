@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="panel">
+  <p><a href="/runs/{{ run_id }}">&larr; Back to run</a></p>
+  <div class="panel-heading">
+    <h2>Apply Approved Run</h2>
+    <span class="badge">danger zone</span>
+  </div>
+  <p class="empty-state">This will modify the target repository working tree.</p>
+  <p class="note">It will not run git add. It will not commit. You must inspect git diff and run tests manually after apply.</p>
+  <p class="note">This runs apply-run through the existing CLI. It modifies the target working tree but does not stage or commit. It does not run accept-run.</p>
+  {% if summary.next_action != "apply_run" %}
+  <p class="empty-state">Current recommended next action is: {{ summary.next_action }}. CLI/core remains the final apply gate.</p>
+  {% endif %}
+  {% if error %}
+  <p class="empty-state">{{ error }}</p>
+  {% endif %}
+  {% if blocker_message %}
+  <p class="empty-state">{{ blocker_message }}</p>
+  {% endif %}
+</section>
+
+<section class="panel artifact-panel">
+  <div class="panel-heading">
+    <h2>Current Run Status</h2>
+    <span class="badge">{{ summary.next_action }}</span>
+  </div>
+  <dl class="status-grid">
+    <div><dt>run_id</dt><dd><code>{{ summary.run_id }}</code></dd></div>
+    <div><dt>validator_status</dt><dd>{{ summary.validator_status }}</dd></div>
+    <div><dt>human_review_decision</dt><dd>{{ summary.human_review_decision or "" }}</dd></div>
+    <div><dt>review_decision_exists</dt><dd>{{ summary.review_decision_exists|string|lower }}</dd></div>
+    <div><dt>findings_exists</dt><dd>{{ summary.findings_exists|string|lower }}</dd></div>
+    <div><dt>blocking_findings</dt><dd>{{ summary.blocking_findings }}</dd></div>
+    <div><dt>arbitration_exists</dt><dd>{{ summary.arbitration_exists|string|lower }}</dd></div>
+    <div><dt>arbitration_stale</dt><dd>{{ summary.arbitration_stale|string|lower }}</dd></div>
+    <div><dt>arbitration_final_blocking</dt><dd>{{ summary.arbitration_final_blocking }}</dd></div>
+    <div><dt>application_status</dt><dd>{{ summary.application_status }}</dd></div>
+    <div><dt>apply_report_exists</dt><dd>{{ summary.apply_report_exists|string|lower }}</dd></div>
+    <div><dt>target_workspace</dt><dd>resolved by CLI/core from run state</dd></div>
+    <div><dt>next_action</dt><dd>{{ summary.next_action }}</dd></div>
+  </dl>
+</section>
+
+<section class="panel artifact-panel">
+  <div class="panel-heading">
+    <h2>Manual Post-apply Steps</h2>
+    <span class="badge">operator owned</span>
+  </div>
+  <pre>git diff --stat
+git diff
+python -m unittest discover -s tests
+git add &lt;files&gt;
+git commit -m "..."</pre>
+</section>
+
+<section class="panel artifact-panel">
+  <div class="panel-heading">
+    <h2>Confirmation</h2>
+    <span class="badge">explicit</span>
+  </div>
+  {% set disabled = blocker_message %}
+  <form class="job-form" method="post" action="/runs/{{ run_id }}/apply">
+    <label>
+      <input type="checkbox" name="confirm_apply_run" value="yes" {% if disabled %}disabled{% endif %}>
+      I understand this will modify the target repository working tree and will not commit.
+    </label>
+
+    <button type="submit" {% if disabled %}disabled{% endif %}>Apply approved run</button>
+  </form>
+</section>
+{% endblock %}

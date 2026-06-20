@@ -117,6 +117,12 @@ ALLOWED_ACTIONS: dict[str, AllowedJobAction] = {
         description="Record an explicit human review decision for one existing run.",
         show_in_jobs_form=False,
     ),
+    "apply_run": AllowedJobAction(
+        name="apply_run",
+        label="Apply approved run",
+        description="Apply one approved run to the target working tree without staging or committing.",
+        show_in_jobs_form=False,
+    ),
 }
 
 
@@ -351,6 +357,17 @@ def build_action_command(action: str, project_root: Path, params: dict[str, str]
         elif feedback_input_id:
             raise UnsupportedJobAction("feedback input id is only supported for rejected review decisions")
         return command
+    if action == "apply_run":
+        run_id = _safe_existing_run_id(project_root, _required_param(values, "run_id"))
+        return [
+            sys.executable,
+            "-m",
+            "ai_orchestrator.cli",
+            "apply-run",
+            run_id,
+            "--runs-dir",
+            str((project_root / ".runs").resolve()),
+        ]
     raise UnsupportedJobAction(f"unsupported job action: {action}")
 
 

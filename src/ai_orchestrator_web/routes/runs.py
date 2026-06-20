@@ -163,6 +163,61 @@ def create_runs_router(*, project_root: Path, templates: Jinja2Templates) -> API
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return RedirectResponse(url=f"/jobs/{job.job_id}", status_code=303)
 
+    @router.get("/runs/{run_id}/apply/new", response_class=HTMLResponse)
+    def new_apply(request: Request, run_id: str) -> HTMLResponse:
+        safe_run_id = _validate_id(run_id, "run not found")
+        _ensure_run_exists(runs_dir=runs_dir, run_id=safe_run_id)
+        return _render_apply_form(
+            request=request,
+            templates=templates,
+            runs_dir=runs_dir,
+            run_id=safe_run_id,
+        )
+
+    @router.post("/runs/{run_id}/apply", response_model=None)
+    async def apply_run(request: Request, run_id: str) -> HTMLResponse | RedirectResponse:
+        safe_run_id = _validate_id(run_id, "run not found")
+        _ensure_run_exists(runs_dir=runs_dir, run_id=safe_run_id)
+        form = await _parse_form(request)
+        summary = build_run_status_summary(run_id=safe_run_id, runs_dir=runs_dir)
+        blocker_message = _apply_blocker(summary)
+        if blocker_message:
+            return _render_apply_form(
+                request=request,
+                templates=templates,
+                runs_dir=runs_dir,
+                run_id=safe_run_id,
+                error=blocker_message,
+                status_code=400,
+            )
+        if form.get("confirm_apply_run") != "yes":
+            return _render_apply_form(
+                request=request,
+                templates=templates,
+                runs_dir=runs_dir,
+                run_id=safe_run_id,
+                error="Explicit apply confirmation is required.",
+                status_code=400,
+            )
+        if has_active_job(project_root.resolve()):
+            raise HTTPException(status_code=409, detail="another job is already queued or running")
+        try:
+            job = start_background_job(
+                project_root=project_root,
+                action="apply_run",
+                params={"run_id": safe_run_id},
+                result_refs={
+                    "run_id": safe_run_id,
+                    "run_url": f"/runs/{safe_run_id}",
+                    "runs_url": "/runs",
+                },
+            )
+        except ActiveJobExists as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except UnsupportedJobAction as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return RedirectResponse(url=f"/jobs/{job.job_id}", status_code=303)
+
     @router.get("/runs/{run_id}/reviewer-prompts", response_class=HTMLResponse)
     def reviewer_prompts_index(request: Request, run_id: str) -> HTMLResponse:
         safe_run_id = _validate_id(run_id, "run not found")
@@ -527,6 +582,16 @@ REVIEW_DECISION_OVERWRITE_NOT_SUPPORTED_MESSAGE = (
     "Use the CLI with --force only if you deliberately want to replace it."
 )
 
+APPLY_REVIEW_REQUIRED_MESSAGE = (
+    "This run is not human-approved. Record an approved review decision before applying."
+)
+
+APPLY_REJECTED_MESSAGE = "This run is rejected and cannot be applied from Web."
+
+APPLY_ALREADY_RECORDED_MESSAGE = (
+    "Apply report already exists for this run. This web UI does not re-apply runs yet."
+)
+
 
 def _render_findings_form(
     *,
@@ -619,6 +684,47 @@ def _render_review_decision_form(
 
 def _review_decision_exists(summary: RunStatusSummary) -> bool:
     return bool(summary.human_review_decision or summary.review_decision_exists)
+
+
+def _render_apply_form(
+    *,
+    request: Request,
+    templates: Jinja2Templates,
+    runs_dir: Path,
+    run_id: str,
+    error: str | None = None,
+    status_code: int = 200,
+) -> HTMLResponse:
+    summary = build_run_status_summary(run_id=run_id, runs_dir=runs_dir)
+    return templates.TemplateResponse(
+        request,
+        "apply_new.html",
+        {
+            "run_id": run_id,
+            "summary": summary,
+            "error": error,
+            "blocker_message": _apply_blocker(summary),
+        },
+        status_code=status_code,
+    )
+
+
+def _apply_blocker(summary: RunStatusSummary) -> str | None:
+    if _apply_report_exists(summary):
+        return APPLY_ALREADY_RECORDED_MESSAGE
+    if summary.human_review_decision == "rejected":
+        return APPLY_REJECTED_MESSAGE
+    if summary.human_review_decision != "approved":
+        return APPLY_REVIEW_REQUIRED_MESSAGE
+    return None
+
+
+def _apply_report_exists(summary: RunStatusSummary) -> bool:
+    return bool(
+        summary.apply_report_exists
+        or summary.exists.get("apply_report_json")
+        or summary.application_status == "applied"
+    )
 
 
 async def _parse_form(request: Request) -> dict[str, str]:
