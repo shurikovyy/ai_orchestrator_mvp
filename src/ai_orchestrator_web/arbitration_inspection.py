@@ -1,10 +1,13 @@
-"""Read-only inspection helpers for review arbitration artifacts."""
+"""Inspection and controlled submission helpers for review arbitration artifacts."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
+import json
 from pathlib import Path
 import re
+from uuid import uuid4
 
 from pydantic import ValidationError
 
@@ -15,6 +18,7 @@ from ai_orchestrator.review_findings_schemas import ReviewFinding, ReviewFinding
 
 
 SAFE_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
+MAX_ARBITRATION_JSON_CHARS = 200_000
 
 UPHELD_BLOCKING_EXAMPLE = """{
   "schema_version": "1.0",
@@ -108,6 +112,12 @@ class ArbitrationDetail:
     run_id: str
     arbitration_json_path: Path
     arbitrated_finding: ArbitratedFinding
+
+
+@dataclass(frozen=True)
+class ArbitrationSubmission:
+    report: ReviewArbitrationReport
+    normalized_json: str
 
 
 class ArbitrationFindingNotFound(FileNotFoundError):
@@ -239,6 +249,46 @@ def build_arbitration_format_helper(*, run_id: str) -> ArbitrationFormatHelper:
     )
 
 
+def validate_arbitration_submission(
+    *,
+    run_id: str,
+    arbitration_json: str,
+) -> tuple[ArbitrationSubmission | None, str | None]:
+    if not arbitration_json.strip():
+        return None, "Arbitration JSON is required."
+    if len(arbitration_json) > MAX_ARBITRATION_JSON_CHARS:
+        return None, f"Arbitration JSON must be {MAX_ARBITRATION_JSON_CHARS} characters or fewer."
+    try:
+        report = ReviewArbitrationReport.model_validate_json(arbitration_json)
+    except (ValueError, ValidationError) as exc:
+        return None, f"Arbitration JSON did not match ReviewArbitrationReport: {exc}"
+    if report.run_id != run_id:
+        return None, f"Arbitration report run_id must match this run: expected {run_id}, got {report.run_id}."
+    normalized_json = json.dumps(report.model_dump(mode="json"), indent=2, ensure_ascii=False) + "\n"
+    return ArbitrationSubmission(report=report, normalized_json=normalized_json), None
+
+
+def write_arbitration_input_file(
+    *,
+    project_root: str | Path,
+    run_id: str,
+    normalized_json: str,
+) -> tuple[str, Path]:
+    inputs_dir = arbitration_inputs_dir(project_root)
+    inputs_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    input_id = f"{run_id}_{timestamp}_{uuid4().hex[:6]}.json"
+    input_path = (inputs_dir / input_id).resolve()
+    if not _is_relative_to(input_path, inputs_dir):
+        raise ValueError("arbitration input file must remain under .web/arbitration_inputs")
+    input_path.write_text(normalized_json, encoding="utf-8")
+    return input_id, input_path
+
+
+def arbitration_inputs_dir(project_root: str | Path) -> Path:
+    return (Path(project_root) / ".web" / "arbitration_inputs").resolve()
+
+
 def _open_blocking_findings(report: ReviewFindingsReport | None) -> tuple[ReviewFinding, ...]:
     if report is None:
         return tuple()
@@ -247,3 +297,11 @@ def _open_blocking_findings(report: ReviewFindingsReport | None) -> tuple[Review
 
 def _is_safe_id(value: str) -> bool:
     return bool(value and value not in {".", ".."} and SAFE_ID_PATTERN.fullmatch(value))
+
+
+def _is_relative_to(path: Path, parent: Path) -> bool:
+    try:
+        path.resolve().relative_to(parent.resolve())
+    except ValueError:
+        return False
+    return True

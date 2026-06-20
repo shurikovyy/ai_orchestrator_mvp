@@ -38,6 +38,9 @@
     {% if job.result_refs.findings_url %}
     <div><dt>open findings</dt><dd><a href="{{ job.result_refs.findings_url }}">Findings</a></dd></div>
     {% endif %}
+    {% if job.result_refs.arbitration_url %}
+    <div><dt>open arbitration</dt><dd><a href="{{ job.result_refs.arbitration_url }}">Arbitration</a></dd></div>
+    {% endif %}
     {% if job.result_refs.pipelines_url %}
     <div><dt>open pipelines</dt><dd><a href="{{ job.result_refs.pipelines_url }}">Pipelines</a></dd></div>
     {% endif %}

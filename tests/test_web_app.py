@@ -277,6 +277,10 @@ def review_arbitration_payload(
     }
 
 
+def review_arbitration_json(run_id: str) -> str:
+    return json.dumps(review_arbitration_payload(run_id), indent=2)
+
+
 def write_review_arbitration_fixture(
     run_dir: Path,
     run_id: str,
@@ -2891,6 +2895,378 @@ class WebAppRouteTests(unittest.TestCase):
             self.assertEqual(response.status_code, 200)
             self.assertIn("View arbitration", response.text)
             self.assertIn(f'href="/runs/{run_id}/arbitration"', response.text)
+
+    def test_new_arbitration_form_returns_200_for_run_with_findings(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            write_review_findings_fixture(run_dir, run_id)
+            client = TestClient(create_app(root))
+
+            response = client.get(f"/runs/{run_id}/arbitration/new")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("Record Arbitration JSON", response.text)
+            self.assertIn("textarea", response.text)
+            self.assertIn('name="arbitration_json"', response.text)
+            self.assertIn("record-arbitration", response.text)
+            self.assertIn('name="confirm_record_arbitration"', response.text)
+            self.assertIn("does not approve", response.text)
+            self.assertIn("apply", response.text)
+            self.assertIn("commit", response.text)
+            self.assertFalse((root / ".web" / "jobs").exists())
+
+    def test_new_arbitration_form_requires_findings(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, _run_dir = create_web_run(root)
+            client = TestClient(create_app(root))
+
+            response = client.get(f"/runs/{run_id}/arbitration/new")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("Review findings are required before arbitration can be recorded", response.text)
+            self.assertIn("disabled", response.text)
+            self.assertFalse((root / ".web" / "jobs").exists())
+
+    def test_new_arbitration_form_warns_when_arbitration_exists(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            findings_path = write_review_findings_fixture(run_dir, run_id)
+            write_review_arbitration_fixture(run_dir, run_id, source_sha256=sha256_file(findings_path))
+            client = TestClient(create_app(root))
+
+            response = client.get(f"/runs/{run_id}/arbitration/new")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("Review arbitration already exists for this run", response.text)
+            self.assertIn("does not overwrite arbitration yet", response.text)
+            self.assertIn("disabled", response.text)
+
+    def test_record_arbitration_without_confirmation_returns_error_without_job(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            write_review_findings_fixture(run_dir, run_id)
+            client = TestClient(create_app(root))
+
+            response = client.post(
+                f"/runs/{run_id}/arbitration/record",
+                data={"arbitration_json": review_arbitration_json(run_id)},
+            )
+
+            self.assertEqual(response.status_code, 400)
+            self.assertIn("Explicit record arbitration confirmation is required.", response.text)
+            self.assertFalse((root / ".web" / "jobs").exists())
+            self.assertFalse((run_dir / "REVIEW_ARBITRATION.json").exists())
+
+    def test_record_arbitration_invalid_json_returns_error_without_job(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            write_review_findings_fixture(run_dir, run_id)
+            client = TestClient(create_app(root))
+
+            response = client.post(
+                f"/runs/{run_id}/arbitration/record",
+                data={
+                    "arbitration_json": "{invalid json",
+                    "confirm_record_arbitration": "yes",
+                },
+            )
+
+            self.assertEqual(response.status_code, 400)
+            self.assertIn("Arbitration JSON did not match ReviewArbitrationReport", response.text)
+            self.assertFalse((root / ".web" / "jobs").exists())
+            self.assertFalse((run_dir / "REVIEW_ARBITRATION.json").exists())
+
+    def test_record_arbitration_schema_invalid_json_returns_error_without_job(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            write_review_findings_fixture(run_dir, run_id)
+            payload = review_arbitration_payload(run_id)
+            payload["arbitrated_findings"][0]["final_required_action"] = None
+            client = TestClient(create_app(root))
+
+            response = client.post(
+                f"/runs/{run_id}/arbitration/record",
+                data={
+                    "arbitration_json": json.dumps(payload),
+                    "confirm_record_arbitration": "yes",
+                },
+            )
+
+            self.assertEqual(response.status_code, 400)
+            self.assertIn("Arbitration JSON did not match ReviewArbitrationReport", response.text)
+            self.assertFalse((root / ".web" / "jobs").exists())
+            self.assertFalse((run_dir / "REVIEW_ARBITRATION.json").exists())
+
+    def test_record_arbitration_run_id_mismatch_returns_error_without_job(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            write_review_findings_fixture(run_dir, run_id)
+            client = TestClient(create_app(root))
+
+            response = client.post(
+                f"/runs/{run_id}/arbitration/record",
+                data={
+                    "arbitration_json": review_arbitration_json("other-run"),
+                    "confirm_record_arbitration": "yes",
+                },
+            )
+
+            self.assertEqual(response.status_code, 400)
+            self.assertIn("Arbitration report run_id must match this run", response.text)
+            self.assertFalse((root / ".web" / "jobs").exists())
+            self.assertFalse((run_dir / "REVIEW_ARBITRATION.json").exists())
+
+    def test_record_arbitration_requires_existing_findings_without_job(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            client = TestClient(create_app(root))
+
+            response = client.post(
+                f"/runs/{run_id}/arbitration/record",
+                data={
+                    "arbitration_json": review_arbitration_json(run_id),
+                    "confirm_record_arbitration": "yes",
+                },
+            )
+
+            self.assertEqual(response.status_code, 400)
+            self.assertIn("Review findings are required before arbitration can be recorded", response.text)
+            self.assertFalse((root / ".web" / "jobs").exists())
+            self.assertFalse((run_dir / "REVIEW_ARBITRATION.json").exists())
+
+    def test_record_arbitration_refuses_existing_arbitration_without_job(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            findings_path = write_review_findings_fixture(run_dir, run_id)
+            before_arbitration = write_review_arbitration_fixture(
+                run_dir,
+                run_id,
+                source_sha256=sha256_file(findings_path),
+            ).read_text(encoding="utf-8")
+            client = TestClient(create_app(root))
+
+            response = client.post(
+                f"/runs/{run_id}/arbitration/record",
+                data={
+                    "arbitration_json": review_arbitration_json(run_id),
+                    "confirm_record_arbitration": "yes",
+                },
+            )
+
+            self.assertEqual(response.status_code, 400)
+            self.assertIn("does not overwrite arbitration yet", response.text)
+            self.assertFalse((root / ".web" / "jobs").exists())
+            self.assertEqual((run_dir / "REVIEW_ARBITRATION.json").read_text(encoding="utf-8"), before_arbitration)
+
+    def test_record_arbitration_valid_json_creates_hidden_job_with_generated_input(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            write_review_findings_fixture(run_dir, run_id)
+            client = TestClient(create_app(root))
+
+            with patch(
+                "ai_orchestrator_web.routes.runs.start_background_job",
+                side_effect=create_job_without_starting_subprocess,
+            ) as start_job:
+                response = client.post(
+                    f"/runs/{run_id}/arbitration/record",
+                    data={
+                        "arbitration_json": review_arbitration_json(run_id),
+                        "confirm_record_arbitration": "yes",
+                    },
+                    follow_redirects=False,
+                )
+
+            self.assertEqual(response.status_code, 303)
+            start_job.assert_called_once()
+            location = response.headers["location"]
+            job_id = location.rsplit("/", 1)[-1]
+            job = load_job(root, job_id)
+            self.assertEqual(job.action, "record_arbitration")
+            self.assertIn("record-arbitration", job.command)
+            self.assertIn("--arbitration-file", job.command)
+            self.assertNotIn("--force", job.command)
+            self.assertEqual(job.result_refs["arbitration_url"], f"/runs/{run_id}/arbitration")
+            input_paths = list((root / ".web" / "arbitration_inputs").glob("*.json"))
+            self.assertEqual(len(input_paths), 1)
+            self.assertIn(str(input_paths[0].resolve()), job.command)
+            normalized_payload = json.loads(input_paths[0].read_text(encoding="utf-8"))
+            self.assertEqual(normalized_payload["run_id"], run_id)
+            self.assertEqual(normalized_payload["counts"]["final_blocking"], 1)
+            self.assertFalse((run_dir / "REVIEW_ARBITRATION.json").exists())
+
+            detail = client.get(location)
+
+            self.assertEqual(detail.status_code, 200)
+            self.assertIn(f'href="/runs/{run_id}/arbitration"', detail.text)
+
+    def test_record_arbitration_action_builds_safe_argv(self) -> None:
+        with TemporaryProject() as root:
+            run_id, _run_dir = create_web_run(root)
+            inputs_dir = root / ".web" / "arbitration_inputs"
+            input_path = inputs_dir / "safe_arbitration.json"
+            write_text(input_path, review_arbitration_json(run_id))
+
+            command = build_action_command(
+                "record_arbitration",
+                root,
+                params={"run_id": run_id, "arbitration_input_id": input_path.name},
+            )
+
+            self.assertIsInstance(command, list)
+            self.assertIn("record-arbitration", command)
+            self.assertIn(run_id, command)
+            self.assertIn("--runs-dir", command)
+            self.assertIn(str((root / ".runs").resolve()), command)
+            self.assertIn("--arbitration-file", command)
+            self.assertIn(str(input_path.resolve()), command)
+            self.assertNotIn("--force", command)
+            self.assertNotIn("review-run", command)
+            self.assertNotIn("apply-run", command)
+            self.assertNotIn("accept-run", command)
+
+    def test_record_arbitration_action_rejects_unsafe_or_missing_inputs(self) -> None:
+        with TemporaryProject() as root:
+            run_id, _run_dir = create_web_run(root)
+            inputs_dir = root / ".web" / "arbitration_inputs"
+            input_path = inputs_dir / "safe_arbitration.json"
+            write_text(input_path, review_arbitration_json(run_id))
+
+            with self.assertRaises(ValueError):
+                build_action_command(
+                    "record_arbitration",
+                    root,
+                    params={"run_id": "..\\bad", "arbitration_input_id": input_path.name},
+                )
+            with self.assertRaises(ValueError):
+                build_action_command(
+                    "record_arbitration",
+                    root,
+                    params={"run_id": run_id, "arbitration_input_id": "missing.json"},
+                )
+            with self.assertRaises(ValueError):
+                build_action_command(
+                    "record_arbitration",
+                    root,
+                    params={"run_id": run_id, "arbitration_input_id": "..\\outside.json"},
+                )
+
+    def test_jobs_selector_does_not_expose_record_arbitration(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            client = TestClient(create_app(root))
+
+            response = client.get("/jobs")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertNotIn("record_arbitration", response.text)
+
+    def test_arbitration_new_page_has_no_review_apply_accept_actions(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            write_review_findings_fixture(run_dir, run_id)
+            client = TestClient(create_app(root))
+
+            response = client.get(f"/runs/{run_id}/arbitration/new")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertNotIn("review-run", response.text)
+            self.assertNotIn("apply-run", response.text)
+            self.assertNotIn("accept-run", response.text)
+            self.assertNotIn("run-pipeline", response.text)
+
+    def test_arbitration_pages_link_to_record_arbitration_form_when_appropriate(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            write_review_findings_fixture(run_dir, run_id)
+            client = TestClient(create_app(root))
+
+            arbitration = client.get(f"/runs/{run_id}/arbitration")
+            detail = client.get(f"/runs/{run_id}")
+
+            self.assertEqual(arbitration.status_code, 200)
+            self.assertEqual(detail.status_code, 200)
+            self.assertIn(f'href="/runs/{run_id}/arbitration/new"', arbitration.text)
+            self.assertIn(f'href="/runs/{run_id}/arbitration/new"', detail.text)
+
+    def test_one_active_job_rule_blocks_record_arbitration_job(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            write_review_findings_fixture(run_dir, run_id)
+            before_state = (run_dir / "state.json").read_text(encoding="utf-8")
+            command = build_action_command("web_health_cli", root)
+            job = create_job_record(action="web_health_cli", project_root=root, command=command)
+            job.status = "running"
+            save_job(root, job)
+            client = TestClient(create_app(root))
+
+            response = client.post(
+                f"/runs/{run_id}/arbitration/record",
+                data={
+                    "arbitration_json": review_arbitration_json(run_id),
+                    "confirm_record_arbitration": "yes",
+                },
+            )
+
+            self.assertEqual(response.status_code, 409)
+            self.assertEqual((run_dir / "state.json").read_text(encoding="utf-8"), before_state)
+            self.assertFalse((root / ".web" / "arbitration_inputs").exists())
+            self.assertFalse((run_dir / "REVIEW_ARBITRATION.json").exists())
 
     def test_classify_run_post_creates_analysis_job_without_starting_cli_in_test(self) -> None:
         from fastapi.testclient import TestClient

@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="panel">
+  <p><a href="/runs/{{ run_id }}/arbitration">&larr; Back to arbitration</a></p>
+  <p><a href="/runs/{{ run_id }}">&larr; Back to run</a></p>
+  <div class="panel-heading">
+    <h2>Record Arbitration JSON</h2>
+    <span class="badge">controlled write</span>
+  </div>
+  <p class="note">This records structured arbitration through the existing CLI. It does not approve the run, apply changes, accept the run, commit, or run reviewer agents.</p>
+  <p class="note">The browser submits JSON text only. It cannot provide a file path. The server writes a generated temporary JSON file under .web and starts an allowlisted record-arbitration job.</p>
+  <p class="note">Arbitration records decisions about findings. Review approval remains a separate future gate.</p>
+  {% if error %}
+  <p class="empty-state">{{ error }}</p>
+  {% endif %}
+  {% if findings_required_message %}
+  <p class="empty-state">{{ findings_required_message }}</p>
+  {% endif %}
+  {% if overwrite_message %}
+  <p class="empty-state">{{ overwrite_message }}</p>
+  {% endif %}
+</section>
+
+<section class="panel artifact-panel">
+  <div class="panel-heading">
+    <h2>Current Open Blocking Findings</h2>
+    <span class="badge">{{ index.open_blocking_findings|length }}</span>
+  </div>
+  {% if index.open_blocking_findings %}
+  <div class="table-wrap">
+    <table class="draft-table">
+      <thead>
+        <tr>
+          <th>id</th>
+          <th>reviewer</th>
+          <th>severity</th>
+          <th>blocking</th>
+          <th>status</th>
+          <th>title</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for finding in index.open_blocking_findings %}
+        <tr>
+          <td><code>{{ finding.id }}</code></td>
+          <td>{{ finding.reviewer }}</td>
+          <td>{{ finding.severity }}</td>
+          <td>{{ finding.blocking|string|lower }}</td>
+          <td>{{ finding.status }}</td>
+          <td>{{ finding.title }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty-state">No open blocking findings found. The CLI remains the source of truth for whether arbitration is required.</p>
+  {% endif %}
+  {% if index.missing_open_blocking_ids %}
+  <p class="note">Missing arbitration coverage currently includes: {{ index.missing_open_blocking_ids|join(", ") }}</p>
+  {% endif %}
+</section>
+
+<section class="panel artifact-panel">
+  <div class="panel-heading">
+    <h2>Submit JSON</h2>
+    <span class="badge">ReviewArbitrationReport</span>
+  </div>
+  {% set disabled = findings_required_message or overwrite_message %}
+  <form class="job-form" method="post" action="/runs/{{ run_id }}/arbitration/record">
+    <label for="arbitration_json">Arbitration JSON</label>
+    <textarea id="arbitration_json" name="arbitration_json" rows="22" {% if disabled %}disabled{% endif %}>{{ values.arbitration_json }}</textarea>
+
+    <label>
+      <input type="checkbox" name="confirm_record_arbitration" value="yes" {% if disabled %}disabled{% endif %}>
+      I understand this will record REVIEW_ARBITRATION artifacts for this run and may change whether review approval becomes possible.
+    </label>
+
+    <button type="submit" {% if disabled %}disabled{% endif %}>Record arbitration JSON</button>
+  </form>
+</section>
+
+<section class="panel artifact-panel">
+  <div class="panel-heading">
+    <h2>JSON Format Reference</h2>
+    <span class="badge">manual schema helper</span>
+  </div>
+  <p>Equivalent CLI command shape:</p>
+  <pre>{{ format_helper.command_example }}</pre>
+  <h3>Upheld blocking finding example</h3>
+  <pre>{{ format_helper.upheld_blocking_example }}</pre>
+  <h3>Accepted risk example</h3>
+  <pre>{{ format_helper.accepted_risk_example }}</pre>
+</section>
+{% endblock %}

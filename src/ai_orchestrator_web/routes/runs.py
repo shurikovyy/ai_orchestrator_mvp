@@ -15,7 +15,10 @@ from ai_orchestrator.run_status import RunStatusSummary, build_run_status_summar
 from ai_orchestrator_web.arbitration_inspection import (
     ArbitrationFindingNotFound,
     build_arbitration_detail,
+    build_arbitration_format_helper,
     build_arbitration_index,
+    validate_arbitration_submission,
+    write_arbitration_input_file,
 )
 from ai_orchestrator_web.findings_inspection import (
     FindingNotFound,
@@ -219,6 +222,95 @@ def create_runs_router(*, project_root: Path, templates: Jinja2Templates) -> API
             {"index": index},
         )
 
+    @router.get("/runs/{run_id}/arbitration/new", response_class=HTMLResponse)
+    def new_arbitration(request: Request, run_id: str) -> HTMLResponse:
+        safe_run_id = _validate_id(run_id, "run not found")
+        _ensure_run_exists(runs_dir=runs_dir, run_id=safe_run_id)
+        return _render_arbitration_form(
+            request=request,
+            templates=templates,
+            runs_dir=runs_dir,
+            run_id=safe_run_id,
+        )
+
+    @router.post("/runs/{run_id}/arbitration/record", response_model=None)
+    async def record_arbitration(request: Request, run_id: str) -> HTMLResponse | RedirectResponse:
+        safe_run_id = _validate_id(run_id, "run not found")
+        _ensure_run_exists(runs_dir=runs_dir, run_id=safe_run_id)
+        form = await _parse_form(request)
+        run_dir = runs_dir / safe_run_id
+        if not (run_dir / "REVIEW_FINDINGS.json").is_file():
+            return _render_arbitration_form(
+                request=request,
+                templates=templates,
+                runs_dir=runs_dir,
+                run_id=safe_run_id,
+                values=form,
+                error=ARBITRATION_FINDINGS_REQUIRED_MESSAGE,
+                status_code=400,
+            )
+        if (run_dir / "REVIEW_ARBITRATION.json").is_file():
+            return _render_arbitration_form(
+                request=request,
+                templates=templates,
+                runs_dir=runs_dir,
+                run_id=safe_run_id,
+                values=form,
+                error=ARBITRATION_OVERWRITE_NOT_SUPPORTED_MESSAGE,
+                status_code=400,
+            )
+        if form.get("confirm_record_arbitration") != "yes":
+            return _render_arbitration_form(
+                request=request,
+                templates=templates,
+                runs_dir=runs_dir,
+                run_id=safe_run_id,
+                values=form,
+                error="Explicit record arbitration confirmation is required.",
+                status_code=400,
+            )
+        submission, error = validate_arbitration_submission(
+            run_id=safe_run_id,
+            arbitration_json=form.get("arbitration_json", ""),
+        )
+        if error or submission is None:
+            return _render_arbitration_form(
+                request=request,
+                templates=templates,
+                runs_dir=runs_dir,
+                run_id=safe_run_id,
+                values=form,
+                error=error or "Arbitration JSON could not be validated.",
+                status_code=400,
+            )
+        if has_active_job(project_root.resolve()):
+            raise HTTPException(status_code=409, detail="another job is already queued or running")
+        arbitration_input_id, _arbitration_input_path = write_arbitration_input_file(
+            project_root=project_root,
+            run_id=safe_run_id,
+            normalized_json=submission.normalized_json,
+        )
+        try:
+            job = start_background_job(
+                project_root=project_root,
+                action="record_arbitration",
+                params={
+                    "run_id": safe_run_id,
+                    "arbitration_input_id": arbitration_input_id,
+                },
+                result_refs={
+                    "run_id": safe_run_id,
+                    "run_url": f"/runs/{safe_run_id}",
+                    "runs_url": "/runs",
+                    "arbitration_url": f"/runs/{safe_run_id}/arbitration",
+                },
+            )
+        except ActiveJobExists as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except UnsupportedJobAction as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return RedirectResponse(url=f"/jobs/{job.job_id}", status_code=303)
+
     @router.get("/runs/{run_id}/arbitration/{finding_id}", response_class=HTMLResponse)
     def arbitration_detail(request: Request, run_id: str, finding_id: str) -> HTMLResponse:
         safe_run_id = _validate_id(run_id, "run not found")
@@ -336,6 +428,15 @@ OVERWRITE_NOT_SUPPORTED_MESSAGE = (
     "Use the CLI with --force only if you deliberately want to replace them."
 )
 
+ARBITRATION_FINDINGS_REQUIRED_MESSAGE = (
+    "Review findings are required before arbitration can be recorded. Record findings first."
+)
+
+ARBITRATION_OVERWRITE_NOT_SUPPORTED_MESSAGE = (
+    "Review arbitration already exists for this run. This web UI does not overwrite arbitration yet. "
+    "Use the CLI with --force only if you deliberately want to replace it."
+)
+
 
 def _render_findings_form(
     *,
@@ -361,6 +462,36 @@ def _render_findings_form(
             "error": error,
             "overwrite_message": OVERWRITE_NOT_SUPPORTED_MESSAGE if index.json_exists else None,
             "format_helper": build_findings_format_helper(run_id=run_id),
+        },
+        status_code=status_code,
+    )
+
+
+def _render_arbitration_form(
+    *,
+    request: Request,
+    templates: Jinja2Templates,
+    runs_dir: Path,
+    run_id: str,
+    values: dict[str, str] | None = None,
+    error: str | None = None,
+    status_code: int = 200,
+) -> HTMLResponse:
+    index = build_arbitration_index(run_id=run_id, runs_dir=runs_dir)
+    form_values = {"arbitration_json": ""}
+    if values:
+        form_values.update(values)
+    return templates.TemplateResponse(
+        request,
+        "arbitration_new.html",
+        {
+            "run_id": run_id,
+            "index": index,
+            "values": form_values,
+            "error": error,
+            "findings_required_message": ARBITRATION_FINDINGS_REQUIRED_MESSAGE if not index.findings_exists else None,
+            "overwrite_message": ARBITRATION_OVERWRITE_NOT_SUPPORTED_MESSAGE if index.arbitration_exists else None,
+            "format_helper": build_arbitration_format_helper(run_id=run_id),
         },
         status_code=status_code,
     )

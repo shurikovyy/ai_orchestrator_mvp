@@ -105,6 +105,12 @@ ALLOWED_ACTIONS: dict[str, AllowedJobAction] = {
         description="Record structured review findings for one existing run from a server-generated JSON input file.",
         show_in_jobs_form=False,
     ),
+    "record_arbitration": AllowedJobAction(
+        name="record_arbitration",
+        label="Record arbitration",
+        description="Record structured review arbitration for one existing run from a server-generated JSON input file.",
+        show_in_jobs_form=False,
+    ),
 }
 
 
@@ -297,6 +303,23 @@ def build_action_command(action: str, project_root: Path, params: dict[str, str]
                 raise UnsupportedJobAction("profile is not safe")
             command.extend(["--profile", profile])
         return command
+    if action == "record_arbitration":
+        run_id = _safe_existing_run_id(project_root, _required_param(values, "run_id"))
+        arbitration_input = _safe_existing_arbitration_input(
+            project_root,
+            _required_param(values, "arbitration_input_id"),
+        )
+        return [
+            sys.executable,
+            "-m",
+            "ai_orchestrator.cli",
+            "record-arbitration",
+            run_id,
+            "--runs-dir",
+            str((project_root / ".runs").resolve()),
+            "--arbitration-file",
+            str(arbitration_input),
+        ]
     raise UnsupportedJobAction(f"unsupported job action: {action}")
 
 
@@ -393,6 +416,29 @@ def _safe_existing_findings_input(project_root: Path, value: str) -> Path:
         raise UnsupportedJobAction("findings input file must resolve under .web/findings_inputs") from exc
     if not input_path.is_file():
         raise UnsupportedJobAction(f"findings input file not found: {input_id}")
+    return input_path
+
+
+def _safe_existing_arbitration_input(project_root: Path, value: str) -> Path:
+    input_id = value.strip()
+    if value != input_id:
+        raise UnsupportedJobAction("arbitration input id must not contain leading or trailing whitespace")
+    if not input_id.endswith(".json"):
+        raise UnsupportedJobAction("arbitration input id must be a JSON file")
+    if "/" in input_id or "\\" in input_id:
+        raise UnsupportedJobAction("arbitration input id must not contain path separators")
+    if Path(input_id).is_absolute() or ".." in PurePath(input_id).parts:
+        raise UnsupportedJobAction("arbitration input id must not be a path")
+    if not re.fullmatch(r"[A-Za-z0-9._-]+\.json", input_id):
+        raise UnsupportedJobAction("arbitration input id is not safe")
+    inputs_dir = (project_root / ".web" / "arbitration_inputs").resolve()
+    input_path = (inputs_dir / input_id).resolve()
+    try:
+        input_path.relative_to(inputs_dir)
+    except ValueError as exc:
+        raise UnsupportedJobAction("arbitration input file must resolve under .web/arbitration_inputs") from exc
+    if not input_path.is_file():
+        raise UnsupportedJobAction(f"arbitration input file not found: {input_id}")
     return input_path
 
 

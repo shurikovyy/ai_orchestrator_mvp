@@ -7,7 +7,12 @@
     <h2>Review Arbitration</h2>
     <span class="badge">{{ index.arbitrated_findings|length }}</span>
   </div>
-  <p class="note">This page is read-only. It does not record arbitration, approve the run, apply changes, accept the run, or commit.</p>
+  <p class="note">This page inspects arbitration state with read-only artifact views and offers a controlled JSON submit entry point when findings exist and arbitration has not been recorded. It does not approve the run, apply changes, accept the run, or commit.</p>
+  {% if index.findings_exists and not index.arbitration_exists %}
+  <p><a href="/runs/{{ index.run_id }}/arbitration/new">Record arbitration JSON</a></p>
+  {% elif index.arbitration_exists %}
+  <p class="note">Review arbitration already exists for this run. This web UI does not overwrite arbitration yet. Use the CLI with --force only if you deliberately want to replace it.</p>
+  {% endif %}
   <dl class="status-grid">
     <div><dt>run_id</dt><dd><code>{{ index.run_id }}</code></dd></div>
     <div><dt>REVIEW_FINDINGS.json</dt><dd>{{ index.findings_json_path if index.findings_exists else "missing" }}</dd></div>
@@ -153,7 +158,7 @@
     <h2>record-arbitration JSON Helper</h2>
     <span class="badge">JSON helper</span>
   </div>
-  <p class="note">This page documents the manual CLI format only. It does not record arbitration.</p>
+  <p class="note">You can paste JSON through <a href="/runs/{{ index.run_id }}/arbitration/new">Record arbitration JSON</a> when findings exist and arbitration is not already recorded, or save arbitration output as a JSON file and run the CLI manually. This UI does not support --force overwrite.</p>
   <h3>CLI example</h3>
   <pre>{{ index.format_helper.command_example }}</pre>
   <h3>Top-level fields</h3>
