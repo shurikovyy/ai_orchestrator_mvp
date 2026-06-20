@@ -12,7 +12,17 @@
     <div><dt>run_id</dt><dd><code>{{ summary.run_id }}</code></dd></div>
     <div><dt>validator_status</dt><dd>{{ summary.validator_status }}</dd></div>
     <div><dt>backend</dt><dd>{{ summary.backend or "" }}</dd></div>
-    <div><dt>human_review_decision</dt><dd>{{ summary.human_review_decision or "" }}</dd></div>
+    <div>
+      <dt>human_review_decision</dt>
+      <dd>
+        {{ summary.human_review_decision or "" }}
+        {% if not summary.human_review_decision and not summary.review_decision_exists %}
+        (<a href="/runs/{{ summary.run_id }}/review-decision/new">Record review decision</a>)
+        {% else %}
+        <span class="note">(review decision already recorded)</span>
+        {% endif %}
+      </dd>
+    </div>
     <div>
       <dt>findings_exists</dt>
       <dd>

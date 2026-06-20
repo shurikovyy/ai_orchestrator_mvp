@@ -111,6 +111,12 @@ ALLOWED_ACTIONS: dict[str, AllowedJobAction] = {
         description="Record structured review arbitration for one existing run from a server-generated JSON input file.",
         show_in_jobs_form=False,
     ),
+    "review_run": AllowedJobAction(
+        name="review_run",
+        label="Record review decision",
+        description="Record an explicit human review decision for one existing run.",
+        show_in_jobs_form=False,
+    ),
 }
 
 
@@ -320,6 +326,31 @@ def build_action_command(action: str, project_root: Path, params: dict[str, str]
             "--arbitration-file",
             str(arbitration_input),
         ]
+    if action == "review_run":
+        run_id = _safe_existing_run_id(project_root, _required_param(values, "run_id"))
+        decision = _required_param(values, "decision").strip().lower()
+        if decision not in {"approved", "rejected"}:
+            raise UnsupportedJobAction("review decision must be approved or rejected")
+        command = [
+            sys.executable,
+            "-m",
+            "ai_orchestrator.cli",
+            "review-run",
+            run_id,
+            "--runs-dir",
+            str((project_root / ".runs").resolve()),
+            "--decision",
+            decision,
+        ]
+        feedback_input_id = values.get("feedback_input_id", "").strip()
+        if decision == "rejected":
+            if not feedback_input_id:
+                raise UnsupportedJobAction("feedback input id is required for rejected review decisions")
+            feedback_input = _safe_existing_review_feedback_input(project_root, feedback_input_id)
+            command.extend(["--feedback", str(feedback_input)])
+        elif feedback_input_id:
+            raise UnsupportedJobAction("feedback input id is only supported for rejected review decisions")
+        return command
     raise UnsupportedJobAction(f"unsupported job action: {action}")
 
 
@@ -439,6 +470,29 @@ def _safe_existing_arbitration_input(project_root: Path, value: str) -> Path:
         raise UnsupportedJobAction("arbitration input file must resolve under .web/arbitration_inputs") from exc
     if not input_path.is_file():
         raise UnsupportedJobAction(f"arbitration input file not found: {input_id}")
+    return input_path
+
+
+def _safe_existing_review_feedback_input(project_root: Path, value: str) -> Path:
+    input_id = value.strip()
+    if value != input_id:
+        raise UnsupportedJobAction("review feedback input id must not contain leading or trailing whitespace")
+    if not input_id.endswith(".md"):
+        raise UnsupportedJobAction("review feedback input id must be a Markdown file")
+    if "/" in input_id or "\\" in input_id:
+        raise UnsupportedJobAction("review feedback input id must not contain path separators")
+    if Path(input_id).is_absolute() or ".." in PurePath(input_id).parts:
+        raise UnsupportedJobAction("review feedback input id must not be a path")
+    if not re.fullmatch(r"[A-Za-z0-9._-]+\.md", input_id):
+        raise UnsupportedJobAction("review feedback input id is not safe")
+    inputs_dir = (project_root / ".web" / "review_feedback_inputs").resolve()
+    input_path = (inputs_dir / input_id).resolve()
+    try:
+        input_path.relative_to(inputs_dir)
+    except ValueError as exc:
+        raise UnsupportedJobAction("review feedback input file must resolve under .web/review_feedback_inputs") from exc
+    if not input_path.is_file():
+        raise UnsupportedJobAction(f"review feedback input file not found: {input_id}")
     return input_path
 
 

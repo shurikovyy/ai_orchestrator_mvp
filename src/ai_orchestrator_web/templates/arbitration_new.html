@@ -10,7 +10,7 @@
   </div>
   <p class="note">This records structured arbitration through the existing CLI. It does not approve the run, apply changes, accept the run, commit, or run reviewer agents.</p>
   <p class="note">The browser submits JSON text only. It cannot provide a file path. The server writes a generated temporary JSON file under .web and starts an allowlisted record-arbitration job.</p>
-  <p class="note">Arbitration records decisions about findings. Review approval remains a separate future gate.</p>
+  <p class="note">Arbitration records decisions about findings. Human review decision remains a separate gate.</p>
   {% if error %}
   <p class="empty-state">{{ error }}</p>
   {% endif %}

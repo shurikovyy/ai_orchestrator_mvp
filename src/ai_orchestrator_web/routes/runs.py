@@ -36,6 +36,10 @@ from ai_orchestrator_web.reviewer_prompt_inspection import (
     build_reviewer_prompt_detail,
     build_reviewer_prompt_index,
 )
+from ai_orchestrator_web.review_decision_inspection import (
+    validate_review_decision_submission,
+    write_review_feedback_input_file,
+)
 
 
 ARTIFACT_PREVIEW_LIMIT = 4000
@@ -77,6 +81,87 @@ def create_runs_router(*, project_root: Path, templates: Jinja2Templates) -> API
             "run_detail.html",
             {"summary": summary, "artifact_previews": _artifact_previews(summary)},
         )
+
+    @router.get("/runs/{run_id}/review-decision/new", response_class=HTMLResponse)
+    def new_review_decision(request: Request, run_id: str) -> HTMLResponse:
+        safe_run_id = _validate_id(run_id, "run not found")
+        _ensure_run_exists(runs_dir=runs_dir, run_id=safe_run_id)
+        return _render_review_decision_form(
+            request=request,
+            templates=templates,
+            runs_dir=runs_dir,
+            run_id=safe_run_id,
+        )
+
+    @router.post("/runs/{run_id}/review-decision/record", response_model=None)
+    async def record_review_decision(request: Request, run_id: str) -> HTMLResponse | RedirectResponse:
+        safe_run_id = _validate_id(run_id, "run not found")
+        _ensure_run_exists(runs_dir=runs_dir, run_id=safe_run_id)
+        form = await _parse_form(request)
+        summary = build_run_status_summary(run_id=safe_run_id, runs_dir=runs_dir)
+        if _review_decision_exists(summary):
+            return _render_review_decision_form(
+                request=request,
+                templates=templates,
+                runs_dir=runs_dir,
+                run_id=safe_run_id,
+                values=form,
+                error=REVIEW_DECISION_OVERWRITE_NOT_SUPPORTED_MESSAGE,
+                status_code=400,
+            )
+        if form.get("confirm_review_decision") != "yes":
+            return _render_review_decision_form(
+                request=request,
+                templates=templates,
+                runs_dir=runs_dir,
+                run_id=safe_run_id,
+                values=form,
+                error="Explicit review decision confirmation is required.",
+                status_code=400,
+            )
+        submission, error = validate_review_decision_submission(
+            decision=form.get("decision", ""),
+            feedback=form.get("feedback", ""),
+        )
+        if error or submission is None:
+            return _render_review_decision_form(
+                request=request,
+                templates=templates,
+                runs_dir=runs_dir,
+                run_id=safe_run_id,
+                values=form,
+                error=error or "Review decision could not be validated.",
+                status_code=400,
+            )
+        if has_active_job(project_root.resolve()):
+            raise HTTPException(status_code=409, detail="another job is already queued or running")
+        feedback_input_id = ""
+        if submission.decision == "rejected":
+            feedback_input_id, _feedback_input_path = write_review_feedback_input_file(
+                project_root=project_root,
+                run_id=safe_run_id,
+                normalized_feedback=submission.normalized_feedback or "",
+            )
+        try:
+            job = start_background_job(
+                project_root=project_root,
+                action="review_run",
+                params={
+                    "run_id": safe_run_id,
+                    "decision": submission.decision,
+                    "feedback_input_id": feedback_input_id,
+                },
+                result_refs={
+                    "run_id": safe_run_id,
+                    "run_url": f"/runs/{safe_run_id}",
+                    "runs_url": "/runs",
+                },
+            )
+        except ActiveJobExists as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except UnsupportedJobAction as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return RedirectResponse(url=f"/jobs/{job.job_id}", status_code=303)
 
     @router.get("/runs/{run_id}/reviewer-prompts", response_class=HTMLResponse)
     def reviewer_prompts_index(request: Request, run_id: str) -> HTMLResponse:
@@ -437,6 +522,11 @@ ARBITRATION_OVERWRITE_NOT_SUPPORTED_MESSAGE = (
     "Use the CLI with --force only if you deliberately want to replace it."
 )
 
+REVIEW_DECISION_OVERWRITE_NOT_SUPPORTED_MESSAGE = (
+    "Human review decision already exists for this run. This web UI does not overwrite review decisions yet. "
+    "Use the CLI with --force only if you deliberately want to replace it."
+)
+
 
 def _render_findings_form(
     *,
@@ -495,6 +585,40 @@ def _render_arbitration_form(
         },
         status_code=status_code,
     )
+
+
+def _render_review_decision_form(
+    *,
+    request: Request,
+    templates: Jinja2Templates,
+    runs_dir: Path,
+    run_id: str,
+    values: dict[str, str] | None = None,
+    error: str | None = None,
+    status_code: int = 200,
+) -> HTMLResponse:
+    summary = build_run_status_summary(run_id=run_id, runs_dir=runs_dir)
+    form_values = {"decision": "approved", "feedback": ""}
+    if values:
+        form_values.update(values)
+    return templates.TemplateResponse(
+        request,
+        "review_decision_new.html",
+        {
+            "run_id": run_id,
+            "summary": summary,
+            "values": form_values,
+            "error": error,
+            "overwrite_message": REVIEW_DECISION_OVERWRITE_NOT_SUPPORTED_MESSAGE
+            if _review_decision_exists(summary)
+            else None,
+        },
+        status_code=status_code,
+    )
+
+
+def _review_decision_exists(summary: RunStatusSummary) -> bool:
+    return bool(summary.human_review_decision or summary.review_decision_exists)
 
 
 async def _parse_form(request: Request) -> dict[str, str]:

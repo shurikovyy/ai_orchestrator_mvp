@@ -299,6 +299,30 @@ def write_review_arbitration_fixture(
     return arbitration_path
 
 
+def write_review_decision_fixture(run_dir: Path, run_id: str, *, decision: str = "approved") -> Path:
+    decision_path = run_dir / "REVIEW_DECISION.json"
+    decision_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "run_id": run_id,
+                "decision": decision,
+                "decided_at": "2026-06-20T00:00:00+00:00",
+                "feedback_path": None,
+                "feedback_excerpt": "",
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    state_path = run_dir / "state.json"
+    state_payload = json.loads(state_path.read_text(encoding="utf-8"))
+    state_payload["human_review_decision"] = decision
+    state_payload["human_review_decision_path"] = str(decision_path.resolve())
+    state_path.write_text(json.dumps(state_payload, indent=2), encoding="utf-8")
+    return decision_path
+
+
 def sha256_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -3267,6 +3291,394 @@ class WebAppRouteTests(unittest.TestCase):
             self.assertEqual((run_dir / "state.json").read_text(encoding="utf-8"), before_state)
             self.assertFalse((root / ".web" / "arbitration_inputs").exists())
             self.assertFalse((run_dir / "REVIEW_ARBITRATION.json").exists())
+
+    def test_new_review_decision_form_returns_200_for_run_without_decision(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, _run_dir = create_web_run(root)
+            client = TestClient(create_app(root))
+
+            response = client.get(f"/runs/{run_id}/review-decision/new")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("Record Review Decision", response.text)
+            self.assertIn("approved", response.text)
+            self.assertIn("rejected", response.text)
+            self.assertIn("feedback", response.text)
+            self.assertIn('name="confirm_review_decision"', response.text)
+            self.assertIn("does not apply", response.text)
+            self.assertIn("does not commit", response.text)
+            self.assertFalse((root / ".web" / "jobs").exists())
+
+    def test_new_review_decision_form_warns_when_decision_exists(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            write_review_decision_fixture(run_dir, run_id)
+            client = TestClient(create_app(root))
+
+            response = client.get(f"/runs/{run_id}/review-decision/new")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("Human review decision already exists for this run", response.text)
+            self.assertIn("does not overwrite review decisions yet", response.text)
+            self.assertIn("disabled", response.text)
+
+    def test_record_review_decision_without_confirmation_returns_error_without_job(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            client = TestClient(create_app(root))
+
+            response = client.post(
+                f"/runs/{run_id}/review-decision/record",
+                data={"decision": "approved"},
+            )
+
+            self.assertEqual(response.status_code, 400)
+            self.assertIn("Explicit review decision confirmation is required.", response.text)
+            self.assertFalse((root / ".web" / "jobs").exists())
+            self.assertFalse((run_dir / "REVIEW_DECISION.json").exists())
+
+    def test_record_review_decision_invalid_decision_returns_error_without_job(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            client = TestClient(create_app(root))
+
+            response = client.post(
+                f"/runs/{run_id}/review-decision/record",
+                data={
+                    "decision": "maybe",
+                    "confirm_review_decision": "yes",
+                },
+            )
+
+            self.assertEqual(response.status_code, 400)
+            self.assertIn("Review decision must be approved or rejected.", response.text)
+            self.assertFalse((root / ".web" / "jobs").exists())
+            self.assertFalse((run_dir / "REVIEW_DECISION.json").exists())
+
+    def test_record_review_decision_rejected_requires_feedback_without_job(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            client = TestClient(create_app(root))
+
+            response = client.post(
+                f"/runs/{run_id}/review-decision/record",
+                data={
+                    "decision": "rejected",
+                    "feedback": "   ",
+                    "confirm_review_decision": "yes",
+                },
+            )
+
+            self.assertEqual(response.status_code, 400)
+            self.assertIn("Feedback is required for rejected review decisions.", response.text)
+            self.assertFalse((root / ".web" / "jobs").exists())
+            self.assertFalse((run_dir / "REVIEW_DECISION.json").exists())
+
+    def test_record_review_decision_refuses_existing_decision_without_job(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            before_decision = write_review_decision_fixture(run_dir, run_id).read_text(encoding="utf-8")
+            client = TestClient(create_app(root))
+
+            response = client.post(
+                f"/runs/{run_id}/review-decision/record",
+                data={
+                    "decision": "approved",
+                    "confirm_review_decision": "yes",
+                },
+            )
+
+            self.assertEqual(response.status_code, 400)
+            self.assertIn("does not overwrite review decisions yet", response.text)
+            self.assertFalse((root / ".web" / "jobs").exists())
+            self.assertEqual((run_dir / "REVIEW_DECISION.json").read_text(encoding="utf-8"), before_decision)
+
+    def test_record_review_decision_unsafe_run_id_returns_not_found(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            client = TestClient(create_app(root))
+
+            get_response = client.get("/runs/bad%5Cname/review-decision/new")
+            post_response = client.post(
+                "/runs/bad%5Cname/review-decision/record",
+                data={"decision": "approved", "confirm_review_decision": "yes"},
+            )
+
+            self.assertIn(get_response.status_code, {400, 404})
+            self.assertIn(post_response.status_code, {400, 404})
+
+    def test_record_review_decision_approved_creates_hidden_job_without_feedback(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            client = TestClient(create_app(root))
+
+            with patch(
+                "ai_orchestrator_web.routes.runs.start_background_job",
+                side_effect=create_job_without_starting_subprocess,
+            ) as start_job:
+                response = client.post(
+                    f"/runs/{run_id}/review-decision/record",
+                    data={
+                        "decision": "approved",
+                        "feedback": "ignored for approved decisions",
+                        "confirm_review_decision": "yes",
+                    },
+                    follow_redirects=False,
+                )
+
+            self.assertEqual(response.status_code, 303)
+            start_job.assert_called_once()
+            location = response.headers["location"]
+            job_id = location.rsplit("/", 1)[-1]
+            job = load_job(root, job_id)
+            self.assertEqual(job.action, "review_run")
+            self.assertIn("review-run", job.command)
+            self.assertIn(run_id, job.command)
+            self.assertIn("--decision", job.command)
+            self.assertIn("approved", job.command)
+            self.assertNotIn("--feedback", job.command)
+            self.assertNotIn("--force", job.command)
+            self.assertNotIn("--from-findings", job.command)
+            self.assertNotIn("--force-feedback", job.command)
+            self.assertFalse((root / ".web" / "review_feedback_inputs").exists())
+            self.assertFalse((run_dir / "REVIEW_DECISION.json").exists())
+
+            detail = client.get(location)
+
+            self.assertEqual(detail.status_code, 200)
+            self.assertIn(f'href="/runs/{run_id}"', detail.text)
+
+    def test_record_review_decision_rejected_creates_hidden_job_with_generated_feedback(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            feedback = "Reviewer says this needs rework.\r\nPlease add tests."
+            client = TestClient(create_app(root))
+
+            with patch(
+                "ai_orchestrator_web.routes.runs.start_background_job",
+                side_effect=create_job_without_starting_subprocess,
+            ) as start_job:
+                response = client.post(
+                    f"/runs/{run_id}/review-decision/record",
+                    data={
+                        "decision": "rejected",
+                        "feedback": feedback,
+                        "confirm_review_decision": "yes",
+                    },
+                    follow_redirects=False,
+                )
+
+            self.assertEqual(response.status_code, 303)
+            start_job.assert_called_once()
+            location = response.headers["location"]
+            job_id = location.rsplit("/", 1)[-1]
+            job = load_job(root, job_id)
+            self.assertEqual(job.action, "review_run")
+            self.assertIn("review-run", job.command)
+            self.assertIn("--decision", job.command)
+            self.assertIn("rejected", job.command)
+            self.assertIn("--feedback", job.command)
+            self.assertNotIn("--force", job.command)
+            self.assertNotIn("--from-findings", job.command)
+            self.assertNotIn("--force-feedback", job.command)
+            input_paths = list((root / ".web" / "review_feedback_inputs").glob("*.md"))
+            self.assertEqual(len(input_paths), 1)
+            self.assertIn(str(input_paths[0].resolve()), job.command)
+            self.assertEqual(input_paths[0].read_text(encoding="utf-8"), "Reviewer says this needs rework.\nPlease add tests.\n")
+            self.assertFalse((run_dir / "REVIEW_DECISION.json").exists())
+
+    def test_review_run_action_builds_safe_argv_for_approved_and_rejected(self) -> None:
+        with TemporaryProject() as root:
+            run_id, _run_dir = create_web_run(root)
+            inputs_dir = root / ".web" / "review_feedback_inputs"
+            input_path = inputs_dir / "safe_feedback.md"
+            write_text(input_path, "Needs rework.")
+
+            approved = build_action_command(
+                "review_run",
+                root,
+                params={"run_id": run_id, "decision": "approved"},
+            )
+            rejected = build_action_command(
+                "review_run",
+                root,
+                params={"run_id": run_id, "decision": "rejected", "feedback_input_id": input_path.name},
+            )
+
+            self.assertIsInstance(approved, list)
+            self.assertIn("review-run", approved)
+            self.assertIn("--decision", approved)
+            self.assertIn("approved", approved)
+            self.assertNotIn("--feedback", approved)
+            self.assertNotIn("--force", approved)
+            self.assertNotIn("--from-findings", approved)
+            self.assertNotIn("--force-feedback", approved)
+            self.assertIsInstance(rejected, list)
+            self.assertIn("review-run", rejected)
+            self.assertIn("--decision", rejected)
+            self.assertIn("rejected", rejected)
+            self.assertIn("--feedback", rejected)
+            self.assertIn(str(input_path.resolve()), rejected)
+            self.assertNotIn("--force", rejected)
+            self.assertNotIn("--from-findings", rejected)
+            self.assertNotIn("--force-feedback", rejected)
+            self.assertNotIn("apply-run", rejected)
+            self.assertNotIn("accept-run", rejected)
+
+    def test_review_run_action_rejects_unsafe_invalid_or_missing_inputs(self) -> None:
+        with TemporaryProject() as root:
+            run_id, _run_dir = create_web_run(root)
+            inputs_dir = root / ".web" / "review_feedback_inputs"
+            input_path = inputs_dir / "safe_feedback.md"
+            write_text(input_path, "Needs rework.")
+
+            with self.assertRaises(ValueError):
+                build_action_command("review_run", root, params={"run_id": "..\\bad", "decision": "approved"})
+            with self.assertRaises(ValueError):
+                build_action_command("review_run", root, params={"run_id": run_id, "decision": "maybe"})
+            with self.assertRaises(ValueError):
+                build_action_command("review_run", root, params={"run_id": run_id, "decision": "rejected"})
+            with self.assertRaises(ValueError):
+                build_action_command(
+                    "review_run",
+                    root,
+                    params={"run_id": run_id, "decision": "rejected", "feedback_input_id": "..\\outside.md"},
+                )
+            with self.assertRaises(ValueError):
+                build_action_command(
+                    "review_run",
+                    root,
+                    params={"run_id": run_id, "decision": "approved", "feedback_input_id": input_path.name},
+                )
+
+    def test_jobs_selector_does_not_expose_review_run(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            client = TestClient(create_app(root))
+
+            response = client.get("/jobs")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertNotIn("review_run", response.text)
+
+    def test_review_decision_page_has_no_apply_accept_actions(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, _run_dir = create_web_run(root)
+            client = TestClient(create_app(root))
+
+            response = client.get(f"/runs/{run_id}/review-decision/new")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertNotIn("apply-run", response.text)
+            self.assertNotIn("accept-run", response.text)
+
+    def test_review_decision_validation_failure_creates_no_jobs_or_artifacts(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            client = TestClient(create_app(root))
+
+            response = client.post(
+                f"/runs/{run_id}/review-decision/record",
+                data={
+                    "decision": "rejected",
+                    "feedback": "",
+                    "confirm_review_decision": "yes",
+                },
+            )
+
+            self.assertEqual(response.status_code, 400)
+            self.assertFalse((root / ".web" / "jobs").exists())
+            self.assertFalse((root / ".web" / "review_feedback_inputs").exists())
+            self.assertFalse((run_dir / "REVIEW_DECISION.json").exists())
+
+    def test_run_detail_links_to_review_decision_form_when_no_decision_exists(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, _run_dir = create_web_run(root)
+            client = TestClient(create_app(root))
+
+            response = client.get(f"/runs/{run_id}")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("Record review decision", response.text)
+            self.assertIn(f'href="/runs/{run_id}/review-decision/new"', response.text)
+
+    def test_one_active_job_rule_blocks_review_decision_job(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from ai_orchestrator_web.app import create_app
+
+        with TemporaryProject() as root:
+            run_id, run_dir = create_web_run(root)
+            before_state = (run_dir / "state.json").read_text(encoding="utf-8")
+            command = build_action_command("web_health_cli", root)
+            job = create_job_record(action="web_health_cli", project_root=root, command=command)
+            job.status = "running"
+            save_job(root, job)
+            client = TestClient(create_app(root))
+
+            response = client.post(
+                f"/runs/{run_id}/review-decision/record",
+                data={
+                    "decision": "rejected",
+                    "feedback": "Needs rework.",
+                    "confirm_review_decision": "yes",
+                },
+            )
+
+            self.assertEqual(response.status_code, 409)
+            self.assertEqual((run_dir / "state.json").read_text(encoding="utf-8"), before_state)
+            self.assertFalse((root / ".web" / "review_feedback_inputs").exists())
+            self.assertFalse((run_dir / "REVIEW_DECISION.json").exists())
 
     def test_classify_run_post_creates_analysis_job_without_starting_cli_in_test(self) -> None:
         from fastapi.testclient import TestClient
