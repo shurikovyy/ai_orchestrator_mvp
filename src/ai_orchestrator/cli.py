@@ -7,6 +7,12 @@ from pathlib import Path
 
 from ai_orchestrator.apply import accept_run, apply_run
 from ai_orchestrator.backends import Backend
+from ai_orchestrator.config import (
+    ProjectConfigError,
+    format_project_config_json,
+    format_project_config_text,
+    resolve_project_config,
+)
 from ai_orchestrator.deterministic_review import run_deterministic_review_checks
 from ai_orchestrator.doctor import format_doctor_json, format_doctor_text, run_doctor
 from ai_orchestrator.findings_feedback import create_findings_feedback_for_run
@@ -136,6 +142,35 @@ def build_run_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Stream Codex CLI stdout/stderr to the console while codex exec is running.",
     )
+    return parser
+
+
+def build_show_config_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="ai-orchestrator show-config",
+        description="Show resolved project configuration without running workflow actions.",
+    )
+    parser.add_argument(
+        "--config",
+        default=None,
+        help="Optional path to ai_orchestrator.yaml. If omitted, project-local discovery is used.",
+    )
+    parser.add_argument(
+        "--project-root",
+        default=".",
+        help="Project root used for config discovery and relative path resolution.",
+    )
+    parser.add_argument(
+        "--format",
+        choices=["text", "json"],
+        default="text",
+        help="Output format. Defaults to text.",
+    )
+    parser.add_argument("--tasks-file", default=None, help="CLI override for resolved tasks_file.")
+    parser.add_argument("--runs-dir", default=None, help="CLI override for resolved runs_dir.")
+    parser.add_argument("--task-drafts-dir", default=None, help="CLI override for resolved task_drafts_dir.")
+    parser.add_argument("--codex-cmd", default=None, help="CLI override for resolved Codex command.")
+    parser.add_argument("--policy-file", default=None, help="CLI override for resolved policy_file.")
     return parser
 
 
@@ -1143,6 +1178,30 @@ def run_main(argv: list[str] | None = None) -> int:
     state, backend = execute_run(config)
     _print_run_summary(task_id=None, state=state, backend=backend, runs_dir=config.runs_dir)
     return 0 if state.final_status == "approved" else 1
+
+
+def show_config_main(argv: list[str] | None = None) -> int:
+    parser = build_show_config_parser()
+    args = parser.parse_args(argv)
+    try:
+        config = resolve_project_config(
+            project_root=args.project_root,
+            config_path=args.config,
+            cli_overrides={
+                "tasks_file": args.tasks_file,
+                "runs_dir": args.runs_dir,
+                "task_drafts_dir": args.task_drafts_dir,
+                "codex_cmd": args.codex_cmd,
+                "policy_file": args.policy_file,
+            },
+        )
+    except ProjectConfigError as exc:
+        parser.exit(status=1, message=f"show-config error: {exc}\n")
+    if args.format == "json":
+        print(format_project_config_json(config))
+    else:
+        print(format_project_config_text(config))
+    return 0
 
 
 def run_task_main(argv: list[str] | None = None) -> int:
@@ -2242,6 +2301,8 @@ def import_task_draft_improvement_main(argv: list[str] | None = None) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
+    if args and args[0] == "show-config":
+        return show_config_main(args[1:])
     if args and args[0] == "import-task-draft-improvement":
         return import_task_draft_improvement_main(args[1:])
     if args and args[0] == "prepare-task-draft-improvement":

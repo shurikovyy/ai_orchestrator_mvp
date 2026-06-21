@@ -65,6 +65,49 @@ Apply approved run is available at `/runs/<run_id>/apply/new` and `POST /runs/<r
 Post-apply inspection is available at `/runs/<run_id>/apply-report`. It displays `APPLY_REPORT.json` / `APPLY_REPORT.md`, target workspace, applied/deleted/skipped files, `commit_created=false`, `git_add_performed=false`, and manual next steps. It does not run `git diff`, run tests, run `git add`, commit, or expose `accept-run`.
 Main web pages include Home navigation plus Drafts, Tasks, Runs, Pipelines, and Jobs links.
 
+## Core config resolver
+
+The core config resolver is an optional foundation layer for future policy, autonomy, and reviewer-agent configuration. Existing workflow commands are not yet migrated to require this config, so current CLI/Web behavior remains backward-compatible.
+
+Supported project config files:
+
+- `ai_orchestrator.yaml`
+- `.ai_orchestrator/config.yaml`
+
+Discovery prefers `ai_orchestrator.yaml` when both files exist. Resolver priority is:
+
+```text
+CLI overrides > environment variables > config file > defaults
+```
+
+Example config:
+
+```yaml
+schema_version: "1.0"
+paths:
+  tasks_file: tasks.yaml
+  runs_dir: .runs
+  task_drafts_dir: .task_drafts
+codex:
+  cmd: C:\path\to\codex.cmd
+review:
+  default_profiles:
+    - qa
+    - maintainability
+policy:
+  policy_file: autonomy_policy.yaml
+```
+
+Inspect the resolved config without creating workflow artifacts:
+
+```bash
+python -m ai_orchestrator.cli show-config
+python -m ai_orchestrator.cli show-config --format json
+python -m ai_orchestrator.cli show-config --config ai_orchestrator.yaml
+```
+
+`show-config` is read-only. It does not create `.runs`, `.web`, `.task_drafts`, or `tasks.yaml`; it does not run Codex, run pipeline, apply, accept, or commit.
+
 ## Current capabilities
 
 - хранит состояние запуска в `.runs/<run_id>/state.json`;
