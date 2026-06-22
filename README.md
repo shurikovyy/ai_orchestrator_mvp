@@ -1260,6 +1260,22 @@ Risk classification hardening:
 
 Risk classification is not human approval. It does not apply, accept, commit, or add validator hard blocks; it only explains and escalates review requirements for later gates.
 
+### Validator advisory warnings
+
+The deterministic validator now emits advisory warnings for sensitive changed files listed in `EXECUTION_REPORT.json.changed_files`. These warnings are included in `ValidationResult.feedback` so reviewers can see risky areas without leaving the validation report.
+
+Validator advisory warnings in 0.1.73 are informational only:
+
+- warnings do not fail validation by themselves;
+- warning codes are not added to `failed_criteria`;
+- validator warnings are not human approval;
+- validator warnings are not hard blocks yet;
+- risk classification and reviewer findings still matter.
+
+Sensitive areas include apply/accept logic, review decision logic, review findings and arbitration logic, web job actions/runner command construction, CI workflows, dependency manifests and lockfiles, and policy/risk/validator logic.
+
+This complements risk classification but does not replace reviewer or human approval.
+
 `prepare-review --required-profiles` reads `RISK_CLASSIFICATION.json` and prepares prompt packets only for `required_review_profiles`. This supports a stricter lifecycle:
 
 ```text

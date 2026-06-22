@@ -5,6 +5,7 @@ from pathlib import Path
 from ai_orchestrator.backends.base import Backend
 from ai_orchestrator.schemas import ExecutionResult, Plan, PlanStep, TaskSpec, ValidationResult
 from ai_orchestrator.validation import (
+    collect_validator_advisory_warnings,
     evaluate_structured_criterion,
     find_workspace_baseline_manifest_path,
     load_structured_report,
@@ -158,6 +159,11 @@ This is a deterministic demo artifact produced by the offline backend. Replace t
             if task.require_structured_report and task_mentions_tests and not structured_report.tests:
                 failed.append("tests_non_empty")
                 feedback.append("Task appears to require tests, but structured report tests is empty.")
+
+            for warning in collect_validator_advisory_warnings(structured_report):
+                feedback.append(f"Validator advisory warning [{warning.code}]: {warning.message}")
+                if warning.reviewer_profiles:
+                    feedback.append(f"Suggested reviewer profiles: {', '.join(warning.reviewer_profiles)}.")
 
             if task.rerun_report_test_commands:
                 rerun_results = rerun_report_test_commands(

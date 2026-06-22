@@ -8,10 +8,12 @@ import shlex
 import subprocess
 import sys
 from dataclasses import dataclass, field
+from fnmatch import fnmatchcase
 from pathlib import Path
 
 from pydantic import ValidationError
 
+from ai_orchestrator.schema_utils import normalize_safe_relative_path
 from ai_orchestrator.schemas import ExecutionResult, StructuredExecutionReport
 
 
@@ -42,6 +44,278 @@ class WorkspaceManifestValidationResult:
     unchanged_reported_files: list[str] = field(default_factory=list)
     workspace_dir: Path | None = None
     reason: str | None = None
+
+
+@dataclass(frozen=True)
+class ValidatorAdvisoryWarning:
+    code: str
+    severity: str
+    message: str
+    file: str | None = None
+    reviewer_profiles: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class _ValidatorAdvisoryRule:
+    code: str
+    severity: str
+    message: str
+    reviewer_profiles: tuple[str, ...]
+    paths: tuple[str, ...] = ()
+    prefixes: tuple[str, ...] = ()
+    patterns: tuple[str, ...] = ()
+
+
+_VALIDATOR_ADVISORY_RULES: tuple[_ValidatorAdvisoryRule, ...] = (
+    _ValidatorAdvisoryRule(
+        code="validator_warning_sensitive_apply_logic",
+        severity="high",
+        message=(
+            "Changed files touch apply/accept logic; review should verify no unintended apply, accept, "
+            "staging, or commit behavior was introduced."
+        ),
+        reviewer_profiles=("security", "architecture", "qa"),
+        paths=("src/ai_orchestrator/apply.py",),
+    ),
+    _ValidatorAdvisoryRule(
+        code="validator_warning_sensitive_review_decision_logic",
+        severity="high",
+        message=(
+            "Changed files touch human review decision logic; reviewer should verify approval/rejection "
+            "gates are preserved."
+        ),
+        reviewer_profiles=("architecture", "qa", "maintainability"),
+        paths=("src/ai_orchestrator/review_decision.py",),
+    ),
+    _ValidatorAdvisoryRule(
+        code="validator_warning_sensitive_review_findings_logic",
+        severity="high",
+        message=(
+            "Changed files touch review findings logic; reviewer should verify findings schemas and "
+            "blocking/non-blocking interpretation are preserved."
+        ),
+        reviewer_profiles=("architecture", "qa", "maintainability"),
+        paths=(
+            "src/ai_orchestrator/review_findings.py",
+            "src/ai_orchestrator/review_findings_schemas.py",
+        ),
+    ),
+    _ValidatorAdvisoryRule(
+        code="validator_warning_sensitive_review_arbitration_logic",
+        severity="high",
+        message=(
+            "Changed files touch review arbitration logic; reviewer should verify stale arbitration, "
+            "unblock, and approval escalation paths are preserved."
+        ),
+        reviewer_profiles=("security", "architecture", "qa", "maintainability"),
+        paths=(
+            "src/ai_orchestrator/review_arbitration.py",
+            "src/ai_orchestrator/review_arbitration_schemas.py",
+        ),
+    ),
+    _ValidatorAdvisoryRule(
+        code="validator_warning_sensitive_web_job_action",
+        severity="high",
+        message=(
+            "Changed files touch web job actions; reviewer should verify no dangerous hidden actions "
+            "are exposed."
+        ),
+        reviewer_profiles=("security", "qa", "maintainability"),
+        paths=("src/ai_orchestrator_web/jobs/actions.py",),
+    ),
+    _ValidatorAdvisoryRule(
+        code="validator_warning_sensitive_job_runner",
+        severity="high",
+        message=(
+            "Changed files touch the web job runner; reviewer should verify job lifecycle behavior and "
+            "queued execution controls are preserved."
+        ),
+        reviewer_profiles=("security", "qa", "maintainability"),
+        paths=("src/ai_orchestrator_web/jobs/runner.py",),
+    ),
+    _ValidatorAdvisoryRule(
+        code="validator_warning_sensitive_subprocess_command_construction",
+        severity="high",
+        message=(
+            "Changed files touch subprocess command construction; reviewer should verify commands remain "
+            "allowlisted, use shell=False, avoid arbitrary browser commands, and expose no dangerous "
+            "hidden actions."
+        ),
+        reviewer_profiles=("security", "qa", "maintainability"),
+        paths=(
+            "src/ai_orchestrator_web/jobs/actions.py",
+            "src/ai_orchestrator_web/jobs/runner.py",
+        ),
+    ),
+    _ValidatorAdvisoryRule(
+        code="validator_warning_sensitive_policy_logic",
+        severity="high",
+        message=(
+            "Changed files touch policy/config logic; reviewer should verify policy decisions and "
+            "security-sensitive defaults are preserved."
+        ),
+        reviewer_profiles=("security", "architecture", "qa", "maintainability"),
+        paths=(
+            "src/ai_orchestrator/policy.py",
+            "src/ai_orchestrator/config.py",
+        ),
+    ),
+    _ValidatorAdvisoryRule(
+        code="validator_warning_sensitive_risk_classifier_logic",
+        severity="high",
+        message=(
+            "Changed files touch risk classifier logic; reviewer should verify risk levels, reason codes, "
+            "and reviewer profile escalation remain deterministic."
+        ),
+        reviewer_profiles=("architecture", "qa", "maintainability"),
+        paths=(
+            "src/ai_orchestrator/risk_classification.py",
+            "src/ai_orchestrator/risk_schemas.py",
+        ),
+    ),
+    _ValidatorAdvisoryRule(
+        code="validator_warning_sensitive_validator_logic",
+        severity="high",
+        message=(
+            "Changed files touch validator logic; reviewer should verify validation gates and feedback "
+            "behavior are preserved."
+        ),
+        reviewer_profiles=("architecture", "qa", "maintainability"),
+        paths=("src/ai_orchestrator/validation.py",),
+    ),
+    _ValidatorAdvisoryRule(
+        code="validator_warning_ci_workflow_change",
+        severity="high",
+        message="Changed files touch CI workflows; reviewer should verify workflow permissions, triggers, and commands remain safe.",
+        reviewer_profiles=("security", "ops", "qa"),
+        prefixes=(".github/workflows/",),
+    ),
+    _ValidatorAdvisoryRule(
+        code="validator_warning_dependency_manifest_change",
+        severity="warning",
+        message=(
+            "Changed files touch dependency manifests; reviewer should verify dependency changes are "
+            "intentional and security-reviewed."
+        ),
+        reviewer_profiles=("security", "maintainability", "qa"),
+        paths=("pyproject.toml", "package.json"),
+        patterns=("requirements*.txt",),
+    ),
+    _ValidatorAdvisoryRule(
+        code="validator_warning_lockfile_change",
+        severity="warning",
+        message=(
+            "Changed files touch lockfiles; reviewer should verify resolved dependency changes are "
+            "intentional and security-reviewed."
+        ),
+        reviewer_profiles=("security", "maintainability", "qa"),
+        paths=("poetry.lock", "uv.lock", "package-lock.json"),
+    ),
+)
+
+
+def _unique_tuple(values: tuple[str, ...]) -> tuple[str, ...]:
+    seen: set[str] = set()
+    unique: list[str] = []
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        unique.append(value)
+    return tuple(unique)
+
+
+def _safe_changed_files_for_warnings(report: StructuredExecutionReport) -> list[str]:
+    safe_by_key: dict[str, str] = {}
+    for raw_path in report.changed_files:
+        try:
+            safe_path = normalize_safe_relative_path(raw_path, field_name="changed_files")
+        except ValueError:
+            continue
+        safe_by_key.setdefault(safe_path.lower(), safe_path)
+    return [safe_by_key[key] for key in sorted(safe_by_key)]
+
+
+def _path_matches_advisory_rule(path: str, rule: _ValidatorAdvisoryRule) -> bool:
+    normalized = path.lower()
+    if normalized in rule.paths:
+        return True
+    if any(normalized.startswith(prefix) for prefix in rule.prefixes):
+        return True
+    return any(fnmatchcase(normalized, pattern) for pattern in rule.patterns)
+
+
+def _is_source_changed_file(path: str) -> bool:
+    return path.lower().startswith("src/")
+
+
+def _is_test_changed_file(path: str) -> bool:
+    return path.lower().startswith("tests/")
+
+
+def collect_validator_advisory_warnings(report: StructuredExecutionReport) -> list[ValidatorAdvisoryWarning]:
+    """Return advisory warnings for sensitive changed files.
+
+    These warnings are reviewer-facing context only. They do not imply
+    validator failure and must not be promoted to failed criteria by callers.
+    """
+
+    changed_files = _safe_changed_files_for_warnings(report)
+    warnings: list[ValidatorAdvisoryWarning] = []
+    seen_codes: set[str] = set()
+
+    def add_warning(
+        *,
+        code: str,
+        severity: str,
+        message: str,
+        file: str | None = None,
+        reviewer_profiles: tuple[str, ...] = (),
+    ) -> None:
+        if code in seen_codes:
+            return
+        seen_codes.add(code)
+        warnings.append(
+            ValidatorAdvisoryWarning(
+                code=code,
+                severity=severity,
+                message=message,
+                file=file,
+                reviewer_profiles=_unique_tuple(reviewer_profiles),
+            )
+        )
+
+    for rule in _VALIDATOR_ADVISORY_RULES:
+        matched_files = [path for path in changed_files if _path_matches_advisory_rule(path, rule)]
+        if matched_files:
+            add_warning(
+                code=rule.code,
+                severity=rule.severity,
+                message=rule.message,
+                file=matched_files[0],
+                reviewer_profiles=rule.reviewer_profiles,
+            )
+
+    if any(_is_source_changed_file(path) for path in changed_files) and not any(
+        _is_test_changed_file(path) for path in changed_files
+    ):
+        add_warning(
+            code="validator_warning_missing_tests_for_code_change",
+            severity="warning",
+            message=(
+                "Changed files include source code but no test files; reviewer should verify existing "
+                "tests cover the change or require regression tests."
+            ),
+        )
+
+    if len(changed_files) > 15:
+        add_warning(
+            code="validator_warning_changed_files_large_set",
+            severity="warning",
+            message="Large changed file set; reviewer should inspect scope and ensure no unrelated changes are included.",
+        )
+
+    return warnings
 
 
 _MANIFEST_REPORTABLE_EXTENSIONS = {
