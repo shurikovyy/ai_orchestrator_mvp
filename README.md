@@ -108,6 +108,73 @@ python -m ai_orchestrator.cli show-config --config ai_orchestrator.yaml
 
 `show-config` is read-only. It does not create `.runs`, `.web`, `.task_drafts`, or `tasks.yaml`; it does not run Codex, run pipeline, apply, accept, or commit.
 
+## Core autonomy policy
+
+The autonomy policy layer is an optional, read-only foundation for future governed autonomy. The built-in default policy is conservative: it disables auto task intake, auto execution, reviewer agents, auto apply, and auto commit. Policy decisions are not wired into existing workflow commands yet.
+
+Supported commands:
+
+```bash
+python -m ai_orchestrator.cli show-policy
+python -m ai_orchestrator.cli show-policy --policy autonomy_policy.yaml
+python -m ai_orchestrator.cli show-policy --format json
+
+python -m ai_orchestrator.cli check-policy --action apply-run --risk-level low
+python -m ai_orchestrator.cli check-policy --action commit --risk-level docs_only
+python -m ai_orchestrator.cli check-policy --action run-pipeline --risk-level high --backend codex
+python -m ai_orchestrator.cli check-policy --action apply-run --risk-level low --changed-file src/ai_orchestrator/apply.py
+```
+
+`show-policy` displays the loaded policy or the built-in default. `check-policy` evaluates a hypothetical action in dry-run mode and returns `allowed`, `human_gate_required`, or `blocked`. A blocked or human-gated decision is a valid policy result, not a CLI execution failure. These commands do not run pipeline, run Codex, execute reviewer agents, apply, accept, or commit.
+
+Example policy:
+
+```yaml
+schema_version: "1.0"
+autonomy:
+  allow_auto_task_intake: false
+  allow_auto_execution: false
+  allow_auto_reviewer_agents: false
+  allow_auto_apply: false
+  allow_auto_commit: false
+risk:
+  max_auto_risk: low
+  safety_sensitive_requires_human: true
+gates:
+  require_human_before:
+    - record-findings
+    - record-arbitration
+    - review-run
+    - apply-run
+    - accept-run
+    - commit
+paths:
+  forbidden:
+    - ".github/workflows/**"
+    - "src/ai_orchestrator_web/jobs/**"
+    - "src/ai_orchestrator/apply.py"
+  require_human:
+    - "src/ai_orchestrator/review_decision.py"
+    - "src/ai_orchestrator_web/routes/**"
+backends:
+  allowed:
+    - mock
+    - codex
+review_requirements:
+  medium:
+    - qa
+  high:
+    - security
+    - architecture
+    - qa
+  critical:
+    - security
+    - architecture
+    - qa
+    - ops
+    - maintainability
+```
+
 ## Current capabilities
 
 - хранит состояние запуска в `.runs/<run_id>/state.json`;

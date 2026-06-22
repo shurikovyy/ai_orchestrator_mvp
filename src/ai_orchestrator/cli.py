@@ -22,6 +22,15 @@ from ai_orchestrator.pipeline_status import (
     format_pipeline_status_text,
 )
 from ai_orchestrator.pipeline import PipelinePlan, PipelineRunResult, run_pipeline
+from ai_orchestrator.policy import (
+    PolicyError,
+    check_policy,
+    format_policy_decision_json,
+    format_policy_decision_text,
+    format_policy_json,
+    format_policy_text,
+    load_or_default_policy,
+)
 from ai_orchestrator.review_arbitration import record_review_arbitration
 from ai_orchestrator.review_findings import record_review_findings
 from ai_orchestrator.review_profiles import (
@@ -171,6 +180,34 @@ def build_show_config_parser() -> argparse.ArgumentParser:
     parser.add_argument("--task-drafts-dir", default=None, help="CLI override for resolved task_drafts_dir.")
     parser.add_argument("--codex-cmd", default=None, help="CLI override for resolved Codex command.")
     parser.add_argument("--policy-file", default=None, help="CLI override for resolved policy_file.")
+    return parser
+
+
+def build_show_policy_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="ai-orchestrator show-policy",
+        description="Show the resolved autonomy policy without running workflow actions.",
+    )
+    parser.add_argument("--policy", default=None, help="Optional explicit autonomy policy YAML path.")
+    parser.add_argument("--config", default=None, help="Optional ai_orchestrator.yaml path used to resolve policy_file.")
+    parser.add_argument("--project-root", default=".", help="Project root for config and policy path resolution.")
+    parser.add_argument("--format", choices=["text", "json"], default="text", help="Output format. Defaults to text.")
+    return parser
+
+
+def build_check_policy_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="ai-orchestrator check-policy",
+        description="Dry-run a hypothetical action against the autonomy policy.",
+    )
+    parser.add_argument("--policy", default=None, help="Optional explicit autonomy policy YAML path.")
+    parser.add_argument("--config", default=None, help="Optional ai_orchestrator.yaml path used to resolve policy_file.")
+    parser.add_argument("--project-root", default=".", help="Project root for config and policy path resolution.")
+    parser.add_argument("--action", required=True, help="Hypothetical action to evaluate.")
+    parser.add_argument("--risk-level", required=True, help="Risk level to evaluate.")
+    parser.add_argument("--changed-file", action="append", default=[], help="Changed project-relative file path. Repeatable.")
+    parser.add_argument("--backend", default=None, help="Optional backend name to evaluate.")
+    parser.add_argument("--format", choices=["text", "json"], default="text", help="Output format. Defaults to text.")
     return parser
 
 
@@ -1201,6 +1238,49 @@ def show_config_main(argv: list[str] | None = None) -> int:
         print(format_project_config_json(config))
     else:
         print(format_project_config_text(config))
+    return 0
+
+
+def show_policy_main(argv: list[str] | None = None) -> int:
+    parser = build_show_policy_parser()
+    args = parser.parse_args(argv)
+    try:
+        loaded = load_or_default_policy(
+            project_root=args.project_root,
+            policy_path=args.policy,
+            config_path=args.config,
+        )
+    except PolicyError as exc:
+        parser.exit(status=1, message=f"show-policy error: {exc}\n")
+    if args.format == "json":
+        print(format_policy_json(loaded))
+    else:
+        print(format_policy_text(loaded))
+    return 0
+
+
+def check_policy_main(argv: list[str] | None = None) -> int:
+    parser = build_check_policy_parser()
+    args = parser.parse_args(argv)
+    try:
+        loaded = load_or_default_policy(
+            project_root=args.project_root,
+            policy_path=args.policy,
+            config_path=args.config,
+        )
+        decision = check_policy(
+            loaded,
+            action=args.action,
+            risk_level=args.risk_level,
+            changed_files=tuple(args.changed_file),
+            backend=args.backend,
+        )
+    except PolicyError as exc:
+        parser.exit(status=1, message=f"check-policy error: {exc}\n")
+    if args.format == "json":
+        print(format_policy_decision_json(decision))
+    else:
+        print(format_policy_decision_text(decision))
     return 0
 
 
@@ -2303,6 +2383,10 @@ def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if args and args[0] == "show-config":
         return show_config_main(args[1:])
+    if args and args[0] == "show-policy":
+        return show_policy_main(args[1:])
+    if args and args[0] == "check-policy":
+        return check_policy_main(args[1:])
     if args and args[0] == "import-task-draft-improvement":
         return import_task_draft_improvement_main(args[1:])
     if args and args[0] == "prepare-task-draft-improvement":
