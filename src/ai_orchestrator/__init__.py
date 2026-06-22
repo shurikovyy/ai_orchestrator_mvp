@@ -1,3 +1,3 @@
 """Workflow-first AI task orchestrator MVP."""
 
-__version__ = "0.1.71"
+__version__ = "0.1.72"

@@ -36,6 +36,18 @@ _MAINTAINABILITY_SENSITIVE_FILES = {
     "src/ai_orchestrator/reviewer_prompts.py",
     "src/ai_orchestrator/review_profiles.py",
 }
+_WEB_JOB_ACTION_FILES = {"src/ai_orchestrator_web/jobs/actions.py"}
+_JOB_RUNNER_FILES = {"src/ai_orchestrator_web/jobs/runner.py"}
+_APPLY_LOGIC_FILES = {"src/ai_orchestrator/apply.py"}
+_REVIEW_DECISION_FILES = {"src/ai_orchestrator/review_decision.py"}
+_REVIEW_FINDINGS_FILES = {"src/ai_orchestrator/review_findings.py"}
+_REVIEW_ARBITRATION_FILES = {"src/ai_orchestrator/review_arbitration.py"}
+_RISK_CLASSIFIER_FILES = {"src/ai_orchestrator/risk_classification.py", "src/ai_orchestrator/risk_schemas.py"}
+_VALIDATOR_FILES = {"src/ai_orchestrator/validation.py"}
+_POLICY_FILES = {"src/ai_orchestrator/policy.py"}
+_CONFIG_FILES = {"src/ai_orchestrator/config.py"}
+_DEPENDENCY_MANIFEST_FILES = {"pyproject.toml", "package.json"}
+_LOCKFILE_NAMES = {"poetry.lock", "uv.lock", "package-lock.json"}
 _WINDOWS_DRIVE_PATH_RE = re.compile(r"^[a-zA-Z]:[\\/]")
 
 
@@ -97,6 +109,28 @@ def _is_docs_markdown(path: str) -> bool:
     return (path.startswith("docs/") and path.endswith(".md")) or _is_root_markdown(path)
 
 
+def _is_web_route(path: str) -> bool:
+    return path.startswith("src/ai_orchestrator_web/routes/")
+
+
+def _is_web_template(path: str) -> bool:
+    return path.startswith("src/ai_orchestrator_web/templates/")
+
+
+def _is_ci_workflow(path: str) -> bool:
+    return path.startswith(".github/workflows/") or path.startswith("github/workflows/")
+
+
+def _is_dependency_manifest(path: str) -> bool:
+    pure = PurePosixPath(path)
+    name = pure.name
+    return name in _DEPENDENCY_MANIFEST_FILES or name.startswith("requirements") and name.endswith(".txt")
+
+
+def _is_lockfile(path: str) -> bool:
+    return PurePosixPath(path).name in _LOCKFILE_NAMES
+
+
 def _is_data_logic_path(path: str) -> bool:
     pure = PurePosixPath(path)
     name = pure.name.lower()
@@ -124,6 +158,16 @@ def _dedupe_profiles(items: list[str]) -> list[str]:
             seen.add(item)
             normalized.append(item)
     return normalized
+
+
+def _add_reason_code(reason_codes: list[str], code: str) -> None:
+    if code not in reason_codes:
+        reason_codes.append(code)
+
+
+def _extend_reason_codes(reason_codes: list[str], codes: tuple[str, ...]) -> None:
+    for code in codes:
+        _add_reason_code(reason_codes, code)
 
 
 def _prepend_profiles(existing: list[str], preferred: list[str]) -> list[str]:
@@ -168,11 +212,28 @@ def classify_changed_files(
     maintainability_sensitive_files = [
         path for path in non_report_files if path.lower() in _MAINTAINABILITY_SENSITIVE_FILES
     ]
+    web_route_files = [path for path in non_report_files if _is_web_route(path)]
+    web_template_files = [path for path in non_report_files if _is_web_template(path)]
+    web_job_action_files = [path for path in non_report_files if path.lower() in _WEB_JOB_ACTION_FILES]
+    job_runner_files = [path for path in non_report_files if path.lower() in _JOB_RUNNER_FILES]
+    apply_logic_files = [path for path in non_report_files if path.lower() in _APPLY_LOGIC_FILES]
+    review_decision_files = [path for path in non_report_files if path.lower() in _REVIEW_DECISION_FILES]
+    review_findings_files = [path for path in non_report_files if path.lower() in _REVIEW_FINDINGS_FILES]
+    review_arbitration_files = [path for path in non_report_files if path.lower() in _REVIEW_ARBITRATION_FILES]
+    risk_classifier_files = [path for path in non_report_files if path.lower() in _RISK_CLASSIFIER_FILES]
+    validator_files = [path for path in non_report_files if path.lower() in _VALIDATOR_FILES]
+    policy_files = [path for path in non_report_files if path.lower() in _POLICY_FILES]
+    config_files = [path for path in non_report_files if path.lower() in _CONFIG_FILES]
+    cli_files = [path for path in non_report_files if path == "src/ai_orchestrator/cli.py"]
+    ci_workflow_files = [path for path in non_report_files if _is_ci_workflow(path)]
+    dependency_manifest_files = [path for path in non_report_files if _is_dependency_manifest(path)]
+    lock_files = [path for path in non_report_files if _is_lockfile(path)]
 
     risk_level = "low"
     change_type = "unknown"
     required_profiles: list[str] = []
     optional_profiles: list[str] = []
+    reason_codes: list[str] = []
     reasons: list[_RiskReasonDraft] = []
     policy_notes = [
         "Risk classification is deterministic and does not approve or reject the run.",
@@ -183,6 +244,7 @@ def classify_changed_files(
         risk_level = "low"
         change_type = "docs_only"
         optional_profiles.extend(["business", "qa"])
+        _add_reason_code(reason_codes, "docs_only_change")
         reasons.append(
             _RiskReasonDraft(
                 severity="info",
@@ -192,10 +254,10 @@ def classify_changed_files(
             )
         )
     elif non_report_files and all(_is_test_python(path) for path in non_report_files):
-        risk_level = "medium"
+        risk_level = "low"
         change_type = "tests_only"
         required_profiles.append("qa")
-        optional_profiles.append("architecture")
+        _add_reason_code(reason_codes, "tests_only_change")
         reasons.append(
             _RiskReasonDraft(
                 severity="warning",
@@ -208,8 +270,8 @@ def classify_changed_files(
     elif source_files and test_files:
         risk_level = "medium"
         change_type = "source_and_tests"
-        required_profiles.extend(["qa", "architecture"])
-        optional_profiles.append("maintainability")
+        required_profiles.extend(["qa", "architecture", "maintainability"])
+        _add_reason_code(reason_codes, "source_code_change")
         reasons.append(
             _RiskReasonDraft(
                 severity="warning",
@@ -222,8 +284,9 @@ def classify_changed_files(
     elif source_files:
         risk_level = "high"
         change_type = "source_code"
-        required_profiles.extend(["qa", "architecture"])
-        optional_profiles.extend(["ops", "maintainability"])
+        required_profiles.extend(["qa", "architecture", "maintainability"])
+        optional_profiles.append("ops")
+        _extend_reason_codes(reason_codes, ("source_code_change", "missing_tests_for_code_change"))
         reasons.append(
             _RiskReasonDraft(
                 severity="high",
@@ -234,8 +297,232 @@ def classify_changed_files(
             )
         )
 
+    if web_route_files:
+        risk_level = _set_at_least(risk_level, "medium")
+        required_profiles.extend(["qa", "maintainability"])
+        _add_reason_code(reason_codes, "web_route_change")
+        reasons.append(
+            _RiskReasonDraft(
+                severity="warning",
+                category="source",
+                message="Web route changed; request handling and user-input flow need focused review.",
+                reviewer_profiles=("qa", "maintainability"),
+                file=web_route_files[0],
+            )
+        )
+
+    if web_template_files:
+        risk_level = _set_at_least(risk_level, "medium")
+        required_profiles.extend(["qa", "maintainability"])
+        _add_reason_code(reason_codes, "web_template_change")
+        reasons.append(
+            _RiskReasonDraft(
+                severity="warning",
+                category="source",
+                message="Web template changed; operator-facing workflow and form safety need review.",
+                reviewer_profiles=("qa", "maintainability"),
+                file=web_template_files[0],
+            )
+        )
+
+    if web_job_action_files:
+        risk_level = _set_at_least(risk_level, "high")
+        required_profiles.extend(["security", "qa", "maintainability"])
+        _extend_reason_codes(reason_codes, ("web_job_action_change", "subprocess_command_construction_change"))
+        reasons.append(
+            _RiskReasonDraft(
+                severity="high",
+                category="safety",
+                message="Web job action allowlist changed; command construction and action exposure need security review.",
+                reviewer_profiles=("security", "qa", "maintainability"),
+                file=web_job_action_files[0],
+            )
+        )
+
+    if job_runner_files:
+        risk_level = _set_at_least(risk_level, "high")
+        required_profiles.extend(["security", "qa", "maintainability"])
+        _extend_reason_codes(reason_codes, ("job_runner_change", "subprocess_command_construction_change"))
+        reasons.append(
+            _RiskReasonDraft(
+                severity="high",
+                category="safety",
+                message="Web job runner changed; subprocess execution and job isolation need security review.",
+                reviewer_profiles=("security", "qa", "maintainability"),
+                file=job_runner_files[0],
+            )
+        )
+
+    if apply_logic_files:
+        risk_level = _set_at_least(risk_level, "high")
+        required_profiles.extend(["security", "architecture", "qa", "maintainability"])
+        _extend_reason_codes(reason_codes, ("apply_logic_change", "accept_logic_change", "security_sensitive_path"))
+        reasons.append(
+            _RiskReasonDraft(
+                severity="high",
+                category="safety",
+                message="Apply logic changed; target working-tree write behavior requires security and architecture review.",
+                reviewer_profiles=("security", "architecture", "qa", "maintainability"),
+                file=apply_logic_files[0],
+            )
+        )
+
+    if review_decision_files:
+        risk_level = _set_at_least(risk_level, "high")
+        required_profiles.extend(["architecture", "qa", "maintainability"])
+        _add_reason_code(reason_codes, "review_decision_logic_change")
+        reasons.append(
+            _RiskReasonDraft(
+                severity="high",
+                category="safety",
+                message="Review decision gate changed; approval/rejection semantics require architecture review.",
+                reviewer_profiles=("architecture", "qa", "maintainability"),
+                file=review_decision_files[0],
+            )
+        )
+
+    if review_findings_files:
+        risk_level = _set_at_least(risk_level, "high")
+        required_profiles.extend(["architecture", "qa", "maintainability"])
+        _add_reason_code(reason_codes, "review_findings_logic_change")
+        reasons.append(
+            _RiskReasonDraft(
+                severity="high",
+                category="safety",
+                message="Review findings logic changed; structured reviewer state can affect approval flow.",
+                reviewer_profiles=("architecture", "qa", "maintainability"),
+                file=review_findings_files[0],
+            )
+        )
+
+    if review_arbitration_files:
+        risk_level = _set_at_least(risk_level, "high")
+        required_profiles.extend(["architecture", "qa", "maintainability"])
+        _add_reason_code(reason_codes, "review_arbitration_logic_change")
+        reasons.append(
+            _RiskReasonDraft(
+                severity="high",
+                category="safety",
+                message="Review arbitration logic changed; finding resolution can affect review gate outcomes.",
+                reviewer_profiles=("architecture", "qa", "maintainability"),
+                file=review_arbitration_files[0],
+            )
+        )
+
+    if cli_files:
+        risk_level = _set_at_least(risk_level, "medium")
+        required_profiles.extend(["qa", "maintainability"])
+        _add_reason_code(reason_codes, "cli_command_surface_change")
+        reasons.append(
+            _RiskReasonDraft(
+                severity="warning",
+                category="ops",
+                message="CLI command surface changed; operator-facing command behavior needs review.",
+                reviewer_profiles=("qa", "maintainability"),
+                file=cli_files[0],
+            )
+        )
+
+    if validator_files:
+        risk_level = _set_at_least(risk_level, "high")
+        required_profiles.extend(["architecture", "qa", "maintainability"])
+        _add_reason_code(reason_codes, "validator_change")
+        reasons.append(
+            _RiskReasonDraft(
+                severity="high",
+                category="safety",
+                message="Validator logic changed; deterministic approval behavior requires careful review.",
+                reviewer_profiles=("architecture", "qa", "maintainability"),
+                file=validator_files[0],
+            )
+        )
+
+    if risk_classifier_files:
+        risk_level = _set_at_least(risk_level, "high")
+        required_profiles.extend(["architecture", "qa", "maintainability"])
+        _add_reason_code(reason_codes, "risk_classifier_change")
+        reasons.append(
+            _RiskReasonDraft(
+                severity="high",
+                category="architecture",
+                message="Risk classifier or schema changed; review routing semantics need architecture review.",
+                reviewer_profiles=("architecture", "qa", "maintainability"),
+                file=risk_classifier_files[0],
+            )
+        )
+
+    if policy_files:
+        risk_level = _set_at_least(risk_level, "high")
+        required_profiles.extend(["security", "architecture", "qa", "maintainability"])
+        _add_reason_code(reason_codes, "policy_logic_change")
+        reasons.append(
+            _RiskReasonDraft(
+                severity="high",
+                category="safety",
+                message="Policy logic changed; autonomy and gate decisions require security review.",
+                reviewer_profiles=("security", "architecture", "qa", "maintainability"),
+                file=policy_files[0],
+            )
+        )
+
+    if config_files:
+        risk_level = _set_at_least(risk_level, "medium")
+        required_profiles.extend(["architecture", "qa", "maintainability"])
+        _add_reason_code(reason_codes, "config_logic_change")
+        reasons.append(
+            _RiskReasonDraft(
+                severity="warning",
+                category="architecture",
+                message="Config resolver logic changed; default and override behavior need review.",
+                reviewer_profiles=("architecture", "qa", "maintainability"),
+                file=config_files[0],
+            )
+        )
+
+    if ci_workflow_files:
+        risk_level = _set_at_least(risk_level, "high")
+        required_profiles.extend(["security", "ops", "qa"])
+        _add_reason_code(reason_codes, "ci_workflow_change")
+        reasons.append(
+            _RiskReasonDraft(
+                severity="high",
+                category="ops",
+                message="CI workflow changed; execution environment and supply-chain behavior need review.",
+                reviewer_profiles=("security", "ops", "qa"),
+                file=ci_workflow_files[0],
+            )
+        )
+
+    if dependency_manifest_files:
+        risk_level = _set_at_least(risk_level, "medium")
+        required_profiles.extend(["security", "maintainability", "qa"])
+        _add_reason_code(reason_codes, "dependency_manifest_change")
+        reasons.append(
+            _RiskReasonDraft(
+                severity="warning",
+                category="ops",
+                message="Dependency manifest changed; dependency and packaging impact needs security review.",
+                reviewer_profiles=("security", "maintainability", "qa"),
+                file=dependency_manifest_files[0],
+            )
+        )
+
+    if lock_files:
+        risk_level = _set_at_least(risk_level, "medium")
+        required_profiles.extend(["security", "maintainability", "qa"])
+        _add_reason_code(reason_codes, "lockfile_change")
+        reasons.append(
+            _RiskReasonDraft(
+                severity="warning",
+                category="ops",
+                message="Dependency lockfile changed; resolved dependency set needs review.",
+                reviewer_profiles=("security", "maintainability", "qa"),
+                file=lock_files[0],
+            )
+        )
     if maintainability_sensitive_files:
         risk_level = _set_at_least(risk_level, "high")
+        _add_reason_code(reason_codes, "source_code_change")
         required_profiles = _prepend_profiles(required_profiles, ["architecture", "qa", "maintainability"])
         optional_profiles = [
             profile for profile in optional_profiles if profile not in {"architecture", "qa", "maintainability"}
@@ -253,6 +540,7 @@ def classify_changed_files(
     if safety_files:
         risk_level = _set_at_least(risk_level, "critical")
         change_type = "safety_critical"
+        _add_reason_code(reason_codes, "security_sensitive_path")
         required_profiles = _prepend_profiles(required_profiles, ["security", "architecture", "qa", "ops", "maintainability"])
         optional_profiles = [
             profile
@@ -271,6 +559,7 @@ def classify_changed_files(
 
     if data_files:
         risk_level = _set_at_least(risk_level, "high")
+        _add_reason_code(reason_codes, "data_logic_change")
         if change_type != "safety_critical":
             change_type = "data_logic"
             required_profiles = [profile for profile in required_profiles if profile not in {"data", "qa", "architecture", "ops"}]
@@ -302,6 +591,7 @@ def classify_changed_files(
         and not (change_type == "source_and_tests" and not docs_files)
     ):
         change_type = "mixed"
+        _add_reason_code(reason_codes, "mixed_docs_and_code")
         reasons.append(
             _RiskReasonDraft(
                 severity="warning",
@@ -314,6 +604,7 @@ def classify_changed_files(
     changed_count = len(non_report_files)
     if changed_count > 20:
         risk_level = _set_at_least(risk_level, "critical")
+        _add_reason_code(reason_codes, "large_change_set")
         required_profiles.extend(["architecture", "qa", "ops", "maintainability"])
         reasons.append(
             _RiskReasonDraft(
@@ -325,6 +616,7 @@ def classify_changed_files(
         )
     elif changed_count > 10:
         risk_level = _set_at_least(risk_level, "high")
+        _add_reason_code(reason_codes, "large_change_set")
         required_profiles.extend(["architecture", "qa", "maintainability"])
         reasons.append(
             _RiskReasonDraft(
@@ -337,6 +629,7 @@ def classify_changed_files(
 
     if unsafe_paths:
         risk_level = _set_at_least(risk_level, "critical")
+        _extend_reason_codes(reason_codes, ("security_sensitive_path", "path_forbidden"))
         required_profiles.extend(["security", "ops"])
         for raw_path, issue in unsafe_paths:
             reasons.append(
@@ -354,6 +647,15 @@ def classify_changed_files(
         if unsafe_paths:
             policy_notes.append("Only unsafe or report-only paths were observed; treat the run as critical until paths are normalized.")
         else:
+            _add_reason_code(reason_codes, "missing_changed_files_context")
+            reasons.append(
+                _RiskReasonDraft(
+                    severity="warning",
+                    category="other",
+                    message="No non-report changed files were observed; classification has limited path context.",
+                    reviewer_profiles=(),
+                )
+            )
             policy_notes.append("No non-report changed files were observed; classification remains unknown.")
 
     required_profiles = _dedupe_profiles(required_profiles)
@@ -378,6 +680,7 @@ def classify_changed_files(
         risk_level=risk_level,
         change_type=change_type,
         changed_files=safe_changed_files,
+        reasons=reason_codes,
         risk_reasons=risk_reason_models,
         required_review_profiles=required_profiles,
         optional_review_profiles=optional_profiles,
@@ -404,6 +707,10 @@ def build_risk_classification_markdown(classification: RiskClassification) -> st
         "## Changed files",
         "",
         *([f"- `{path}`" for path in classification.changed_files] or ["- (none)"]),
+        "",
+        "## Reason codes",
+        "",
+        *([f"- `{reason}`" for reason in classification.reasons] or ["- (none)"]),
         "",
         "## Risk reasons",
         "",

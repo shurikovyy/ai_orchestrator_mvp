@@ -20,7 +20,7 @@ from ai_orchestrator.cli import (
     show_run_main,
 )
 from ai_orchestrator.pipeline import PipelineSelectedTask, PipelineState, PipelineTaskResult
-from ai_orchestrator.risk_classification import classify_changed_files, load_run_risk_classification
+from ai_orchestrator.risk_classification import build_risk_classification_markdown, classify_changed_files, load_run_risk_classification
 from ai_orchestrator.schemas import ExecutionResult, RunState, TaskSpec, ValidationResult
 
 TEST_TEMP_ROOT = Path(__file__).resolve().parents[1] / ".tmp_tests"
@@ -168,15 +168,17 @@ class RiskClassificationRuleTests(unittest.TestCase):
         self.assertEqual(classification.change_type, "docs_only")
         self.assertEqual(classification.required_review_profiles, [])
         self.assertEqual(classification.optional_review_profiles, ["business", "qa"])
+        self.assertIn("docs_only_change", classification.reasons)
 
-    def test_tests_only_is_medium_and_requires_qa(self) -> None:
+    def test_tests_only_is_low_and_requires_qa(self) -> None:
         classification = classify_changed_files(
             run_id="run_1",
             changed_files=["tests/test_demo.py", "EXECUTION_REPORT.json"],
         )
-        self.assertEqual(classification.risk_level, "medium")
+        self.assertEqual(classification.risk_level, "low")
         self.assertEqual(classification.change_type, "tests_only")
         self.assertEqual(classification.required_review_profiles, ["qa"])
+        self.assertIn("tests_only_change", classification.reasons)
 
     def test_source_without_tests_is_high_and_requires_qa_architecture(self) -> None:
         classification = classify_changed_files(
@@ -185,8 +187,9 @@ class RiskClassificationRuleTests(unittest.TestCase):
         )
         self.assertEqual(classification.risk_level, "high")
         self.assertEqual(classification.change_type, "source_code")
-        self.assertEqual(classification.required_review_profiles, ["qa", "architecture"])
-        self.assertIn("maintainability", classification.optional_review_profiles)
+        self.assertEqual(classification.required_review_profiles, ["qa", "architecture", "maintainability"])
+        self.assertIn("source_code_change", classification.reasons)
+        self.assertIn("missing_tests_for_code_change", classification.reasons)
 
     def test_source_with_tests_is_medium_and_requires_qa_architecture(self) -> None:
         classification = classify_changed_files(
@@ -195,8 +198,9 @@ class RiskClassificationRuleTests(unittest.TestCase):
         )
         self.assertEqual(classification.risk_level, "medium")
         self.assertEqual(classification.change_type, "source_and_tests")
-        self.assertEqual(classification.required_review_profiles, ["qa", "architecture"])
-        self.assertIn("maintainability", classification.optional_review_profiles)
+        self.assertEqual(classification.required_review_profiles, ["qa", "architecture", "maintainability"])
+        self.assertIn("source_code_change", classification.reasons)
+        self.assertNotIn("missing_tests_for_code_change", classification.reasons)
 
     def test_safety_critical_file_is_critical_and_requires_maintainability_too(self) -> None:
         classification = classify_changed_files(
@@ -217,7 +221,7 @@ class RiskClassificationRuleTests(unittest.TestCase):
         )
         self.assertEqual(classification.risk_level, "high")
         self.assertEqual(classification.change_type, "data_logic")
-        self.assertEqual(classification.required_review_profiles, ["data", "qa"])
+        self.assertEqual(classification.required_review_profiles, ["data", "qa", "maintainability"])
 
     def test_broad_change_over_ten_is_high(self) -> None:
         changed_files = [f"docs/file_{i}.md" for i in range(11)] + ["EXECUTION_REPORT.json"]
@@ -250,7 +254,7 @@ class RiskClassificationRuleTests(unittest.TestCase):
         )
         self.assertEqual(classification.risk_level, "medium")
         self.assertEqual(classification.change_type, "mixed")
-        self.assertEqual(classification.required_review_profiles, ["qa", "architecture"])
+        self.assertEqual(classification.required_review_profiles, ["qa", "architecture", "maintainability"])
 
     def test_maintainability_sensitive_task_intake_module_requires_maintainability_architecture_and_qa(self) -> None:
         classification = classify_changed_files(
@@ -270,13 +274,126 @@ class RiskClassificationRuleTests(unittest.TestCase):
         )
         self.assertNotIn("maintainability", classification.required_review_profiles)
 
-    def test_small_source_and_tests_change_keeps_maintainability_optional_not_required(self) -> None:
+    def test_small_source_and_tests_change_requires_maintainability(self) -> None:
         classification = classify_changed_files(
             run_id="run_1",
             changed_files=["src/demo.py", "tests/test_demo.py", "EXECUTION_REPORT.json"],
         )
-        self.assertNotIn("maintainability", classification.required_review_profiles)
-        self.assertIn("maintainability", classification.optional_review_profiles)
+        self.assertIn("maintainability", classification.required_review_profiles)
+
+    def test_web_route_change_is_medium_with_reason(self) -> None:
+        classification = classify_changed_files(
+            run_id="run_1",
+            changed_files=["src/ai_orchestrator_web/routes/runs.py", "EXECUTION_REPORT.json"],
+        )
+        self.assertEqual(classification.risk_level, "high")
+        self.assertIn("web_route_change", classification.reasons)
+        self.assertIn("qa", classification.required_review_profiles)
+        self.assertIn("maintainability", classification.required_review_profiles)
+
+    def test_web_job_action_change_is_high_with_subprocess_reason(self) -> None:
+        classification = classify_changed_files(
+            run_id="run_1",
+            changed_files=["src/ai_orchestrator_web/jobs/actions.py", "EXECUTION_REPORT.json"],
+        )
+        self.assertEqual(classification.risk_level, "high")
+        self.assertIn("web_job_action_change", classification.reasons)
+        self.assertIn("subprocess_command_construction_change", classification.reasons)
+        self.assertIn("security", classification.required_review_profiles)
+        self.assertIn("qa", classification.required_review_profiles)
+        self.assertIn("maintainability", classification.required_review_profiles)
+
+    def test_job_runner_change_is_high_with_subprocess_reason(self) -> None:
+        classification = classify_changed_files(
+            run_id="run_1",
+            changed_files=["src/ai_orchestrator_web/jobs/runner.py", "EXECUTION_REPORT.json"],
+        )
+        self.assertEqual(classification.risk_level, "high")
+        self.assertIn("job_runner_change", classification.reasons)
+        self.assertIn("subprocess_command_construction_change", classification.reasons)
+
+    def test_apply_logic_change_has_apply_reason_and_security_profile(self) -> None:
+        classification = classify_changed_files(
+            run_id="run_1",
+            changed_files=["src/ai_orchestrator/apply.py", "EXECUTION_REPORT.json"],
+        )
+        self.assertIn(classification.risk_level, {"high", "critical"})
+        self.assertIn("apply_logic_change", classification.reasons)
+        self.assertIn("security", classification.required_review_profiles)
+
+    def test_review_decision_logic_change_has_reason(self) -> None:
+        classification = classify_changed_files(
+            run_id="run_1",
+            changed_files=["src/ai_orchestrator/review_decision.py", "EXECUTION_REPORT.json"],
+        )
+        self.assertIn(classification.risk_level, {"high", "critical"})
+        self.assertIn("review_decision_logic_change", classification.reasons)
+
+    def test_policy_logic_change_is_high_with_security_profile(self) -> None:
+        classification = classify_changed_files(
+            run_id="run_1",
+            changed_files=["src/ai_orchestrator/policy.py", "EXECUTION_REPORT.json"],
+        )
+        self.assertEqual(classification.risk_level, "high")
+        self.assertIn("policy_logic_change", classification.reasons)
+        self.assertIn("security", classification.required_review_profiles)
+
+    def test_ci_workflow_change_is_high_with_security_ops_profiles(self) -> None:
+        classification = classify_changed_files(
+            run_id="run_1",
+            changed_files=[".github/workflows/ci.yml", "EXECUTION_REPORT.json"],
+        )
+        self.assertEqual(classification.risk_level, "high")
+        self.assertIn("ci_workflow_change", classification.reasons)
+        self.assertIn("security", classification.required_review_profiles)
+        self.assertIn("ops", classification.required_review_profiles)
+
+    def test_dependency_manifest_change_is_medium_with_security_profile(self) -> None:
+        classification = classify_changed_files(
+            run_id="run_1",
+            changed_files=["pyproject.toml", "EXECUTION_REPORT.json"],
+        )
+        self.assertEqual(classification.risk_level, "medium")
+        self.assertIn("dependency_manifest_change", classification.reasons)
+        self.assertIn("security", classification.required_review_profiles)
+
+    def test_large_change_set_adds_reason_code(self) -> None:
+        changed_files = [f"docs/file_{i}.md" for i in range(16)] + ["EXECUTION_REPORT.json"]
+        classification = classify_changed_files(run_id="run_1", changed_files=changed_files)
+        self.assertIn("large_change_set", classification.reasons)
+
+    def test_mixed_docs_and_web_job_action_is_high_not_docs_only(self) -> None:
+        classification = classify_changed_files(
+            run_id="run_1",
+            changed_files=["README.md", "src/ai_orchestrator_web/jobs/actions.py", "EXECUTION_REPORT.json"],
+        )
+        self.assertEqual(classification.risk_level, "high")
+        self.assertNotEqual(classification.change_type, "docs_only")
+        self.assertIn("web_job_action_change", classification.reasons)
+        self.assertIn("mixed_docs_and_code", classification.reasons)
+
+    def test_reason_codes_and_profiles_are_unique_and_deterministic(self) -> None:
+        classification = classify_changed_files(
+            run_id="run_1",
+            changed_files=[
+                "src/ai_orchestrator_web/jobs/actions.py",
+                "src/ai_orchestrator_web/jobs/actions.py",
+                "src/ai_orchestrator_web/jobs/runner.py",
+                "EXECUTION_REPORT.json",
+            ],
+        )
+        self.assertEqual(classification.reasons, list(dict.fromkeys(classification.reasons)))
+        self.assertEqual(classification.required_review_profiles, list(dict.fromkeys(classification.required_review_profiles)))
+
+    def test_markdown_report_includes_reason_codes(self) -> None:
+        classification = classify_changed_files(
+            run_id="run_1",
+            changed_files=["src/ai_orchestrator_web/jobs/actions.py", "EXECUTION_REPORT.json"],
+        )
+        markdown = build_risk_classification_markdown(classification)
+        self.assertIn("## Reason codes", markdown)
+        self.assertIn("web_job_action_change", markdown)
+        self.assertIn("subprocess_command_construction_change", markdown)
 
 
 class ClassifyRunCommandTests(unittest.TestCase):
@@ -293,6 +410,8 @@ class ClassifyRunCommandTests(unittest.TestCase):
             output = stdout.getvalue()
             state = RunState.model_validate_json((run_dir / "state.json").read_text(encoding="utf-8"))
             classification = load_run_risk_classification(run_dir)
+            classification_payload = json.loads((run_dir / "RISK_CLASSIFICATION.json").read_text(encoding="utf-8"))
+            classification_markdown = (run_dir / "RISK_CLASSIFICATION.md").read_text(encoding="utf-8")
             classification_json_exists = (run_dir / "RISK_CLASSIFICATION.json").exists()
             classification_md_exists = (run_dir / "RISK_CLASSIFICATION.md").exists()
 
@@ -302,10 +421,14 @@ class ClassifyRunCommandTests(unittest.TestCase):
         self.assertTrue(classification_md_exists)
         self.assertEqual(state.risk_level, "high")
         self.assertEqual(state.change_type, "source_code")
-        self.assertEqual(state.required_review_profiles, ["qa", "architecture"])
-        self.assertIn("maintainability", state.optional_review_profiles)
+        self.assertEqual(state.required_review_profiles, ["qa", "architecture", "maintainability"])
         self.assertIsNotNone(classification)
         self.assertEqual(classification.risk_level, "high")
+        self.assertIn("source_code_change", classification.reasons)
+        self.assertIn("reasons", classification_payload)
+        self.assertIn("source_code_change", classification_payload["reasons"])
+        self.assertIn("required_review_profiles", classification_payload)
+        self.assertIn("source_code_change", classification_markdown)
         self.assertEqual(output_value(output, "next_action"), "prepare_required_reviews")
 
     def test_classify_run_next_action_run_review_checks_for_docs_only_without_required_profiles(self) -> None:
@@ -497,7 +620,7 @@ class RiskShowStatusTests(unittest.TestCase):
         self.assertEqual(output_value(output, "risk_classification_exists"), "true")
         self.assertEqual(output_value(output, "risk_level"), "high")
         self.assertEqual(output_value(output, "change_type"), "source_code")
-        self.assertEqual(output_value(output, "required_review_profiles"), "qa,architecture")
+        self.assertEqual(output_value(output, "required_review_profiles"), "qa,architecture,maintainability")
         self.assertIn("risk_classification=", output)
         self.assertIn("risk_classification_markdown=", output)
 
@@ -593,7 +716,7 @@ class RiskShowStatusTests(unittest.TestCase):
             output = stdout.getvalue()
 
         self.assertEqual(exit_code, 0, output)
-        self.assertEqual(output_value(output, "required_review_profiles"), "qa,architecture")
+        self.assertEqual(output_value(output, "required_review_profiles"), "qa,architecture,maintainability")
         self.assertEqual(output_value(output, "reviewer_prompts_exists"), "true")
         self.assertEqual(output_value(output, "findings_exists"), "false")
         self.assertEqual(output_value(output, "next_action"), "run_external_reviewer_or_record_findings")

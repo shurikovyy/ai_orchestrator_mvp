@@ -78,6 +78,7 @@ class RiskClassification(BaseModel):
         "unknown",
     ]
     changed_files: list[str] = Field(default_factory=list)
+    reasons: list[str] = Field(default_factory=list)
     risk_reasons: list[RiskReason] = Field(default_factory=list)
     required_review_profiles: list[str] = Field(default_factory=list)
     optional_review_profiles: list[str] = Field(default_factory=list)
@@ -100,6 +101,19 @@ class RiskClassification(BaseModel):
     @classmethod
     def strip_policy_notes(cls, value: list[str]) -> list[str]:
         return [item.strip() for item in value if item.strip()]
+
+    @field_validator("reasons")
+    @classmethod
+    def reason_codes_must_be_deduped(cls, value: list[str]) -> list[str]:
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for raw in value:
+            reason = raw.strip()
+            if not reason or reason in seen:
+                continue
+            seen.add(reason)
+            normalized.append(reason)
+        return normalized
 
     @field_validator("required_review_profiles", "optional_review_profiles")
     @classmethod

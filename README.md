@@ -1245,14 +1245,20 @@ Behavior:
 - it does not approve or reject the run;
 - it does not apply or commit changes.
 
-Risk policy examples:
+Risk classification hardening:
 
-- low-risk docs-only changes may require no mandatory reviewer profiles;
-- tests-only changes require `qa`;
-- source code changes typically require `qa` and `architecture`, with `maintainability` often optional;
-- safety-critical orchestration files require `security`, `architecture`, `qa`, `ops`, and `maintainability`;
-- broad or maintainability-sensitive changes may require `maintainability` review even when behavior is otherwise correct;
-- data logic changes require `data` and `qa`.
+- `classify-run` now records deterministic path-sensitive reason codes in `RISK_CLASSIFICATION.json` and `RISK_CLASSIFICATION.md`;
+- docs-only changes remain low/docs-only and include `docs_only_change`;
+- tests-only changes are low risk and require `qa` with `tests_only_change`;
+- normal `src/**` changes require `qa`, `architecture`, and `maintainability`, with `source_code_change` and `missing_tests_for_code_change` when source changes lack tests;
+- web routes/templates add `web_route_change` / `web_template_change`;
+- web job actions/runner changes escalate to high risk with `web_job_action_change`, `job_runner_change`, and `subprocess_command_construction_change`, requiring `security`, `qa`, and `maintainability`;
+- apply/review/policy logic changes escalate risk and require focused security/architecture/QA/maintainability review;
+- CI workflow changes add `ci_workflow_change` and require `security`, `ops`, and `qa`;
+- dependency manifests and lockfiles add `dependency_manifest_change` / `lockfile_change` and require security review;
+- broad change sets add `large_change_set`.
+
+Risk classification is not human approval. It does not apply, accept, commit, or add validator hard blocks; it only explains and escalates review requirements for later gates.
 
 `prepare-review --required-profiles` reads `RISK_CLASSIFICATION.json` and prepares prompt packets only for `required_review_profiles`. This supports a stricter lifecycle:
 
